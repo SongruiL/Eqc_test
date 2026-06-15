@@ -1,0 +1,88 @@
+# 正交多项式和椭圆积分测试
+meta:
+  id: OPERATORS_POLY
+  model: PolynomialTest
+  name_cn: 正交多项式测试
+  version: "1.0"
+  description: 测试正交多项式及椭圆积分
+
+parameters:
+  p1:
+    name_cn: 多项式阶数
+    dtype: float
+    default: 3.0
+  p2:
+    name_cn: 自变量
+    dtype: float
+    default: 0.5
+  p3:
+    name_cn: 椭圆积分参数
+    dtype: float
+    default: 0.5
+
+variables:
+  y_legendre:
+    name_cn: 勒让德多项式
+    dtype: float
+    var_type: output
+  y_hermite:
+    name_cn: 厄米多项式
+    dtype: float
+    var_type: output
+  y_laguerre:
+    name_cn: 拉盖尔多项式
+    dtype: float
+    var_type: output
+  y_cheb_t:
+    name_cn: 第一类切比雪夫
+    dtype: float
+    var_type: output
+  y_ellipk:
+    name_cn: 椭圆积分K
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_legendre
+    name: 勒让德多项式
+    output: y_legendre
+    expression:
+      op: legendre
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_hermite
+    name: 厄米多项式
+    output: y_hermite
+    expression:
+      op: hermite
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_laguerre
+    name: 拉盖尔多项式
+    output: y_laguerre
+    expression:
+      op: laguerre
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_chebyshev_t
+    name: 第一类切比雪夫
+    output: y_cheb_t
+    expression:
+      op: chebyshev_t
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_ellipk
+    name: 椭圆积分K
+    output: y_ellipk
+    expression:
+      op: ellipk
+      args:
+        - { ref: p3 }

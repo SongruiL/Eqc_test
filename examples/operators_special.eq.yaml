@@ -1,0 +1,118 @@
+# 特殊函数测试
+meta:
+  id: OPERATORS_SPECIAL
+  model: SpecialFunctions
+  name_cn: 特殊函数测试
+  version: "1.0"
+  description: 测试伽马、贝塔、误差函数等特殊函数
+
+parameters:
+  p1:
+    name_cn: 输入值x
+    dtype: float
+    default: 2.5
+  p2:
+    name_cn: 参数a
+    dtype: float
+    default: 3.0
+  p3:
+    name_cn: 参数b
+    dtype: float
+    default: 2.0
+  p4:
+    name_cn: 整数n
+    dtype: float
+    default: 5.0
+  p5:
+    name_cn: 整数k
+    dtype: float
+    default: 2.0
+
+variables:
+  y_gamma:
+    name_cn: 伽马函数
+    dtype: float
+    var_type: output
+  y_lgamma:
+    name_cn: 对数伽马
+    dtype: float
+    var_type: output
+  y_beta:
+    name_cn: 贝塔函数
+    dtype: float
+    var_type: output
+  y_erf:
+    name_cn: 误差函数
+    dtype: float
+    var_type: output
+  y_erfc:
+    name_cn: 互补误差函数
+    dtype: float
+    var_type: output
+  y_factorial:
+    name_cn: 阶乘
+    dtype: float
+    var_type: output
+  y_comb:
+    name_cn: 组合数
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_gamma
+    name: 伽马函数
+    output: y_gamma
+    expression:
+      op: gamma
+      args:
+        - { ref: p1 }
+
+  - id: test_lgamma
+    name: 对数伽马
+    output: y_lgamma
+    expression:
+      op: lgamma
+      args:
+        - { ref: p1 }
+
+  - id: test_beta
+    name: 贝塔函数
+    output: y_beta
+    expression:
+      op: beta
+      args:
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_erf
+    name: 误差函数
+    output: y_erf
+    expression:
+      op: erf
+      args:
+        - { ref: p1 }
+
+  - id: test_erfc
+    name: 互补误差函数
+    output: y_erfc
+    expression:
+      op: erfc
+      args:
+        - { ref: p1 }
+
+  - id: test_factorial
+    name: 阶乘
+    output: y_factorial
+    expression:
+      op: factorial
+      args:
+        - { ref: p4 }
+
+  - id: test_combination
+    name: 组合数
+    output: y_comb
+    expression:
+      op: combination
+      args:
+        - { ref: p4 }
+        - { ref: p5 }

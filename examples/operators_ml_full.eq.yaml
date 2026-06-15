@@ -1,0 +1,254 @@
+# 机器学习函数测试
+meta:
+  id: OPERATORS_ML_FULL
+  model: MLFullOperators
+  name_cn: 机器学习函数测试
+  version: "1.0"
+  description: 测试机器学习相关函数
+
+parameters:
+  p1:
+    name_cn: 输入x
+    dtype: float
+    default: 1.0
+  p2:
+    name_cn: 概率p
+    dtype: float
+    default: 0.7
+  p3:
+    name_cn: 参数lambda
+    dtype: float
+    default: 1.0
+  p4:
+    name_cn: 阈值delta
+    dtype: float
+    default: 1.0
+
+variables:
+  y_sigmoid:
+    name_cn: Sigmoid
+    dtype: float
+    var_type: output
+  y_logistic:
+    name_cn: Logistic
+    dtype: float
+    var_type: output
+  y_logit:
+    name_cn: Logit
+    dtype: float
+    var_type: output
+  y_expit:
+    name_cn: Expit
+    dtype: float
+    var_type: output
+  y_softplus:
+    name_cn: Softplus
+    dtype: float
+    var_type: output
+  y_log_expit:
+    name_cn: Log_expit
+    dtype: float
+    var_type: output
+  y_huber:
+    name_cn: Huber损失
+    dtype: float
+    var_type: output
+  y_pseudo_huber:
+    name_cn: Pseudo_Huber
+    dtype: float
+    var_type: output
+  y_xlogy:
+    name_cn: xlogy
+    dtype: float
+    var_type: output
+  y_xlog1py:
+    name_cn: xlog1py
+    dtype: float
+    var_type: output
+  y_entr:
+    name_cn: 熵函数
+    dtype: float
+    var_type: output
+  y_entropy:
+    name_cn: 熵别名
+    dtype: float
+    var_type: output
+  y_rel_entr:
+    name_cn: 相对熵
+    dtype: float
+    var_type: output
+  y_kl_div:
+    name_cn: KL散度
+    dtype: float
+    var_type: output
+  y_boxcox:
+    name_cn: Box-Cox
+    dtype: float
+    var_type: output
+  y_boxcox1p:
+    name_cn: Box-Cox1p
+    dtype: float
+    var_type: output
+  y_inv_boxcox:
+    name_cn: 逆Box-Cox
+    dtype: float
+    var_type: output
+  y_inv_boxcox1p:
+    name_cn: 逆Box-Cox1p
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_sigmoid
+    name: Sigmoid函数
+    output: y_sigmoid
+    expression:
+      op: sigmoid
+      args:
+        - { ref: p1 }
+
+  - id: test_logistic
+    name: Logistic函数
+    output: y_logistic
+    expression:
+      op: logistic
+      args:
+        - { ref: p1 }
+
+  - id: test_logit
+    name: Logit函数
+    output: y_logit
+    expression:
+      op: logit
+      args:
+        - { ref: p2 }
+
+  - id: test_expit
+    name: Expit函数
+    output: y_expit
+    expression:
+      op: expit
+      args:
+        - { ref: p1 }
+
+  - id: test_softplus
+    name: Softplus函数
+    output: y_softplus
+    expression:
+      op: softplus
+      args:
+        - { ref: p1 }
+
+  - id: test_log_expit
+    name: Log_expit函数
+    output: y_log_expit
+    expression:
+      op: log_expit
+      args:
+        - { ref: p1 }
+
+  - id: test_huber
+    name: Huber损失
+    output: y_huber
+    expression:
+      op: huber
+      args:
+        - { ref: p4 }
+        - { ref: p1 }
+
+  - id: test_pseudo_huber
+    name: Pseudo_Huber
+    output: y_pseudo_huber
+    expression:
+      op: pseudo_huber
+      args:
+        - { ref: p4 }
+        - { ref: p1 }
+
+  - id: test_xlogy
+    name: xlogy函数
+    output: y_xlogy
+    expression:
+      op: xlogy
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_xlog1py
+    name: xlog1py函数
+    output: y_xlog1py
+    expression:
+      op: xlog1py
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_entr
+    name: 熵函数
+    output: y_entr
+    expression:
+      op: entr
+      args:
+        - { ref: p2 }
+
+  - id: test_entropy
+    name: 熵别名
+    output: y_entropy
+    expression:
+      op: entropy
+      args:
+        - { ref: p2 }
+
+  - id: test_rel_entr
+    name: 相对熵
+    output: y_rel_entr
+    expression:
+      op: rel_entr
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_kl_div
+    name: KL散度
+    output: y_kl_div
+    expression:
+      op: kl_div
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_boxcox
+    name: Box-Cox变换
+    output: y_boxcox
+    expression:
+      op: boxcox
+      args:
+        - { ref: p1 }
+        - { ref: p3 }
+
+  - id: test_boxcox1p
+    name: Box-Cox1p变换
+    output: y_boxcox1p
+    expression:
+      op: boxcox1p
+      args:
+        - { ref: p1 }
+        - { ref: p3 }
+
+  - id: test_inv_boxcox
+    name: 逆Box-Cox
+    output: y_inv_boxcox
+    expression:
+      op: inv_boxcox
+      args:
+        - { ref: p1 }
+        - { ref: p3 }
+
+  - id: test_inv_boxcox1p
+    name: 逆Box-Cox1p
+    output: y_inv_boxcox1p
+    expression:
+      op: inv_boxcox1p
+      args:
+        - { ref: p1 }
+        - { ref: p3 }

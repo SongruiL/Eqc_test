@@ -1,0 +1,152 @@
+# 三角函数别名测试
+meta:
+  id: OPERATORS_ALIASES_TRIG
+  model: AliasesTrigOperators
+  name_cn: 三角函数别名测试
+  version: "1.0"
+  description: 测试三角函数的别名
+
+parameters:
+  p1:
+    name_cn: 输入x
+    dtype: float
+    default: 0.5
+  p2:
+    name_cn: 输入y
+    dtype: float
+    default: 1.5
+
+variables:
+  y_arccosh:
+    name_cn: arccosh
+    dtype: float
+    var_type: output
+  y_arccot:
+    name_cn: arccot
+    dtype: float
+    var_type: output
+  y_arccsc:
+    name_cn: arccsc
+    dtype: float
+    var_type: output
+  y_arcoth:
+    name_cn: arcoth
+    dtype: float
+    var_type: output
+  y_arcsch:
+    name_cn: arcsch
+    dtype: float
+    var_type: output
+  y_arcsec:
+    name_cn: arcsec
+    dtype: float
+    var_type: output
+  y_arcsinh:
+    name_cn: arcsinh
+    dtype: float
+    var_type: output
+  y_arctanh:
+    name_cn: arctanh
+    dtype: float
+    var_type: output
+  y_arsech:
+    name_cn: arsech
+    dtype: float
+    var_type: output
+  y_cotdg:
+    name_cn: cotdg
+    dtype: float
+    var_type: output
+  y_tandg:
+    name_cn: tandg
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_arccosh
+    name: arccosh别名
+    output: y_arccosh
+    expression:
+      op: arccosh
+      args:
+        - { ref: p2 }
+
+  - id: test_arccot
+    name: arccot别名
+    output: y_arccot
+    expression:
+      op: arccot
+      args:
+        - { ref: p1 }
+
+  - id: test_arccsc
+    name: arccsc别名
+    output: y_arccsc
+    expression:
+      op: arccsc
+      args:
+        - { ref: p2 }
+
+  - id: test_arcoth
+    name: arcoth别名
+    output: y_arcoth
+    expression:
+      op: arcoth
+      args:
+        - { ref: p2 }
+
+  - id: test_arcsch
+    name: arcsch别名
+    output: y_arcsch
+    expression:
+      op: arcsch
+      args:
+        - { ref: p1 }
+
+  - id: test_arcsec
+    name: arcsec别名
+    output: y_arcsec
+    expression:
+      op: arcsec
+      args:
+        - { ref: p2 }
+
+  - id: test_arcsinh
+    name: arcsinh别名
+    output: y_arcsinh
+    expression:
+      op: arcsinh
+      args:
+        - { ref: p1 }
+
+  - id: test_arctanh
+    name: arctanh别名
+    output: y_arctanh
+    expression:
+      op: arctanh
+      args:
+        - { ref: p1 }
+
+  - id: test_arsech
+    name: arsech别名
+    output: y_arsech
+    expression:
+      op: arsech
+      args:
+        - { ref: p1 }
+
+  - id: test_cotdg
+    name: cotdg度数
+    output: y_cotdg
+    expression:
+      op: cotdg
+      args:
+        - { op: mul, args: [{ ref: p1 }, { ref: p2 }] }
+
+  - id: test_tandg
+    name: tandg度数
+    output: y_tandg
+    expression:
+      op: tandg
+      args:
+        - { op: mul, args: [{ ref: p1 }, { ref: p2 }] }

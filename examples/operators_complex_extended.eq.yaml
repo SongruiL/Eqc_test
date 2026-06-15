@@ -1,0 +1,56 @@
+# 复数函数扩展测试
+meta:
+  id: OPERATORS_COMPLEX_EXTENDED
+  model: ComplexExtendedOperators
+  name_cn: 复数函数扩展测试
+  version: "1.0"
+  description: 测试复数函数的扩展
+
+parameters:
+  p1:
+    name_cn: 实部a
+    dtype: float
+    default: 0.5
+  p2:
+    name_cn: 虚部b
+    dtype: float
+    default: 0.5
+
+variables:
+  y_complex_acosh:
+    name_cn: 复acosh
+    dtype: float
+    var_type: output
+  y_complex_asinh:
+    name_cn: 复asinh
+    dtype: float
+    var_type: output
+  y_complex_atanh:
+    name_cn: 复atanh
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_complex_acosh
+    name: 复acosh
+    output: y_complex_acosh
+    expression:
+      op: complex_acosh
+      args:
+        - { op: complex, args: [{ ref: p1 }, { ref: p2 }] }
+
+  - id: test_complex_asinh
+    name: 复asinh
+    output: y_complex_asinh
+    expression:
+      op: complex_asinh
+      args:
+        - { op: complex, args: [{ ref: p1 }, { ref: p2 }] }
+
+  - id: test_complex_atanh
+    name: 复atanh
+    output: y_complex_atanh
+    expression:
+      op: complex_atanh
+      args:
+        - { op: complex, args: [{ ref: p1 }, { ref: p2 }] }

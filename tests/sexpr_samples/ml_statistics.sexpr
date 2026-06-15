@@ -1,0 +1,45 @@
+; 机器学习和统计函数测试
+
+; Sigmoid/Logistic
+(logit p)
+(expit x)
+(sigmoid x)
+(logistic x)
+(log_expit x)
+
+; Softmax 相关
+(softplus x)
+(softmax x)
+(log_softmax x)
+(logsumexp x)
+
+; Box-Cox 变换
+(boxcox y lmbda)
+(boxcox1p y lmbda)
+(inv_boxcox y lmbda)
+(inv_boxcox1p y lmbda)
+
+; 信息论
+(entr x)
+(entropy x)
+(rel_entr x y)
+(relative_entropy x y)
+(kl_div p q)
+(kl_divergence p q)
+
+; Huber 损失
+(huber delta r)
+(pseudo_huber delta r)
+
+; Kolmogorov-Smirnov
+(kolmogorov x)
+(kolmogi p)
+(smirnov n x)
+(smirnovi n p)
+
+; Faddeeva
+(wofz z)
+(faddeeva z)
+
+; 正态分布扩展
+(log_ndtr x)

@@ -1,0 +1,164 @@
+# 双曲函数测试
+meta:
+  id: OPERATORS_HYPERBOLIC
+  model: HyperbolicOperators
+  name_cn: 双曲函数测试
+  version: "1.0"
+  description: 测试双曲函数及其反函数
+
+parameters:
+  p1:
+    name_cn: 输入x
+    dtype: float
+    default: 1.0
+  p2:
+    name_cn: 输入y
+    dtype: float
+    default: 1.5
+
+variables:
+  y_sinh:
+    name_cn: 双曲正弦
+    dtype: float
+    var_type: output
+  y_cosh:
+    name_cn: 双曲余弦
+    dtype: float
+    var_type: output
+  y_tanh:
+    name_cn: 双曲正切
+    dtype: float
+    var_type: output
+  y_asinh:
+    name_cn: 反双曲正弦
+    dtype: float
+    var_type: output
+  y_acosh:
+    name_cn: 反双曲余弦
+    dtype: float
+    var_type: output
+  y_atanh:
+    name_cn: 反双曲正切
+    dtype: float
+    var_type: output
+  y_sech:
+    name_cn: 双曲正割
+    dtype: float
+    var_type: output
+  y_csch:
+    name_cn: 双曲余割
+    dtype: float
+    var_type: output
+  y_coth:
+    name_cn: 双曲余切
+    dtype: float
+    var_type: output
+  y_asech:
+    name_cn: 反双曲正割
+    dtype: float
+    var_type: output
+  y_acsch:
+    name_cn: 反双曲余割
+    dtype: float
+    var_type: output
+  y_acoth:
+    name_cn: 反双曲余切
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_sinh
+    name: 双曲正弦
+    output: y_sinh
+    expression:
+      op: sinh
+      args:
+        - { ref: p1 }
+
+  - id: test_cosh
+    name: 双曲余弦
+    output: y_cosh
+    expression:
+      op: cosh
+      args:
+        - { ref: p1 }
+
+  - id: test_tanh
+    name: 双曲正切
+    output: y_tanh
+    expression:
+      op: tanh
+      args:
+        - { ref: p1 }
+
+  - id: test_asinh
+    name: 反双曲正弦
+    output: y_asinh
+    expression:
+      op: asinh
+      args:
+        - { ref: p1 }
+
+  - id: test_acosh
+    name: 反双曲余弦
+    output: y_acosh
+    expression:
+      op: acosh
+      args:
+        - { ref: p2 }
+
+  - id: test_atanh
+    name: 反双曲正切
+    output: y_atanh
+    expression:
+      op: atanh
+      args:
+        - { op: div, args: [{ ref: p1 }, { ref: p2 }] }
+
+  - id: test_sech
+    name: 双曲正割
+    output: y_sech
+    expression:
+      op: sech
+      args:
+        - { ref: p1 }
+
+  - id: test_csch
+    name: 双曲余割
+    output: y_csch
+    expression:
+      op: csch
+      args:
+        - { ref: p1 }
+
+  - id: test_coth
+    name: 双曲余切
+    output: y_coth
+    expression:
+      op: coth
+      args:
+        - { ref: p1 }
+
+  - id: test_asech
+    name: 反双曲正割
+    output: y_asech
+    expression:
+      op: asech
+      args:
+        - { op: div, args: [{ ref: p1 }, { ref: p2 }] }
+
+  - id: test_acsch
+    name: 反双曲余割
+    output: y_acsch
+    expression:
+      op: acsch
+      args:
+        - { ref: p1 }
+
+  - id: test_acoth
+    name: 反双曲余切
+    output: y_acoth
+    expression:
+      op: acoth
+      args:
+        - { ref: p2 }

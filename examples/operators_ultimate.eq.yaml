@@ -1,0 +1,116 @@
+# 最终专业运算符测试
+meta:
+  id: OPERATORS_ULTIMATE
+  model: UltimateOperators
+  name_cn: 最终专业运算符测试
+  version: "1.0"
+  description: 测试Jacobi椭圆、Gegenbauer、Mathieu、Coulomb、Wigner、Theta函数
+
+parameters:
+  p1:
+    name_cn: 输入值u
+    dtype: float
+    default: 0.5
+  p2:
+    name_cn: 模m
+    dtype: float
+    default: 0.5
+  p3:
+    name_cn: 阶数n
+    dtype: float
+    default: 2.0
+  p4:
+    name_cn: 参数alpha
+    dtype: float
+    default: 1.5
+  p5:
+    name_cn: 参数q
+    dtype: float
+    default: 1.0
+  p6:
+    name_cn: 角度x
+    dtype: float
+    default: 0.7854
+
+variables:
+  y_sn:
+    name_cn: Jacobi_sn
+    dtype: float
+    var_type: output
+  y_cn:
+    name_cn: Jacobi_cn
+    dtype: float
+    var_type: output
+  y_gegenbauer:
+    name_cn: Gegenbauer多项式
+    dtype: float
+    var_type: output
+  y_mathieu_a:
+    name_cn: Mathieu特征值a
+    dtype: float
+    var_type: output
+  y_mathieu_ce:
+    name_cn: Mathieu角函数ce
+    dtype: float
+    var_type: output
+  y_theta1:
+    name_cn: Theta1函数
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_jacobi_sn
+    name: Jacobi椭圆sn
+    output: y_sn
+    expression:
+      op: jacobi_sn
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_jacobi_cn
+    name: Jacobi椭圆cn
+    output: y_cn
+    expression:
+      op: jacobi_cn
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_gegenbauer
+    name: Gegenbauer多项式
+    output: y_gegenbauer
+    expression:
+      op: gegenbauer
+      args:
+        - { ref: p3 }
+        - { ref: p4 }
+        - { ref: p1 }
+
+  - id: test_mathieu_a
+    name: Mathieu特征值a
+    output: y_mathieu_a
+    expression:
+      op: mathieu_a
+      args:
+        - { ref: p3 }
+        - { ref: p5 }
+
+  - id: test_mathieu_ce
+    name: Mathieu角函数ce
+    output: y_mathieu_ce
+    expression:
+      op: mathieu_ce
+      args:
+        - { ref: p3 }
+        - { ref: p5 }
+        - { ref: p6 }
+
+  - id: test_theta1
+    name: Theta1函数
+    output: y_theta1
+    expression:
+      op: theta1
+      args:
+        - { ref: p1 }
+        - { ref: p2 }

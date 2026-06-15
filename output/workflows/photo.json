@@ -1,0 +1,97 @@
+{
+  "definition": {
+    "edges": [
+      {
+        "from": {
+          "node": "node_0",
+          "port": "Pmax_l"
+        },
+        "to": {
+          "node": "node_1",
+          "port": "Pmax_l"
+        }
+      }
+    ],
+    "inputs": [
+      {
+        "bind_to": {
+          "node": "node_0",
+          "port": "reserve_ratio"
+        },
+        "name": "reserve_ratio"
+      },
+      {
+        "bind_to": {
+          "node": "node_0",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_0",
+          "port": "p2"
+        },
+        "name": "p2"
+      },
+      {
+        "bind_to": {
+          "node": "node_1",
+          "port": "Pmax_l"
+        },
+        "name": "Pmax_l"
+      },
+      {
+        "bind_to": {
+          "node": "node_1",
+          "port": "ppfd"
+        },
+        "name": "ppfd"
+      },
+      {
+        "bind_to": {
+          "node": "node_1",
+          "port": "p3"
+        },
+        "name": "p3"
+      },
+      {
+        "bind_to": {
+          "node": "node_1",
+          "port": "p4"
+        },
+        "name": "p4"
+      }
+    ],
+    "nodes": [
+      {
+        "config": {},
+        "id": "node_0",
+        "operator_id": "photo.photo_01"
+      },
+      {
+        "config": {},
+        "id": "node_1",
+        "operator_id": "photo.photo_02"
+      }
+    ],
+    "outputs": [
+      {
+        "bind_from": {
+          "node": "node_0",
+          "port": "Pmax_l"
+        },
+        "name": "Pmax_l"
+      },
+      {
+        "bind_from": {
+          "node": "node_1",
+          "port": "A_leaf"
+        },
+        "name": "A_leaf"
+      }
+    ]
+  },
+  "description": "计算叶片光合速率",
+  "name": "PHOTO - 光合作用"
+}

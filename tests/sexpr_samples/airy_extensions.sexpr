@@ -1,0 +1,45 @@
+; Airy 函数扩展测试
+
+; 基本 Airy 函数
+(airy x)
+(airyai x)
+(airy_ai x)
+(airy_bi x)
+
+; 指数缩放版本
+(airye x)
+(aie x)
+(bie x)
+(airy_aie x)
+(airy_bie x)
+
+; Airy 函数导数
+(aip x)
+(bip x)
+(airy_aip x)
+(airy_bip x)
+
+; Airy 积分
+(itairy x)
+
+; 指数积分扩展
+(expn n x)
+(exp1 x)
+(e1 x)
+(shi x)
+(chi x)
+
+; Struve 积分
+(itstruve0 x)
+(it2struve0 x)
+(itmodstruve0 x)
+
+; Wright Bessel 扩展
+(wright_bessel a b x)
+(log_wright_bessel a b x)
+
+; 修改 Fresnel 积分
+(modfresnelp x)
+(modfresnelm x)
+(mod_fresnel_plus x)
+(mod_fresnel_minus x)

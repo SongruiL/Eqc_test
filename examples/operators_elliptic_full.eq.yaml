@@ -1,0 +1,236 @@
+# 椭圆函数完整测试
+meta:
+  id: OPERATORS_ELLIPTIC_FULL
+  model: EllipticFullOperators
+  name_cn: 椭圆函数完整测试
+  version: "1.0"
+  description: 测试椭圆积分和Jacobi椭圆函数
+
+parameters:
+  p1:
+    name_cn: 模数m
+    dtype: float
+    default: 0.5
+  p2:
+    name_cn: 角度phi
+    dtype: float
+    default: 0.8
+  p3:
+    name_cn: 参数n
+    dtype: float
+    default: 0.3
+
+variables:
+  y_ellipk:
+    name_cn: 完全椭圆积分K
+    dtype: float
+    var_type: output
+  y_ellipe:
+    name_cn: 完全椭圆积分E
+    dtype: float
+    var_type: output
+  y_ellipf:
+    name_cn: 不完全椭圆积分F
+    dtype: float
+    var_type: output
+  y_ellipe_inc:
+    name_cn: 不完全椭圆积分E
+    dtype: float
+    var_type: output
+  y_ellippi:
+    name_cn: 椭圆积分Pi
+    dtype: float
+    var_type: output
+  y_elliprc:
+    name_cn: Carlson_RC
+    dtype: float
+    var_type: output
+  y_elliprd:
+    name_cn: Carlson_RD
+    dtype: float
+    var_type: output
+  y_elliprf:
+    name_cn: Carlson_RF
+    dtype: float
+    var_type: output
+  y_elliprg:
+    name_cn: Carlson_RG
+    dtype: float
+    var_type: output
+  y_elliprj:
+    name_cn: Carlson_RJ
+    dtype: float
+    var_type: output
+  y_jacobi_sn:
+    name_cn: Jacobi_sn
+    dtype: float
+    var_type: output
+  y_jacobi_cn:
+    name_cn: Jacobi_cn
+    dtype: float
+    var_type: output
+  y_jacobi_dn:
+    name_cn: Jacobi_dn
+    dtype: float
+    var_type: output
+  y_sn:
+    name_cn: sn别名
+    dtype: float
+    var_type: output
+  y_cn:
+    name_cn: cn别名
+    dtype: float
+    var_type: output
+  y_dn:
+    name_cn: dn别名
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_ellipk
+    name: 完全椭圆积分K
+    output: y_ellipk
+    expression:
+      op: ellipk
+      args:
+        - { ref: p1 }
+
+  - id: test_ellipe
+    name: 完全椭圆积分E
+    output: y_ellipe
+    expression:
+      op: ellipe
+      args:
+        - { ref: p1 }
+
+  - id: test_ellipf
+    name: 不完全椭圆积分F
+    output: y_ellipf
+    expression:
+      op: ellipf
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_ellipe_inc
+    name: 不完全椭圆积分E
+    output: y_ellipe_inc
+    expression:
+      op: ellipe_inc
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_ellippi
+    name: 椭圆积分Pi
+    output: y_ellippi
+    expression:
+      op: ellippi
+      args:
+        - { ref: p3 }
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_elliprc
+    name: Carlson_RC
+    output: y_elliprc
+    expression:
+      op: elliprc
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_elliprd
+    name: Carlson_RD
+    output: y_elliprd
+    expression:
+      op: elliprd
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_elliprf
+    name: Carlson_RF
+    output: y_elliprf
+    expression:
+      op: elliprf
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_elliprg
+    name: Carlson_RG
+    output: y_elliprg
+    expression:
+      op: elliprg
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_elliprj
+    name: Carlson_RJ
+    output: y_elliprj
+    expression:
+      op: elliprj
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { op: add, args: [{ ref: p1 }, { ref: p2 }] }
+
+  - id: test_jacobi_sn
+    name: Jacobi_sn
+    output: y_jacobi_sn
+    expression:
+      op: jacobi_sn
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_jacobi_cn
+    name: Jacobi_cn
+    output: y_jacobi_cn
+    expression:
+      op: jacobi_cn
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_jacobi_dn
+    name: Jacobi_dn
+    output: y_jacobi_dn
+    expression:
+      op: jacobi_dn
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_sn
+    name: sn别名
+    output: y_sn
+    expression:
+      op: sn
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_cn
+    name: cn别名
+    output: y_cn
+    expression:
+      op: cn
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_dn
+    name: dn别名
+    output: y_dn
+    expression:
+      op: dn
+      args:
+        - { ref: p2 }
+        - { ref: p1 }

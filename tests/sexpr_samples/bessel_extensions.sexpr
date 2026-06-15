@@ -1,0 +1,50 @@
+; 贝塞尔函数扩展测试
+
+; 缩放贝塞尔函数
+(i0e x)
+(i1e x)
+(ive v x)
+(k0e x)
+(k1e x)
+(kve v x)
+(jve v x)
+(yve v x)
+(bessel_i0e x)
+(bessel_i1e x)
+(bessel_ine v x)
+(bessel_k0e x)
+(bessel_k1e x)
+(bessel_kne v x)
+(bessel_jne v x)
+(bessel_yne v x)
+
+; 缩放 Hankel 函数
+(hankel1e v x)
+(hankel2e v x)
+
+; 贝塞尔函数导数
+(jvp v x)
+(yvp v x)
+(ivp v x)
+(kvp v x)
+(h1vp v x)
+(h2vp v x)
+(bessel_jnp v x)
+(bessel_ynp v x)
+(bessel_inp v x)
+(bessel_knp v x)
+(hankel1p v x)
+(hankel2p v x)
+
+; Kelvin 函数导数
+(berp x)
+(beip x)
+(kerp x)
+(keip x)
+(kelvin_berp x)
+(kelvin_beip x)
+(kelvin_kerp x)
+(kelvin_keip x)
+
+; 贝塞尔积分
+(besselpoly a lmbda nu)

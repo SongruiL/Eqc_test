@@ -1,0 +1,75 @@
+{
+  "edges": [
+    {
+      "id": "e1",
+      "source": {
+        "node": "temp_kelvin",
+        "port": "TK"
+      },
+      "target": {
+        "node": "arrhenius",
+        "port": "TK"
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "bind_to": {
+        "node": "temp_kelvin",
+        "port": "T"
+      },
+      "description": "温度(摄氏度)",
+      "name": "T"
+    },
+    {
+      "bind_to": {
+        "node": "temp_kelvin",
+        "port": "offset"
+      },
+      "description": "偏移量",
+      "name": "offset"
+    }
+  ],
+  "nodes": [
+    {
+      "config": {},
+      "id": "temp_kelvin",
+      "name": "温度转开尔文",
+      "operator_id": "phenoflex.temp_kelvin",
+      "position": {
+        "x": 100,
+        "y": 100
+      }
+    },
+    {
+      "config": {},
+      "id": "arrhenius",
+      "name": "Arrhenius速率常数",
+      "operator_id": "phenoflex.arrhenius",
+      "position": {
+        "x": 350,
+        "y": 250
+      }
+    },
+    {
+      "config": {},
+      "id": "chill_portion",
+      "name": "冷量份额",
+      "operator_id": "phenoflex.chill_portion",
+      "position": {
+        "x": 600,
+        "y": 400
+      }
+    }
+  ],
+  "outputs": [
+    {
+      "bind_from": {
+        "node": "chill_portion",
+        "port": "cp"
+      },
+      "description": "冷量份额",
+      "name": "cp"
+    }
+  ]
+}

@@ -1,0 +1,356 @@
+# 最终运算符补充测试文件
+meta:
+  id: OPERATORS_FINAL
+  model: FinalOperators
+  name_cn: 最终运算符补充测试
+  version: "1.0"
+  description: 缩放贝塞尔、贝塞尔导数、Huber、Kolmogorov、便利函数等
+
+parameters:
+  p1:
+    name_cn: 参数a
+    dtype: float
+    default: 1.0
+  p2:
+    name_cn: 参数b
+    dtype: float
+    default: 2.0
+  p3:
+    name_cn: 概率p
+    dtype: float
+    default: 0.5
+  p4:
+    name_cn: 阶数n
+    dtype: float
+    default: 2.0
+  p5:
+    name_cn: 自变量x
+    dtype: float
+    default: 1.5
+  p6:
+    name_cn: delta
+    dtype: float
+    default: 1.0
+  p7:
+    name_cn: 角度deg
+    dtype: float
+    default: 45.0
+
+variables:
+  y_i0e:
+    name_cn: 缩放I0
+    dtype: float
+    var_type: output
+  y_i1e:
+    name_cn: 缩放I1
+    dtype: float
+    var_type: output
+  y_ive:
+    name_cn: 缩放In
+    dtype: float
+    var_type: output
+  y_k0e:
+    name_cn: 缩放K0
+    dtype: float
+    var_type: output
+  y_k1e:
+    name_cn: 缩放K1
+    dtype: float
+    var_type: output
+  y_kve:
+    name_cn: 缩放Kn
+    dtype: float
+    var_type: output
+  y_jve:
+    name_cn: 缩放Jn
+    dtype: float
+    var_type: output
+  y_yve:
+    name_cn: 缩放Yn
+    dtype: float
+    var_type: output
+  y_h1e:
+    name_cn: 缩放H1
+    dtype: float
+    var_type: output
+  y_h2e:
+    name_cn: 缩放H2
+    dtype: float
+    var_type: output
+  y_jvp:
+    name_cn: J导数
+    dtype: float
+    var_type: output
+  y_yvp:
+    name_cn: Y导数
+    dtype: float
+    var_type: output
+  y_ivp:
+    name_cn: I导数
+    dtype: float
+    var_type: output
+  y_kvp:
+    name_cn: K导数
+    dtype: float
+    var_type: output
+  y_huber:
+    name_cn: Huber
+    dtype: float
+    var_type: output
+  y_phuber:
+    name_cn: PseudoHuber
+    dtype: float
+    var_type: output
+  y_kolmo:
+    name_cn: Kolmogorov
+    dtype: float
+    var_type: output
+  y_wofz:
+    name_cn: Faddeeva
+    dtype: float
+    var_type: output
+  y_diric:
+    name_cn: Dirichlet
+    dtype: float
+    var_type: output
+  y_gammaincinv:
+    name_cn: GammaIncInv
+    dtype: float
+    var_type: output
+  y_cosm1:
+    name_cn: Cosm1
+    dtype: float
+    var_type: output
+  y_exp10:
+    name_cn: Exp10
+    dtype: float
+    var_type: output
+  y_cosdg:
+    name_cn: Cosdg
+    dtype: float
+    var_type: output
+  y_sindg:
+    name_cn: Sindg
+    dtype: float
+    var_type: output
+  y_radian:
+    name_cn: Radian
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_i0e
+    name: 缩放I0
+    output: y_i0e
+    expression:
+      op: i0e
+      args:
+        - { ref: p5 }
+
+  - id: test_i1e
+    name: 缩放I1
+    output: y_i1e
+    expression:
+      op: i1e
+      args:
+        - { ref: p5 }
+
+  - id: test_ive
+    name: 缩放In
+    output: y_ive
+    expression:
+      op: ive
+      args:
+        - { ref: p4 }
+        - { ref: p5 }
+
+  - id: test_k0e
+    name: 缩放K0
+    output: y_k0e
+    expression:
+      op: k0e
+      args:
+        - { ref: p5 }
+
+  - id: test_k1e
+    name: 缩放K1
+    output: y_k1e
+    expression:
+      op: k1e
+      args:
+        - { ref: p5 }
+
+  - id: test_kve
+    name: 缩放Kn
+    output: y_kve
+    expression:
+      op: kve
+      args:
+        - { ref: p4 }
+        - { ref: p5 }
+
+  - id: test_jve
+    name: 缩放Jn
+    output: y_jve
+    expression:
+      op: jve
+      args:
+        - { ref: p4 }
+        - { ref: p5 }
+
+  - id: test_yve
+    name: 缩放Yn
+    output: y_yve
+    expression:
+      op: yve
+      args:
+        - { ref: p4 }
+        - { ref: p5 }
+
+  - id: test_h1e
+    name: 缩放Hankel1
+    output: y_h1e
+    expression:
+      op: hankel1e
+      args:
+        - { ref: p4 }
+        - { ref: p5 }
+
+  - id: test_h2e
+    name: 缩放Hankel2
+    output: y_h2e
+    expression:
+      op: hankel2e
+      args:
+        - { ref: p4 }
+        - { ref: p5 }
+
+  - id: test_jvp
+    name: J导数
+    output: y_jvp
+    expression:
+      op: jvp
+      args:
+        - { ref: p4 }
+        - { ref: p5 }
+
+  - id: test_yvp
+    name: Y导数
+    output: y_yvp
+    expression:
+      op: yvp
+      args:
+        - { ref: p4 }
+        - { ref: p5 }
+
+  - id: test_ivp
+    name: I导数
+    output: y_ivp
+    expression:
+      op: ivp
+      args:
+        - { ref: p4 }
+        - { ref: p5 }
+
+  - id: test_kvp
+    name: K导数
+    output: y_kvp
+    expression:
+      op: kvp
+      args:
+        - { ref: p4 }
+        - { ref: p5 }
+
+  - id: test_huber
+    name: Huber损失
+    output: y_huber
+    expression:
+      op: huber
+      args:
+        - { ref: p6 }
+        - { ref: p5 }
+
+  - id: test_phuber
+    name: PseudoHuber损失
+    output: y_phuber
+    expression:
+      op: pseudo_huber
+      args:
+        - { ref: p6 }
+        - { ref: p5 }
+
+  - id: test_kolmo
+    name: Kolmogorov
+    output: y_kolmo
+    expression:
+      op: kolmogorov
+      args:
+        - { ref: p5 }
+
+  - id: test_wofz
+    name: Faddeeva
+    output: y_wofz
+    expression:
+      op: wofz
+      args:
+        - { ref: p5 }
+
+  - id: test_diric
+    name: Dirichlet核
+    output: y_diric
+    expression:
+      op: diric
+      args:
+        - { ref: p5 }
+        - { ref: p4 }
+
+  - id: test_gammaincinv
+    name: GammaIncInv
+    output: y_gammaincinv
+    expression:
+      op: gammaincinv
+      args:
+        - { ref: p1 }
+        - { ref: p3 }
+
+  - id: test_cosm1
+    name: Cosm1
+    output: y_cosm1
+    expression:
+      op: cosm1
+      args:
+        - { ref: p5 }
+
+  - id: test_exp10
+    name: Exp10
+    output: y_exp10
+    expression:
+      op: exp10
+      args:
+        - { ref: p5 }
+
+  - id: test_cosdg
+    name: Cosdg
+    output: y_cosdg
+    expression:
+      op: cosdg
+      args:
+        - { ref: p7 }
+
+  - id: test_sindg
+    name: Sindg
+    output: y_sindg
+    expression:
+      op: sindg
+      args:
+        - { ref: p7 }
+
+  - id: test_radian
+    name: Radian
+    output: y_radian
+    expression:
+      op: radian
+      args:
+        - { ref: p7 }
+        - { const: 30 }
+        - { const: 0 }

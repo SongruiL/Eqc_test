@@ -1,0 +1,203 @@
+# 指数对数函数测试
+meta:
+  id: OPERATORS_EXP_LOG
+  model: ExpLogOperators
+  name_cn: 指数对数函数测试
+  version: "1.0"
+  description: 测试指数和对数函数
+
+parameters:
+  p1:
+    name_cn: 输入x
+    dtype: float
+    default: 2.0
+  p2:
+    name_cn: 底数b
+    dtype: float
+    default: 10.0
+
+variables:
+  y_exp:
+    name_cn: 指数
+    dtype: float
+    var_type: output
+  y_ln:
+    name_cn: 自然对数
+    dtype: float
+    var_type: output
+  y_log:
+    name_cn: 对数别名
+    dtype: float
+    var_type: output
+  y_log10:
+    name_cn: 常用对数
+    dtype: float
+    var_type: output
+  y_log2:
+    name_cn: 二进制对数
+    dtype: float
+    var_type: output
+  y_log1p:
+    name_cn: log1p
+    dtype: float
+    var_type: output
+  y_expm1:
+    name_cn: expm1
+    dtype: float
+    var_type: output
+  y_exp2:
+    name_cn: 2的幂
+    dtype: float
+    var_type: output
+  y_logn:
+    name_cn: 任意底对数
+    dtype: float
+    var_type: output
+  y_pow:
+    name_cn: 幂运算
+    dtype: float
+    var_type: output
+  y_sqrt:
+    name_cn: 平方根
+    dtype: float
+    var_type: output
+  y_cbrt:
+    name_cn: 立方根
+    dtype: float
+    var_type: output
+  y_exprel:
+    name_cn: 相对指数
+    dtype: float
+    var_type: output
+  y_log1pmx:
+    name_cn: log1pmx
+    dtype: float
+    var_type: output
+  y_powm1:
+    name_cn: powm1
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_exp
+    name: 指数函数
+    output: y_exp
+    expression:
+      op: exp
+      args:
+        - { ref: p1 }
+
+  - id: test_ln
+    name: 自然对数
+    output: y_ln
+    expression:
+      op: ln
+      args:
+        - { ref: p1 }
+
+  - id: test_log
+    name: 对数别名
+    output: y_log
+    expression:
+      op: log
+      args:
+        - { ref: p1 }
+
+  - id: test_log10
+    name: 常用对数
+    output: y_log10
+    expression:
+      op: log10
+      args:
+        - { ref: p1 }
+
+  - id: test_log2
+    name: 二进制对数
+    output: y_log2
+    expression:
+      op: log2
+      args:
+        - { ref: p1 }
+
+  - id: test_log1p
+    name: log1p函数
+    output: y_log1p
+    expression:
+      op: log1p
+      args:
+        - { ref: p1 }
+
+  - id: test_expm1
+    name: expm1函数
+    output: y_expm1
+    expression:
+      op: expm1
+      args:
+        - { ref: p1 }
+
+  - id: test_exp2
+    name: 2的幂
+    output: y_exp2
+    expression:
+      op: exp2
+      args:
+        - { ref: p1 }
+
+  - id: test_logn
+    name: 任意底对数
+    output: y_logn
+    expression:
+      op: logn
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_pow
+    name: 幂运算
+    output: y_pow
+    expression:
+      op: pow
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_sqrt
+    name: 平方根
+    output: y_sqrt
+    expression:
+      op: sqrt
+      args:
+        - { ref: p1 }
+
+  - id: test_cbrt
+    name: 立方根
+    output: y_cbrt
+    expression:
+      op: cbrt
+      args:
+        - { ref: p1 }
+
+  - id: test_exprel
+    name: 相对指数
+    output: y_exprel
+    expression:
+      op: exprel
+      args:
+        - { ref: p1 }
+
+  - id: test_log1pmx
+    name: log1pmx函数
+    output: y_log1pmx
+    expression:
+      op: log1pmx
+      args:
+        - { ref: p1 }
+
+  - id: test_powm1
+    name: powm1函数
+    output: y_powm1
+    expression:
+      op: powm1
+      args:
+        - { ref: p1 }
+        - { ref: p2 }

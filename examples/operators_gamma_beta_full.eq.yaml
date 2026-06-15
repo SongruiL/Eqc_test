@@ -1,0 +1,230 @@
+# Gamma/Beta 函数完整测试
+meta:
+  id: OPERATORS_GAMMA_BETA_FULL
+  model: GammaBetaFullOperators
+  name_cn: Gamma/Beta函数完整测试
+  version: "1.0"
+  description: 测试Gamma和Beta函数系列
+
+parameters:
+  p1:
+    name_cn: 输入x
+    dtype: float
+    default: 2.5
+  p2:
+    name_cn: 参数a
+    dtype: float
+    default: 2.0
+  p3:
+    name_cn: 参数b
+    dtype: float
+    default: 3.0
+  p4:
+    name_cn: 阶数n
+    dtype: float
+    default: 2.0
+
+variables:
+  y_gamma:
+    name_cn: Gamma函数
+    dtype: float
+    var_type: output
+  y_lgamma:
+    name_cn: 对数Gamma
+    dtype: float
+    var_type: output
+  y_gammaln:
+    name_cn: 对数Gamma别名
+    dtype: float
+    var_type: output
+  y_loggamma:
+    name_cn: 对数Gamma别名2
+    dtype: float
+    var_type: output
+  y_digamma:
+    name_cn: Digamma函数
+    dtype: float
+    var_type: output
+  y_psi:
+    name_cn: Digamma别名
+    dtype: float
+    var_type: output
+  y_polygamma:
+    name_cn: Polygamma函数
+    dtype: float
+    var_type: output
+  y_rgamma:
+    name_cn: 倒数Gamma
+    dtype: float
+    var_type: output
+  y_gammasgn:
+    name_cn: Gamma符号
+    dtype: float
+    var_type: output
+  y_beta:
+    name_cn: Beta函数
+    dtype: float
+    var_type: output
+  y_lbeta:
+    name_cn: 对数Beta
+    dtype: float
+    var_type: output
+  y_betaln:
+    name_cn: 对数Beta别名
+    dtype: float
+    var_type: output
+  y_betainc:
+    name_cn: 不完全Beta
+    dtype: float
+    var_type: output
+  y_betaincinv:
+    name_cn: 不完全Beta逆
+    dtype: float
+    var_type: output
+  y_gammainc_lower:
+    name_cn: 下不完全Gamma
+    dtype: float
+    var_type: output
+  y_gammainc_upper:
+    name_cn: 上不完全Gamma
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_gamma
+    name: Gamma函数
+    output: y_gamma
+    expression:
+      op: gamma
+      args:
+        - { ref: p1 }
+
+  - id: test_lgamma
+    name: 对数Gamma
+    output: y_lgamma
+    expression:
+      op: lgamma
+      args:
+        - { ref: p1 }
+
+  - id: test_gammaln
+    name: 对数Gamma别名
+    output: y_gammaln
+    expression:
+      op: gammaln
+      args:
+        - { ref: p1 }
+
+  - id: test_loggamma
+    name: 对数Gamma别名2
+    output: y_loggamma
+    expression:
+      op: loggamma
+      args:
+        - { ref: p1 }
+
+  - id: test_digamma
+    name: Digamma函数
+    output: y_digamma
+    expression:
+      op: digamma
+      args:
+        - { ref: p1 }
+
+  - id: test_psi
+    name: Digamma别名
+    output: y_psi
+    expression:
+      op: psi
+      args:
+        - { ref: p1 }
+
+  - id: test_polygamma
+    name: Polygamma函数
+    output: y_polygamma
+    expression:
+      op: polygamma
+      args:
+        - { ref: p4 }
+        - { ref: p1 }
+
+  - id: test_rgamma
+    name: 倒数Gamma
+    output: y_rgamma
+    expression:
+      op: rgamma
+      args:
+        - { ref: p1 }
+
+  - id: test_gammasgn
+    name: Gamma符号
+    output: y_gammasgn
+    expression:
+      op: gammasgn
+      args:
+        - { ref: p1 }
+
+  - id: test_beta
+    name: Beta函数
+    output: y_beta
+    expression:
+      op: beta
+      args:
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_lbeta
+    name: 对数Beta
+    output: y_lbeta
+    expression:
+      op: lbeta
+      args:
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_betaln
+    name: 对数Beta别名
+    output: y_betaln
+    expression:
+      op: betaln
+      args:
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_betainc
+    name: 不完全Beta
+    output: y_betainc
+    expression:
+      op: betainc
+      args:
+        - { ref: p2 }
+        - { ref: p3 }
+        - { op: div, args: [{ ref: p1 }, { ref: p3 }] }
+
+  - id: test_betaincinv
+    name: 不完全Beta逆
+    output: y_betaincinv
+    expression:
+      op: betaincinv
+      args:
+        - { ref: p2 }
+        - { ref: p3 }
+        - { op: div, args: [{ ref: p1 }, { ref: p3 }] }
+
+  - id: test_gammainc_lower
+    name: 下不完全Gamma
+    output: y_gammainc_lower
+    expression:
+      op: gammainc_lower
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_gammainc_upper
+    name: 上不完全Gamma
+    output: y_gammainc_upper
+    expression:
+      op: gammainc_upper
+      args:
+        - { ref: p2 }
+        - { ref: p1 }

@@ -1,0 +1,173 @@
+% 完整运算符测试 (OPERATORS_COMPLETE)
+% 自动生成，请勿手动编辑
+
+% test_add: 加法测试
+% y_{add} = p1 + p2
+
+% test_sub: 减法测试
+% y_{sub} = p1 - p2
+
+% test_mul: 乘法测试
+% y_{mul} = p1 \times p2
+
+% test_div: 除法测试
+% y_{div} = \frac{p1}{p2}
+
+% test_neg: 取负测试
+% y_{neg} = -p1
+
+% test_pow: 幂运算测试
+% y_{pow} = p1^{p2}
+
+% test_abs: 绝对值测试
+% y_{abs} = |-p1|
+
+% test_mod: 取余测试
+% y_{mod} = p1 \mod p2
+
+% test_ceil: 向上取整测试
+% y_{ceil} = \lceil p1 \rceil
+
+% test_floor: 向下取整测试
+% y_{floor} = \lfloor p1 \rfloor
+
+% test_round: 四舍五入测试
+% y_{round} = \text{round}(p1)
+
+% test_trunc: 截断取整测试
+% y_{trunc} = \text{trunc}(p1)
+
+% test_sign: 符号函数测试
+% y_{sign} = \text{sgn}(p1)
+
+% test_fract: 小数部分测试
+% y_{fract} = \text{frac}(p1)
+
+% test_recip: 倒数测试
+% y_{recip} = \frac{1}{p1}
+
+% test_clamp: 截断范围测试
+% y_{clamp} = \text{clamp}(p1, 1, 3)
+
+% test_exp2: 2的幂测试
+% y_{exp2} = 2^{p2}
+
+% test_expm1: 高精度指数测试
+% y_{expm1} = (e^{p3} - 1)
+
+% test_ln1p: 高精度对数测试
+% y_{ln1p} = \ln(1 + p3)
+
+% test_logbase: 任意底对数测试
+% y_{logbase} = \log_{2}{8}
+
+% test_hypot: 斜边长测试
+% y_{hypot} = \sqrt{3^2 + 4^2}
+
+% test_degrees: 弧度转角度测试
+% y_{degrees} = p5^\circ
+
+% test_radians: 角度转弧度测试
+% y_{radians} = \text{rad}(p4)
+
+% test_copysign: 复制符号测试
+% y_{copysign} = \text{copysign}(p1, -1)
+
+% test_mul_add: 融合乘加测试
+% y_{mul_add} = (p1 \times p2 + p3)
+
+% test_div_euclid: 欧几里得除法测试
+% y_{div_euclid} = \lfloor 7 / 3 \rfloor
+
+% test_rem_euclid: 欧几里得取余测试
+% y_{rem_euclid} = 7 \mod 3
+
+% test_round_ties_even: 银行家舍入测试
+% y_{round_even} = \text{round}_{even}(p1)
+
+% test_midpoint: 中点测试
+% y_{midpoint} = \frac{p1 + p2}{2}
+
+% test_sec: 正割测试
+% y_{sec} = \sec(p5)
+
+% test_csc: 余割测试
+% y_{csc} = \csc(p5)
+
+% test_cot: 余切测试
+% y_{cot} = \cot(p5)
+
+% test_exp: 指数函数测试
+% y_{exp} = e^{1}
+
+% test_ln: 自然对数测试
+% y_{ln} = \ln(p1)
+
+% test_log10: 常用对数测试
+% y_{log10} = \log_{10}(100)
+
+% test_log2: 二进制对数测试
+% y_{log2} = \log_{2}(8)
+
+% test_sqrt: 平方根测试
+% y_{sqrt} = \sqrt{p1}
+
+% test_cbrt: 立方根测试
+% y_{cbrt} = \sqrt[3]{27}
+
+% test_sin: 正弦测试
+% y_{sin} = \sin(p5)
+
+% test_cos: 余弦测试
+% y_{cos} = \cos(p5)
+
+% test_tan: 正切测试
+% y_{tan} = \tan(p5)
+
+% test_asin: 反正弦测试
+% y_{asin} = \arcsin(p3)
+
+% test_acos: 反余弦测试
+% y_{acos} = \arccos(p3)
+
+% test_atan: 反正切测试
+% y_{atan} = \arctan(p1)
+
+% test_atan2: 二参数反正切测试
+% y_{atan2} = \text{atan2}(1, 1)
+
+% test_sinh: 双曲正弦测试
+% y_{sinh} = \sinh(p3)
+
+% test_cosh: 双曲余弦测试
+% y_{cosh} = \cosh(p3)
+
+% test_tanh: 双曲正切测试
+% y_{tanh} = \tanh(p3)
+
+% test_asinh: 反双曲正弦测试
+% y_{asinh} = \text{asinh}(p1)
+
+% test_acosh: 反双曲余弦测试
+% y_{acosh} = \text{acosh}(p1)
+
+% test_atanh: 反双曲正切测试
+% y_{atanh} = \text{atanh}(p3)
+
+% test_max: 最大值测试
+% y_{max} = \max(p1, p2, p3)
+
+% test_min: 最小值测试
+% y_{min} = \min(p1, p2, p3)
+
+% test_pi: 圆周率测试
+% y_{pi} = \pi \times 2
+
+% test_e: 自然常数测试
+% y_{e} = e^{2}
+
+% test_comparison: 比较运算测试
+% y_{comp} = \begin{cases} 1 & \text{if } p1 > p2 \\ 0 & \text{otherwise} \end{cases}
+
+% test_piecewise: 分段函数测试
+% y_{piecewise} = \begin{cases} 0 & \text{if } p1 < 1 \\ 1 & \text{if } p1 < 2 \\ 2 & \text{otherwise} \end{cases}

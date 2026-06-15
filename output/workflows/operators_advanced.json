@@ -1,0 +1,494 @@
+{
+  "definition": {
+    "edges": [],
+    "inputs": [
+      {
+        "bind_to": {
+          "node": "node_0",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_1",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_2",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_2",
+          "port": "p2"
+        },
+        "name": "p2"
+      },
+      {
+        "bind_to": {
+          "node": "node_3",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_3",
+          "port": "p2"
+        },
+        "name": "p2"
+      },
+      {
+        "bind_to": {
+          "node": "node_3",
+          "port": "p3"
+        },
+        "name": "p3"
+      },
+      {
+        "bind_to": {
+          "node": "node_4",
+          "port": "p3"
+        },
+        "name": "p3"
+      },
+      {
+        "bind_to": {
+          "node": "node_5",
+          "port": "p3"
+        },
+        "name": "p3"
+      },
+      {
+        "bind_to": {
+          "node": "node_6",
+          "port": "p5"
+        },
+        "name": "p5"
+      },
+      {
+        "bind_to": {
+          "node": "node_6",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_7",
+          "port": "p5"
+        },
+        "name": "p5"
+      },
+      {
+        "bind_to": {
+          "node": "node_7",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_8",
+          "port": "p5"
+        },
+        "name": "p5"
+      },
+      {
+        "bind_to": {
+          "node": "node_8",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_9",
+          "port": "p5"
+        },
+        "name": "p5"
+      },
+      {
+        "bind_to": {
+          "node": "node_9",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_10",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_11",
+          "port": "p4"
+        },
+        "name": "p4"
+      },
+      {
+        "bind_to": {
+          "node": "node_14",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_14",
+          "port": "p4"
+        },
+        "name": "p4"
+      },
+      {
+        "bind_to": {
+          "node": "node_15",
+          "port": "p4"
+        },
+        "name": "p4"
+      },
+      {
+        "bind_to": {
+          "node": "node_16",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_18",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_18",
+          "port": "p2"
+        },
+        "name": "p2"
+      },
+      {
+        "bind_to": {
+          "node": "node_19",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_19",
+          "port": "p2"
+        },
+        "name": "p2"
+      },
+      {
+        "bind_to": {
+          "node": "node_20",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_20",
+          "port": "p2"
+        },
+        "name": "p2"
+      },
+      {
+        "bind_to": {
+          "node": "node_21",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_21",
+          "port": "p3"
+        },
+        "name": "p3"
+      }
+    ],
+    "nodes": [
+      {
+        "config": {},
+        "id": "node_0",
+        "operator_id": "operators_advanced.test_gamma"
+      },
+      {
+        "config": {},
+        "id": "node_1",
+        "operator_id": "operators_advanced.test_loggamma"
+      },
+      {
+        "config": {},
+        "id": "node_2",
+        "operator_id": "operators_advanced.test_beta"
+      },
+      {
+        "config": {},
+        "id": "node_3",
+        "operator_id": "operators_advanced.test_betainc"
+      },
+      {
+        "config": {},
+        "id": "node_4",
+        "operator_id": "operators_advanced.test_erf"
+      },
+      {
+        "config": {},
+        "id": "node_5",
+        "operator_id": "operators_advanced.test_erfc"
+      },
+      {
+        "config": {},
+        "id": "node_6",
+        "operator_id": "operators_advanced.test_besselj"
+      },
+      {
+        "config": {},
+        "id": "node_7",
+        "operator_id": "operators_advanced.test_bessely"
+      },
+      {
+        "config": {},
+        "id": "node_8",
+        "operator_id": "operators_advanced.test_besseli"
+      },
+      {
+        "config": {},
+        "id": "node_9",
+        "operator_id": "operators_advanced.test_besselk"
+      },
+      {
+        "config": {},
+        "id": "node_10",
+        "operator_id": "operators_advanced.test_digamma"
+      },
+      {
+        "config": {},
+        "id": "node_11",
+        "operator_id": "operators_advanced.test_factorial"
+      },
+      {
+        "config": {},
+        "id": "node_12",
+        "operator_id": "operators_advanced.test_norm_cdf"
+      },
+      {
+        "config": {},
+        "id": "node_13",
+        "operator_id": "operators_advanced.test_norm_pdf"
+      },
+      {
+        "config": {},
+        "id": "node_14",
+        "operator_id": "operators_advanced.test_chi2_cdf"
+      },
+      {
+        "config": {},
+        "id": "node_15",
+        "operator_id": "operators_advanced.test_t_cdf"
+      },
+      {
+        "config": {},
+        "id": "node_16",
+        "operator_id": "operators_advanced.test_poisson_pmf"
+      },
+      {
+        "config": {},
+        "id": "node_17",
+        "operator_id": "operators_advanced.test_binomial"
+      },
+      {
+        "config": {},
+        "id": "node_18",
+        "operator_id": "operators_advanced.test_complex"
+      },
+      {
+        "config": {},
+        "id": "node_19",
+        "operator_id": "operators_advanced.test_complex_real"
+      },
+      {
+        "config": {},
+        "id": "node_20",
+        "operator_id": "operators_advanced.test_complex_imag"
+      },
+      {
+        "config": {},
+        "id": "node_21",
+        "operator_id": "operators_advanced.test_combined_special"
+      }
+    ],
+    "outputs": [
+      {
+        "bind_from": {
+          "node": "node_0",
+          "port": "y_gamma"
+        },
+        "name": "y_gamma"
+      },
+      {
+        "bind_from": {
+          "node": "node_1",
+          "port": "y_loggamma"
+        },
+        "name": "y_loggamma"
+      },
+      {
+        "bind_from": {
+          "node": "node_2",
+          "port": "y_beta"
+        },
+        "name": "y_beta"
+      },
+      {
+        "bind_from": {
+          "node": "node_3",
+          "port": "y_betainc"
+        },
+        "name": "y_betainc"
+      },
+      {
+        "bind_from": {
+          "node": "node_4",
+          "port": "y_erf"
+        },
+        "name": "y_erf"
+      },
+      {
+        "bind_from": {
+          "node": "node_5",
+          "port": "y_erfc"
+        },
+        "name": "y_erfc"
+      },
+      {
+        "bind_from": {
+          "node": "node_6",
+          "port": "y_besselj"
+        },
+        "name": "y_besselj"
+      },
+      {
+        "bind_from": {
+          "node": "node_7",
+          "port": "y_bessely"
+        },
+        "name": "y_bessely"
+      },
+      {
+        "bind_from": {
+          "node": "node_8",
+          "port": "y_besseli"
+        },
+        "name": "y_besseli"
+      },
+      {
+        "bind_from": {
+          "node": "node_9",
+          "port": "y_besselk"
+        },
+        "name": "y_besselk"
+      },
+      {
+        "bind_from": {
+          "node": "node_10",
+          "port": "y_digamma"
+        },
+        "name": "y_digamma"
+      },
+      {
+        "bind_from": {
+          "node": "node_11",
+          "port": "y_factorial"
+        },
+        "name": "y_factorial"
+      },
+      {
+        "bind_from": {
+          "node": "node_12",
+          "port": "y_norm_cdf"
+        },
+        "name": "y_norm_cdf"
+      },
+      {
+        "bind_from": {
+          "node": "node_13",
+          "port": "y_norm_pdf"
+        },
+        "name": "y_norm_pdf"
+      },
+      {
+        "bind_from": {
+          "node": "node_14",
+          "port": "y_chi2_cdf"
+        },
+        "name": "y_chi2_cdf"
+      },
+      {
+        "bind_from": {
+          "node": "node_15",
+          "port": "y_t_cdf"
+        },
+        "name": "y_t_cdf"
+      },
+      {
+        "bind_from": {
+          "node": "node_16",
+          "port": "y_poisson"
+        },
+        "name": "y_poisson"
+      },
+      {
+        "bind_from": {
+          "node": "node_17",
+          "port": "y_binomial"
+        },
+        "name": "y_binomial"
+      },
+      {
+        "bind_from": {
+          "node": "node_18",
+          "port": "y_complex"
+        },
+        "name": "y_complex"
+      },
+      {
+        "bind_from": {
+          "node": "node_19",
+          "port": "y_real"
+        },
+        "name": "y_real"
+      },
+      {
+        "bind_from": {
+          "node": "node_20",
+          "port": "y_imag"
+        },
+        "name": "y_imag"
+      },
+      {
+        "bind_from": {
+          "node": "node_21",
+          "port": "y_combined"
+        },
+        "name": "y_combined"
+      }
+    ]
+  },
+  "description": "测试特殊函数、概率分布、复数运算等高级数学运算符",
+  "name": "OPERATORS_ADVANCED - 高级运算符测试"
+}

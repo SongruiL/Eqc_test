@@ -1,0 +1,43 @@
+; scipy 分布函数别名测试
+
+; 二项分布
+(bdtr k n p)
+(bdtrc k n p)
+(bdtri k n p)
+
+; 卡方分布
+(chdtr v x)
+(chdtrc v x)
+(chdtri v p)
+
+; F 分布
+(fdtr dfn dfd x)
+(fdtrc dfn dfd x)
+(fdtri dfn dfd p)
+
+; t 分布
+(stdtr df t)
+(stdtrc df t)
+(stdtrit df p)
+
+; 泊松分布
+(pdtr k m)
+(pdtrc k m)
+(pdtri k y)
+
+; Beta 分布
+(btdtr a b x)
+(btdtrc a b x)
+
+; Gamma 分布
+(gdtr a b x)
+(gdtrc a b x)
+
+; Beta 函数扩展
+(betaincc a b x)
+(betainccinv a b y)
+(betaincinv a b y)
+
+; Gamma 函数扩展
+(gammaincinv a y)
+(gammainccinv a y)

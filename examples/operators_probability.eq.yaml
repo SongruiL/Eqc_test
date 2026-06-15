@@ -1,0 +1,117 @@
+# 概率分布测试
+meta:
+  id: OPERATORS_PROBABILITY
+  model: ProbabilityDistributions
+  name_cn: 概率分布测试
+  version: "1.0"
+  description: 测试各种概率分布的PDF/CDF/PPF
+
+parameters:
+  p1:
+    name_cn: 输入值x
+    dtype: float
+    default: 1.5
+  p2:
+    name_cn: 均值mu
+    dtype: float
+    default: 0.0
+  p3:
+    name_cn: 标准差sigma
+    dtype: float
+    default: 1.0
+  p4:
+    name_cn: 自由度df
+    dtype: float
+    default: 10.0
+  p5:
+    name_cn: 概率p
+    dtype: float
+    default: 0.95
+  p6:
+    name_cn: lambda参数
+    dtype: float
+    default: 2.0
+
+variables:
+  y_norm_pdf:
+    name_cn: 正态PDF
+    dtype: float
+    var_type: output
+  y_norm_cdf:
+    name_cn: 正态CDF
+    dtype: float
+    var_type: output
+  y_norm_ppf:
+    name_cn: 正态PPF
+    dtype: float
+    var_type: output
+  y_t_cdf:
+    name_cn: t分布CDF
+    dtype: float
+    var_type: output
+  y_chi2_cdf:
+    name_cn: 卡方CDF
+    dtype: float
+    var_type: output
+  y_exp_pdf:
+    name_cn: 指数PDF
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_norm_pdf
+    name: 正态分布PDF
+    output: y_norm_pdf
+    expression:
+      op: norm_pdf
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_norm_cdf
+    name: 正态分布CDF
+    output: y_norm_cdf
+    expression:
+      op: norm_cdf
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_norm_ppf
+    name: 正态分布PPF
+    output: y_norm_ppf
+    expression:
+      op: norm_ppf
+      args:
+        - { ref: p5 }
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_t_cdf
+    name: t分布CDF
+    output: y_t_cdf
+    expression:
+      op: t_cdf
+      args:
+        - { ref: p1 }
+        - { ref: p4 }
+
+  - id: test_chi2_cdf
+    name: 卡方分布CDF
+    output: y_chi2_cdf
+    expression:
+      op: chi2_cdf
+      args:
+        - { ref: p1 }
+        - { ref: p4 }
+
+  - id: test_exp_pdf
+    name: 指数分布PDF
+    output: y_exp_pdf
+    expression:
+      op: exponential_pdf
+      args:
+        - { ref: p1 }
+        - { ref: p6 }

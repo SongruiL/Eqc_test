@@ -1,0 +1,134 @@
+# PPF 分位数函数扩展测试
+meta:
+  id: OPERATORS_PPF_EXTENDED
+  model: PPFExtendedOperators
+  name_cn: PPF分位数函数扩展测试
+  version: "1.0"
+  description: 测试各种分布的分位数函数
+
+parameters:
+  p1:
+    name_cn: 概率p
+    dtype: float
+    default: 0.5
+  p2:
+    name_cn: 参数a
+    dtype: float
+    default: 2.0
+  p3:
+    name_cn: 参数b
+    dtype: float
+    default: 3.0
+
+variables:
+  y_gamma_ppf:
+    name_cn: Gamma_PPF
+    dtype: float
+    var_type: output
+  y_beta_ppf:
+    name_cn: Beta_PPF
+    dtype: float
+    var_type: output
+  y_weibull_ppf:
+    name_cn: Weibull_PPF
+    dtype: float
+    var_type: output
+  y_lognorm_ppf:
+    name_cn: LogNorm_PPF
+    dtype: float
+    var_type: output
+  y_uniform_ppf:
+    name_cn: Uniform_PPF
+    dtype: float
+    var_type: output
+  y_cauchy_ppf:
+    name_cn: Cauchy_PPF
+    dtype: float
+    var_type: output
+  y_exp_ppf:
+    name_cn: Exp_PPF
+    dtype: float
+    var_type: output
+  y_gammainccinv:
+    name_cn: GammaIncCInv
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_gamma_ppf
+    name: Gamma_PPF
+    output: y_gamma_ppf
+    expression:
+      op: gamma_ppf
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_beta_ppf
+    name: Beta_PPF
+    output: y_beta_ppf
+    expression:
+      op: beta_ppf
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_weibull_ppf
+    name: Weibull_PPF
+    output: y_weibull_ppf
+    expression:
+      op: weibull_ppf
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_lognorm_ppf
+    name: LogNorm_PPF
+    output: y_lognorm_ppf
+    expression:
+      op: lognorm_ppf
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_uniform_ppf
+    name: Uniform_PPF
+    output: y_uniform_ppf
+    expression:
+      op: uniform_ppf
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_cauchy_ppf
+    name: Cauchy_PPF
+    output: y_cauchy_ppf
+    expression:
+      op: cauchy_ppf
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_exp_ppf
+    name: Exp_PPF
+    output: y_exp_ppf
+    expression:
+      op: exp_ppf
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_gammainccinv
+    name: GammaIncCInv
+    output: y_gammainccinv
+    expression:
+      op: gammainccinv
+      args:
+        - { ref: p2 }
+        - { ref: p1 }

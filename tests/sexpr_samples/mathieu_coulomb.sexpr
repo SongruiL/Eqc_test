@@ -1,0 +1,31 @@
+; Mathieu 和 Coulomb 函数测试
+
+; Mathieu 函数
+(mathieu_a m q)
+(mathieu_b m q)
+(mathieu_ce m q x)
+(mathieu_se m q x)
+(mathieu_cem m q x)
+(mathieu_sem m q x)
+
+; Coulomb 波函数
+(coulomb_f l eta rho)
+(coulomb_g l eta rho)
+(coulombf l eta rho)
+(coulombg l eta rho)
+
+; 球扁旋转体波函数（长球）
+(pro_ang1 m n c x)
+(pro_rad1 m n c x)
+(pro_rad2 m n c x)
+(prolate_ang1 m n c x)
+(prolate_rad1 m n c x)
+(prolate_rad2 m n c x)
+
+; 球扁旋转体波函数（扁球）
+(obl_ang1 m n c x)
+(obl_rad1 m n c x)
+(obl_rad2 m n c x)
+(oblate_ang1 m n c x)
+(oblate_rad1 m n c x)
+(oblate_rad2 m n c x)

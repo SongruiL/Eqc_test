@@ -1,0 +1,44 @@
+; 概率分布函数测试
+
+; 正态分布
+(norm_pdf x mu sigma)
+(norm_cdf x mu sigma)
+(norm_ppf p mu sigma)
+
+; t分布
+(t_pdf x df)
+(t_cdf x df)
+(t_ppf p df)
+
+; 卡方分布
+(chi2_pdf x df)
+(chi2_cdf x df)
+(chi2_ppf p df)
+
+; F分布
+(f_pdf x df1 df2)
+(f_cdf x df1 df2)
+(f_ppf p df1 df2)
+
+; 泊松分布
+(poisson_pmf k lambda)
+(poisson_cdf k lambda)
+
+; 二项分布
+(binomial_pmf k n p)
+(binomial_cdf k n p)
+
+; 指数分布
+(exponential_pdf x lambda)
+(exponential_cdf x lambda)
+(exp_pdf x lambda)   ; 别名
+(exp_cdf x lambda)   ; 别名
+
+; 分位数函数
+(exp_ppf p lambda)
+(gamma_ppf p alpha beta)
+(beta_ppf p alpha beta)
+(weibull_ppf p k lambda)
+(lognorm_ppf p mu sigma)
+(uniform_ppf p a b)
+(cauchy_ppf p loc scale)

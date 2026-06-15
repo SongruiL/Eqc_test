@@ -1,0 +1,92 @@
+# Airy 函数扩展测试
+meta:
+  id: OPERATORS_AIRY_EXTENDED
+  model: AiryExtendedOperators
+  name_cn: Airy函数扩展测试
+  version: "1.0"
+  description: 测试Airy函数的别名和扩展
+
+parameters:
+  p1:
+    name_cn: 输入x
+    dtype: float
+    default: 1.0
+  p2:
+    name_cn: 零点序号s
+    dtype: float
+    default: 2.0
+
+variables:
+  y_airy:
+    name_cn: Airy组合
+    dtype: float
+    var_type: output
+  y_airyai:
+    name_cn: Airy_Ai别名
+    dtype: float
+    var_type: output
+  y_airybi:
+    name_cn: Airy_Bi别名
+    dtype: float
+    var_type: output
+  y_airye:
+    name_cn: Airy缩放
+    dtype: float
+    var_type: output
+  y_airy_zero_ai:
+    name_cn: Airy_Ai零点
+    dtype: float
+    var_type: output
+  y_airy_zero_bi:
+    name_cn: Airy_Bi零点
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_airy
+    name: Airy组合函数
+    output: y_airy
+    expression:
+      op: airy
+      args:
+        - { ref: p1 }
+
+  - id: test_airyai
+    name: Airy_Ai别名
+    output: y_airyai
+    expression:
+      op: airyai
+      args:
+        - { ref: p1 }
+
+  - id: test_airybi
+    name: Airy_Bi别名
+    output: y_airybi
+    expression:
+      op: airybi
+      args:
+        - { ref: p1 }
+
+  - id: test_airye
+    name: Airy缩放
+    output: y_airye
+    expression:
+      op: airye
+      args:
+        - { ref: p1 }
+
+  - id: test_airy_zero_ai
+    name: Airy_Ai零点
+    output: y_airy_zero_ai
+    expression:
+      op: airy_zero_ai
+      args:
+        - { ref: p2 }
+
+  - id: test_airy_zero_bi
+    name: Airy_Bi零点
+    output: y_airy_zero_bi
+    expression:
+      op: airy_zero_bi
+      args:
+        - { ref: p2 }

@@ -1,0 +1,155 @@
+# 超几何函数测试
+meta:
+  id: OPERATORS_HYPERGEOMETRIC
+  model: HypergeometricOperators
+  name_cn: 超几何函数测试
+  version: "1.0"
+  description: 测试超几何函数系列
+
+parameters:
+  p1:
+    name_cn: 参数a
+    dtype: float
+    default: 1.0
+  p2:
+    name_cn: 参数b
+    dtype: float
+    default: 2.0
+  p3:
+    name_cn: 参数c
+    dtype: float
+    default: 3.0
+  p4:
+    name_cn: 输入z
+    dtype: float
+    default: 0.5
+
+variables:
+  y_hyp0f1:
+    name_cn: 0F1超几何
+    dtype: float
+    var_type: output
+  y_0f1:
+    name_cn: 0F1别名
+    dtype: float
+    var_type: output
+  y_hyp1f1:
+    name_cn: 1F1超几何
+    dtype: float
+    var_type: output
+  y_1f1:
+    name_cn: 1F1别名
+    dtype: float
+    var_type: output
+  y_kummer_m:
+    name_cn: Kummer_M
+    dtype: float
+    var_type: output
+  y_hyp2f1:
+    name_cn: 2F1超几何
+    dtype: float
+    var_type: output
+  y_2f1:
+    name_cn: 2F1别名
+    dtype: float
+    var_type: output
+  y_gauss_hypergeometric:
+    name_cn: Gauss超几何
+    dtype: float
+    var_type: output
+  y_hyperu:
+    name_cn: Tricomi函数
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_hyp0f1
+    name: 0F1超几何
+    output: y_hyp0f1
+    expression:
+      op: hyp0f1
+      args:
+        - { ref: p1 }
+        - { ref: p4 }
+
+  - id: test_0f1
+    name: 0F1别名
+    output: y_0f1
+    expression:
+      op: 0f1
+      args:
+        - { ref: p1 }
+        - { ref: p4 }
+
+  - id: test_hyp1f1
+    name: 1F1超几何
+    output: y_hyp1f1
+    expression:
+      op: hyp1f1
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p4 }
+
+  - id: test_1f1
+    name: 1F1别名
+    output: y_1f1
+    expression:
+      op: 1f1
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p4 }
+
+  - id: test_kummer_m
+    name: Kummer_M
+    output: y_kummer_m
+    expression:
+      op: kummer_m
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p4 }
+
+  - id: test_hyp2f1
+    name: 2F1超几何
+    output: y_hyp2f1
+    expression:
+      op: hyp2f1
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p4 }
+
+  - id: test_2f1
+    name: 2F1别名
+    output: y_2f1
+    expression:
+      op: 2f1
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p4 }
+
+  - id: test_gauss_hypergeometric
+    name: Gauss超几何
+    output: y_gauss_hypergeometric
+    expression:
+      op: gauss_hypergeometric
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p4 }
+
+  - id: test_hyperu
+    name: Tricomi函数
+    output: y_hyperu
+    expression:
+      op: hyperu
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p4 }

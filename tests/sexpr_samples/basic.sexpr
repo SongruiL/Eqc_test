@@ -1,0 +1,53 @@
+; 基础算术运算测试
+
+; 常量
+42
+3.14159
+-5
+1e10
+2.5e-3
+
+; 符号
+x
+y
+param_1
+pi
+e
+
+; 加法
+(add 1 2)
+(add x y)
+(add (add a b) c)
+
+; 减法
+(sub 10 5)
+(sub x 1)
+
+; 乘法
+(mul 3 4)
+(mul x y)
+
+; 除法
+(div 10 2)
+(div x y)
+
+; 幂运算
+(pow x 2)
+(pow 2 10)
+
+; 取模
+(mod 10 3)
+(rem 17 5)
+
+; 取负
+(neg x)
+
+; 绝对值
+(abs (neg x))
+
+; 取整函数
+(floor 3.7)
+(ceil 3.2)
+(round 3.5)
+(trunc 3.9)
+(sign x)

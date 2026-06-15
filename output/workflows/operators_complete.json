@@ -1,0 +1,1117 @@
+{
+  "definition": {
+    "edges": [],
+    "inputs": [
+      {
+        "bind_to": {
+          "node": "node_0",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_0",
+          "port": "p2"
+        },
+        "name": "p2"
+      },
+      {
+        "bind_to": {
+          "node": "node_1",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_1",
+          "port": "p2"
+        },
+        "name": "p2"
+      },
+      {
+        "bind_to": {
+          "node": "node_2",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_2",
+          "port": "p2"
+        },
+        "name": "p2"
+      },
+      {
+        "bind_to": {
+          "node": "node_3",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_3",
+          "port": "p2"
+        },
+        "name": "p2"
+      },
+      {
+        "bind_to": {
+          "node": "node_4",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_5",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_5",
+          "port": "p2"
+        },
+        "name": "p2"
+      },
+      {
+        "bind_to": {
+          "node": "node_6",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_7",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_7",
+          "port": "p2"
+        },
+        "name": "p2"
+      },
+      {
+        "bind_to": {
+          "node": "node_8",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_9",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_10",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_11",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_12",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_13",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_14",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_15",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_16",
+          "port": "p2"
+        },
+        "name": "p2"
+      },
+      {
+        "bind_to": {
+          "node": "node_17",
+          "port": "p3"
+        },
+        "name": "p3"
+      },
+      {
+        "bind_to": {
+          "node": "node_18",
+          "port": "p3"
+        },
+        "name": "p3"
+      },
+      {
+        "bind_to": {
+          "node": "node_21",
+          "port": "p5"
+        },
+        "name": "p5"
+      },
+      {
+        "bind_to": {
+          "node": "node_22",
+          "port": "p4"
+        },
+        "name": "p4"
+      },
+      {
+        "bind_to": {
+          "node": "node_23",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_24",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_24",
+          "port": "p2"
+        },
+        "name": "p2"
+      },
+      {
+        "bind_to": {
+          "node": "node_24",
+          "port": "p3"
+        },
+        "name": "p3"
+      },
+      {
+        "bind_to": {
+          "node": "node_27",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_28",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_28",
+          "port": "p2"
+        },
+        "name": "p2"
+      },
+      {
+        "bind_to": {
+          "node": "node_29",
+          "port": "p5"
+        },
+        "name": "p5"
+      },
+      {
+        "bind_to": {
+          "node": "node_30",
+          "port": "p5"
+        },
+        "name": "p5"
+      },
+      {
+        "bind_to": {
+          "node": "node_31",
+          "port": "p5"
+        },
+        "name": "p5"
+      },
+      {
+        "bind_to": {
+          "node": "node_33",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_36",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_38",
+          "port": "p5"
+        },
+        "name": "p5"
+      },
+      {
+        "bind_to": {
+          "node": "node_39",
+          "port": "p5"
+        },
+        "name": "p5"
+      },
+      {
+        "bind_to": {
+          "node": "node_40",
+          "port": "p5"
+        },
+        "name": "p5"
+      },
+      {
+        "bind_to": {
+          "node": "node_41",
+          "port": "p3"
+        },
+        "name": "p3"
+      },
+      {
+        "bind_to": {
+          "node": "node_42",
+          "port": "p3"
+        },
+        "name": "p3"
+      },
+      {
+        "bind_to": {
+          "node": "node_43",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_45",
+          "port": "p3"
+        },
+        "name": "p3"
+      },
+      {
+        "bind_to": {
+          "node": "node_46",
+          "port": "p3"
+        },
+        "name": "p3"
+      },
+      {
+        "bind_to": {
+          "node": "node_47",
+          "port": "p3"
+        },
+        "name": "p3"
+      },
+      {
+        "bind_to": {
+          "node": "node_48",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_49",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_50",
+          "port": "p3"
+        },
+        "name": "p3"
+      },
+      {
+        "bind_to": {
+          "node": "node_51",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_51",
+          "port": "p2"
+        },
+        "name": "p2"
+      },
+      {
+        "bind_to": {
+          "node": "node_51",
+          "port": "p3"
+        },
+        "name": "p3"
+      },
+      {
+        "bind_to": {
+          "node": "node_52",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_52",
+          "port": "p2"
+        },
+        "name": "p2"
+      },
+      {
+        "bind_to": {
+          "node": "node_52",
+          "port": "p3"
+        },
+        "name": "p3"
+      },
+      {
+        "bind_to": {
+          "node": "node_55",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_55",
+          "port": "p2"
+        },
+        "name": "p2"
+      },
+      {
+        "bind_to": {
+          "node": "node_56",
+          "port": "p1"
+        },
+        "name": "p1"
+      }
+    ],
+    "nodes": [
+      {
+        "config": {},
+        "id": "node_0",
+        "operator_id": "operators_complete.test_add"
+      },
+      {
+        "config": {},
+        "id": "node_1",
+        "operator_id": "operators_complete.test_sub"
+      },
+      {
+        "config": {},
+        "id": "node_2",
+        "operator_id": "operators_complete.test_mul"
+      },
+      {
+        "config": {},
+        "id": "node_3",
+        "operator_id": "operators_complete.test_div"
+      },
+      {
+        "config": {},
+        "id": "node_4",
+        "operator_id": "operators_complete.test_neg"
+      },
+      {
+        "config": {},
+        "id": "node_5",
+        "operator_id": "operators_complete.test_pow"
+      },
+      {
+        "config": {},
+        "id": "node_6",
+        "operator_id": "operators_complete.test_abs"
+      },
+      {
+        "config": {},
+        "id": "node_7",
+        "operator_id": "operators_complete.test_mod"
+      },
+      {
+        "config": {},
+        "id": "node_8",
+        "operator_id": "operators_complete.test_ceil"
+      },
+      {
+        "config": {},
+        "id": "node_9",
+        "operator_id": "operators_complete.test_floor"
+      },
+      {
+        "config": {},
+        "id": "node_10",
+        "operator_id": "operators_complete.test_round"
+      },
+      {
+        "config": {},
+        "id": "node_11",
+        "operator_id": "operators_complete.test_trunc"
+      },
+      {
+        "config": {},
+        "id": "node_12",
+        "operator_id": "operators_complete.test_sign"
+      },
+      {
+        "config": {},
+        "id": "node_13",
+        "operator_id": "operators_complete.test_fract"
+      },
+      {
+        "config": {},
+        "id": "node_14",
+        "operator_id": "operators_complete.test_recip"
+      },
+      {
+        "config": {},
+        "id": "node_15",
+        "operator_id": "operators_complete.test_clamp"
+      },
+      {
+        "config": {},
+        "id": "node_16",
+        "operator_id": "operators_complete.test_exp2"
+      },
+      {
+        "config": {},
+        "id": "node_17",
+        "operator_id": "operators_complete.test_expm1"
+      },
+      {
+        "config": {},
+        "id": "node_18",
+        "operator_id": "operators_complete.test_ln1p"
+      },
+      {
+        "config": {},
+        "id": "node_19",
+        "operator_id": "operators_complete.test_logbase"
+      },
+      {
+        "config": {},
+        "id": "node_20",
+        "operator_id": "operators_complete.test_hypot"
+      },
+      {
+        "config": {},
+        "id": "node_21",
+        "operator_id": "operators_complete.test_degrees"
+      },
+      {
+        "config": {},
+        "id": "node_22",
+        "operator_id": "operators_complete.test_radians"
+      },
+      {
+        "config": {},
+        "id": "node_23",
+        "operator_id": "operators_complete.test_copysign"
+      },
+      {
+        "config": {},
+        "id": "node_24",
+        "operator_id": "operators_complete.test_mul_add"
+      },
+      {
+        "config": {},
+        "id": "node_25",
+        "operator_id": "operators_complete.test_div_euclid"
+      },
+      {
+        "config": {},
+        "id": "node_26",
+        "operator_id": "operators_complete.test_rem_euclid"
+      },
+      {
+        "config": {},
+        "id": "node_27",
+        "operator_id": "operators_complete.test_round_ties_even"
+      },
+      {
+        "config": {},
+        "id": "node_28",
+        "operator_id": "operators_complete.test_midpoint"
+      },
+      {
+        "config": {},
+        "id": "node_29",
+        "operator_id": "operators_complete.test_sec"
+      },
+      {
+        "config": {},
+        "id": "node_30",
+        "operator_id": "operators_complete.test_csc"
+      },
+      {
+        "config": {},
+        "id": "node_31",
+        "operator_id": "operators_complete.test_cot"
+      },
+      {
+        "config": {},
+        "id": "node_32",
+        "operator_id": "operators_complete.test_exp"
+      },
+      {
+        "config": {},
+        "id": "node_33",
+        "operator_id": "operators_complete.test_ln"
+      },
+      {
+        "config": {},
+        "id": "node_34",
+        "operator_id": "operators_complete.test_log10"
+      },
+      {
+        "config": {},
+        "id": "node_35",
+        "operator_id": "operators_complete.test_log2"
+      },
+      {
+        "config": {},
+        "id": "node_36",
+        "operator_id": "operators_complete.test_sqrt"
+      },
+      {
+        "config": {},
+        "id": "node_37",
+        "operator_id": "operators_complete.test_cbrt"
+      },
+      {
+        "config": {},
+        "id": "node_38",
+        "operator_id": "operators_complete.test_sin"
+      },
+      {
+        "config": {},
+        "id": "node_39",
+        "operator_id": "operators_complete.test_cos"
+      },
+      {
+        "config": {},
+        "id": "node_40",
+        "operator_id": "operators_complete.test_tan"
+      },
+      {
+        "config": {},
+        "id": "node_41",
+        "operator_id": "operators_complete.test_asin"
+      },
+      {
+        "config": {},
+        "id": "node_42",
+        "operator_id": "operators_complete.test_acos"
+      },
+      {
+        "config": {},
+        "id": "node_43",
+        "operator_id": "operators_complete.test_atan"
+      },
+      {
+        "config": {},
+        "id": "node_44",
+        "operator_id": "operators_complete.test_atan2"
+      },
+      {
+        "config": {},
+        "id": "node_45",
+        "operator_id": "operators_complete.test_sinh"
+      },
+      {
+        "config": {},
+        "id": "node_46",
+        "operator_id": "operators_complete.test_cosh"
+      },
+      {
+        "config": {},
+        "id": "node_47",
+        "operator_id": "operators_complete.test_tanh"
+      },
+      {
+        "config": {},
+        "id": "node_48",
+        "operator_id": "operators_complete.test_asinh"
+      },
+      {
+        "config": {},
+        "id": "node_49",
+        "operator_id": "operators_complete.test_acosh"
+      },
+      {
+        "config": {},
+        "id": "node_50",
+        "operator_id": "operators_complete.test_atanh"
+      },
+      {
+        "config": {},
+        "id": "node_51",
+        "operator_id": "operators_complete.test_max"
+      },
+      {
+        "config": {},
+        "id": "node_52",
+        "operator_id": "operators_complete.test_min"
+      },
+      {
+        "config": {},
+        "id": "node_53",
+        "operator_id": "operators_complete.test_pi"
+      },
+      {
+        "config": {},
+        "id": "node_54",
+        "operator_id": "operators_complete.test_e"
+      },
+      {
+        "config": {},
+        "id": "node_55",
+        "operator_id": "operators_complete.test_comparison"
+      },
+      {
+        "config": {},
+        "id": "node_56",
+        "operator_id": "operators_complete.test_piecewise"
+      }
+    ],
+    "outputs": [
+      {
+        "bind_from": {
+          "node": "node_0",
+          "port": "y_add"
+        },
+        "name": "y_add"
+      },
+      {
+        "bind_from": {
+          "node": "node_1",
+          "port": "y_sub"
+        },
+        "name": "y_sub"
+      },
+      {
+        "bind_from": {
+          "node": "node_2",
+          "port": "y_mul"
+        },
+        "name": "y_mul"
+      },
+      {
+        "bind_from": {
+          "node": "node_3",
+          "port": "y_div"
+        },
+        "name": "y_div"
+      },
+      {
+        "bind_from": {
+          "node": "node_4",
+          "port": "y_neg"
+        },
+        "name": "y_neg"
+      },
+      {
+        "bind_from": {
+          "node": "node_5",
+          "port": "y_pow"
+        },
+        "name": "y_pow"
+      },
+      {
+        "bind_from": {
+          "node": "node_6",
+          "port": "y_abs"
+        },
+        "name": "y_abs"
+      },
+      {
+        "bind_from": {
+          "node": "node_7",
+          "port": "y_mod"
+        },
+        "name": "y_mod"
+      },
+      {
+        "bind_from": {
+          "node": "node_8",
+          "port": "y_ceil"
+        },
+        "name": "y_ceil"
+      },
+      {
+        "bind_from": {
+          "node": "node_9",
+          "port": "y_floor"
+        },
+        "name": "y_floor"
+      },
+      {
+        "bind_from": {
+          "node": "node_10",
+          "port": "y_round"
+        },
+        "name": "y_round"
+      },
+      {
+        "bind_from": {
+          "node": "node_11",
+          "port": "y_trunc"
+        },
+        "name": "y_trunc"
+      },
+      {
+        "bind_from": {
+          "node": "node_12",
+          "port": "y_sign"
+        },
+        "name": "y_sign"
+      },
+      {
+        "bind_from": {
+          "node": "node_13",
+          "port": "y_fract"
+        },
+        "name": "y_fract"
+      },
+      {
+        "bind_from": {
+          "node": "node_14",
+          "port": "y_recip"
+        },
+        "name": "y_recip"
+      },
+      {
+        "bind_from": {
+          "node": "node_15",
+          "port": "y_clamp"
+        },
+        "name": "y_clamp"
+      },
+      {
+        "bind_from": {
+          "node": "node_16",
+          "port": "y_exp2"
+        },
+        "name": "y_exp2"
+      },
+      {
+        "bind_from": {
+          "node": "node_17",
+          "port": "y_expm1"
+        },
+        "name": "y_expm1"
+      },
+      {
+        "bind_from": {
+          "node": "node_18",
+          "port": "y_ln1p"
+        },
+        "name": "y_ln1p"
+      },
+      {
+        "bind_from": {
+          "node": "node_19",
+          "port": "y_logbase"
+        },
+        "name": "y_logbase"
+      },
+      {
+        "bind_from": {
+          "node": "node_20",
+          "port": "y_hypot"
+        },
+        "name": "y_hypot"
+      },
+      {
+        "bind_from": {
+          "node": "node_21",
+          "port": "y_degrees"
+        },
+        "name": "y_degrees"
+      },
+      {
+        "bind_from": {
+          "node": "node_22",
+          "port": "y_radians"
+        },
+        "name": "y_radians"
+      },
+      {
+        "bind_from": {
+          "node": "node_23",
+          "port": "y_copysign"
+        },
+        "name": "y_copysign"
+      },
+      {
+        "bind_from": {
+          "node": "node_24",
+          "port": "y_mul_add"
+        },
+        "name": "y_mul_add"
+      },
+      {
+        "bind_from": {
+          "node": "node_25",
+          "port": "y_div_euclid"
+        },
+        "name": "y_div_euclid"
+      },
+      {
+        "bind_from": {
+          "node": "node_26",
+          "port": "y_rem_euclid"
+        },
+        "name": "y_rem_euclid"
+      },
+      {
+        "bind_from": {
+          "node": "node_27",
+          "port": "y_round_even"
+        },
+        "name": "y_round_even"
+      },
+      {
+        "bind_from": {
+          "node": "node_28",
+          "port": "y_midpoint"
+        },
+        "name": "y_midpoint"
+      },
+      {
+        "bind_from": {
+          "node": "node_29",
+          "port": "y_sec"
+        },
+        "name": "y_sec"
+      },
+      {
+        "bind_from": {
+          "node": "node_30",
+          "port": "y_csc"
+        },
+        "name": "y_csc"
+      },
+      {
+        "bind_from": {
+          "node": "node_31",
+          "port": "y_cot"
+        },
+        "name": "y_cot"
+      },
+      {
+        "bind_from": {
+          "node": "node_32",
+          "port": "y_exp"
+        },
+        "name": "y_exp"
+      },
+      {
+        "bind_from": {
+          "node": "node_33",
+          "port": "y_ln"
+        },
+        "name": "y_ln"
+      },
+      {
+        "bind_from": {
+          "node": "node_34",
+          "port": "y_log10"
+        },
+        "name": "y_log10"
+      },
+      {
+        "bind_from": {
+          "node": "node_35",
+          "port": "y_log2"
+        },
+        "name": "y_log2"
+      },
+      {
+        "bind_from": {
+          "node": "node_36",
+          "port": "y_sqrt"
+        },
+        "name": "y_sqrt"
+      },
+      {
+        "bind_from": {
+          "node": "node_37",
+          "port": "y_cbrt"
+        },
+        "name": "y_cbrt"
+      },
+      {
+        "bind_from": {
+          "node": "node_38",
+          "port": "y_sin"
+        },
+        "name": "y_sin"
+      },
+      {
+        "bind_from": {
+          "node": "node_39",
+          "port": "y_cos"
+        },
+        "name": "y_cos"
+      },
+      {
+        "bind_from": {
+          "node": "node_40",
+          "port": "y_tan"
+        },
+        "name": "y_tan"
+      },
+      {
+        "bind_from": {
+          "node": "node_41",
+          "port": "y_asin"
+        },
+        "name": "y_asin"
+      },
+      {
+        "bind_from": {
+          "node": "node_42",
+          "port": "y_acos"
+        },
+        "name": "y_acos"
+      },
+      {
+        "bind_from": {
+          "node": "node_43",
+          "port": "y_atan"
+        },
+        "name": "y_atan"
+      },
+      {
+        "bind_from": {
+          "node": "node_44",
+          "port": "y_atan2"
+        },
+        "name": "y_atan2"
+      },
+      {
+        "bind_from": {
+          "node": "node_45",
+          "port": "y_sinh"
+        },
+        "name": "y_sinh"
+      },
+      {
+        "bind_from": {
+          "node": "node_46",
+          "port": "y_cosh"
+        },
+        "name": "y_cosh"
+      },
+      {
+        "bind_from": {
+          "node": "node_47",
+          "port": "y_tanh"
+        },
+        "name": "y_tanh"
+      },
+      {
+        "bind_from": {
+          "node": "node_48",
+          "port": "y_asinh"
+        },
+        "name": "y_asinh"
+      },
+      {
+        "bind_from": {
+          "node": "node_49",
+          "port": "y_acosh"
+        },
+        "name": "y_acosh"
+      },
+      {
+        "bind_from": {
+          "node": "node_50",
+          "port": "y_atanh"
+        },
+        "name": "y_atanh"
+      },
+      {
+        "bind_from": {
+          "node": "node_51",
+          "port": "y_max"
+        },
+        "name": "y_max"
+      },
+      {
+        "bind_from": {
+          "node": "node_52",
+          "port": "y_min"
+        },
+        "name": "y_min"
+      },
+      {
+        "bind_from": {
+          "node": "node_53",
+          "port": "y_pi"
+        },
+        "name": "y_pi"
+      },
+      {
+        "bind_from": {
+          "node": "node_54",
+          "port": "y_e"
+        },
+        "name": "y_e"
+      },
+      {
+        "bind_from": {
+          "node": "node_55",
+          "port": "y_comp"
+        },
+        "name": "y_comp"
+      },
+      {
+        "bind_from": {
+          "node": "node_56",
+          "port": "y_piecewise"
+        },
+        "name": "y_piecewise"
+      }
+    ]
+  },
+  "description": "测试所有支持的数学运算符",
+  "name": "OPERATORS_COMPLETE - 完整运算符测试"
+}

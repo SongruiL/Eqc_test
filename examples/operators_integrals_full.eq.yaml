@@ -1,0 +1,296 @@
+# 积分函数测试
+meta:
+  id: OPERATORS_INTEGRALS_FULL
+  model: IntegralsFullOperators
+  name_cn: 积分函数测试
+  version: "1.0"
+  description: 测试各种特殊积分函数
+
+parameters:
+  p1:
+    name_cn: 输入x
+    dtype: float
+    default: 1.0
+  p2:
+    name_cn: 阶数n
+    dtype: float
+    default: 2.0
+
+variables:
+  y_fresnel_s:
+    name_cn: Fresnel_S
+    dtype: float
+    var_type: output
+  y_fresnel_c:
+    name_cn: Fresnel_C
+    dtype: float
+    var_type: output
+  y_fresnels:
+    name_cn: Fresnel_S别名
+    dtype: float
+    var_type: output
+  y_fresnelc:
+    name_cn: Fresnel_C别名
+    dtype: float
+    var_type: output
+  y_dawson:
+    name_cn: Dawson函数
+    dtype: float
+    var_type: output
+  y_dawsn:
+    name_cn: Dawson别名
+    dtype: float
+    var_type: output
+  y_exp_int:
+    name_cn: 指数积分
+    dtype: float
+    var_type: output
+  y_expi:
+    name_cn: 指数积分Ei
+    dtype: float
+    var_type: output
+  y_ei:
+    name_cn: Ei别名
+    dtype: float
+    var_type: output
+  y_e1:
+    name_cn: E1积分
+    dtype: float
+    var_type: output
+  y_log_int:
+    name_cn: 对数积分
+    dtype: float
+    var_type: output
+  y_li:
+    name_cn: 对数积分别名
+    dtype: float
+    var_type: output
+  y_sin_int:
+    name_cn: 正弦积分
+    dtype: float
+    var_type: output
+  y_si:
+    name_cn: 正弦积分别名
+    dtype: float
+    var_type: output
+  y_sinint:
+    name_cn: 正弦积分别名2
+    dtype: float
+    var_type: output
+  y_cos_int:
+    name_cn: 余弦积分
+    dtype: float
+    var_type: output
+  y_ci:
+    name_cn: 余弦积分别名
+    dtype: float
+    var_type: output
+  y_cosint:
+    name_cn: 余弦积分别名2
+    dtype: float
+    var_type: output
+  y_shi:
+    name_cn: 双曲正弦积分
+    dtype: float
+    var_type: output
+  y_chi:
+    name_cn: 双曲余弦积分
+    dtype: float
+    var_type: output
+  y_spence:
+    name_cn: Spence函数
+    dtype: float
+    var_type: output
+  y_li2:
+    name_cn: 二重对数
+    dtype: float
+    var_type: output
+  y_dilog:
+    name_cn: 二重对数别名
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_fresnel_s
+    name: Fresnel_S
+    output: y_fresnel_s
+    expression:
+      op: fresnel_s
+      args:
+        - { ref: p1 }
+
+  - id: test_fresnel_c
+    name: Fresnel_C
+    output: y_fresnel_c
+    expression:
+      op: fresnel_c
+      args:
+        - { ref: p1 }
+
+  - id: test_fresnels
+    name: Fresnel_S别名
+    output: y_fresnels
+    expression:
+      op: fresnels
+      args:
+        - { ref: p1 }
+
+  - id: test_fresnelc
+    name: Fresnel_C别名
+    output: y_fresnelc
+    expression:
+      op: fresnelc
+      args:
+        - { ref: p1 }
+
+  - id: test_dawson
+    name: Dawson函数
+    output: y_dawson
+    expression:
+      op: dawson
+      args:
+        - { ref: p1 }
+
+  - id: test_dawsn
+    name: Dawson别名
+    output: y_dawsn
+    expression:
+      op: dawsn
+      args:
+        - { ref: p1 }
+
+  - id: test_exp_int
+    name: 指数积分
+    output: y_exp_int
+    expression:
+      op: exp_int
+      args:
+        - { ref: p1 }
+
+  - id: test_expi
+    name: 指数积分Ei
+    output: y_expi
+    expression:
+      op: expi
+      args:
+        - { ref: p1 }
+
+  - id: test_ei
+    name: Ei别名
+    output: y_ei
+    expression:
+      op: ei
+      args:
+        - { ref: p1 }
+
+  - id: test_e1
+    name: E1积分
+    output: y_e1
+    expression:
+      op: e1
+      args:
+        - { ref: p1 }
+
+  - id: test_log_int
+    name: 对数积分
+    output: y_log_int
+    expression:
+      op: log_int
+      args:
+        - { ref: p1 }
+
+  - id: test_li
+    name: 对数积分别名
+    output: y_li
+    expression:
+      op: li
+      args:
+        - { ref: p1 }
+
+  - id: test_sin_int
+    name: 正弦积分
+    output: y_sin_int
+    expression:
+      op: sin_int
+      args:
+        - { ref: p1 }
+
+  - id: test_si
+    name: 正弦积分别名
+    output: y_si
+    expression:
+      op: si
+      args:
+        - { ref: p1 }
+
+  - id: test_sinint
+    name: 正弦积分别名2
+    output: y_sinint
+    expression:
+      op: sinint
+      args:
+        - { ref: p1 }
+
+  - id: test_cos_int
+    name: 余弦积分
+    output: y_cos_int
+    expression:
+      op: cos_int
+      args:
+        - { ref: p1 }
+
+  - id: test_ci
+    name: 余弦积分别名
+    output: y_ci
+    expression:
+      op: ci
+      args:
+        - { ref: p1 }
+
+  - id: test_cosint
+    name: 余弦积分别名2
+    output: y_cosint
+    expression:
+      op: cosint
+      args:
+        - { ref: p1 }
+
+  - id: test_shi
+    name: 双曲正弦积分
+    output: y_shi
+    expression:
+      op: shi
+      args:
+        - { ref: p1 }
+
+  - id: test_chi
+    name: 双曲余弦积分
+    output: y_chi
+    expression:
+      op: chi
+      args:
+        - { ref: p1 }
+
+  - id: test_spence
+    name: Spence函数
+    output: y_spence
+    expression:
+      op: spence
+      args:
+        - { ref: p1 }
+
+  - id: test_li2
+    name: 二重对数
+    output: y_li2
+    expression:
+      op: li2
+      args:
+        - { ref: p1 }
+
+  - id: test_dilog
+    name: 二重对数别名
+    output: y_dilog
+    expression:
+      op: dilog
+      args:
+        - { ref: p1 }

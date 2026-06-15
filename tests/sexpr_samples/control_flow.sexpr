@@ -1,0 +1,52 @@
+; 条件表达式和控制流测试
+
+; if-then-else
+(if (gt x 0) (sqrt x) 0)
+(if (lt x 0) (neg x) x)
+(if (eq x 0) 0 (div 1 x))
+
+; 嵌套if
+(if (gt x 0)
+    (if (gt x 10) 10 x)
+    0)
+
+; 关系运算
+(eq x y)
+(lt x y)
+(gt x y)
+(leq x y)
+(geq x y)
+(neq x y)
+
+; 逻辑运算
+(and (gt x 0) (lt x 10))
+(or (lt x 0) (gt x 100))
+(not (eq x 0))
+
+; 复合逻辑
+(and (gt x 0) (and (lt x 10) (neq x 5)))
+(or (and (gt x 0) (lt x 5)) (gt x 10))
+
+; 分段函数
+(piecewise
+  ((lt x 0) (neg x))
+  :otherwise x)
+
+(piecewise
+  ((lt x 0) (neg x))
+  ((eq x 0) 0)
+  :otherwise x)
+
+(piecewise
+  ((lt x -1) -1)
+  ((gt x 1) 1)
+  :otherwise x)
+
+; 求和
+(sum i 1 10 i)
+(sum i 1 n (pow i 2))
+(sum k 0 (sub n 1) (mul (pow -1 k) (div 1 (add (mul 2 k) 1))))
+
+; 连乘
+(product k 1 n k)
+(product i 1 10 (div 1 i))

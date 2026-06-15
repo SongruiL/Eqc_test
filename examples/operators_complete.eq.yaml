@@ -1,0 +1,288 @@
+# 完整运算符测试文件（最终批次）
+meta:
+  id: OPERATORS_COMPLETE
+  model: CompleteOperators
+  name_cn: 完整运算符测试
+  version: "1.0"
+  description: Airy扩展、积分函数、ML函数、Beta补函数、数论、Kelvin导数等
+
+parameters:
+  p1:
+    name_cn: 参数a
+    dtype: float
+    default: 1.0
+  p2:
+    name_cn: 参数b
+    dtype: float
+    default: 2.0
+  p3:
+    name_cn: 概率p
+    dtype: float
+    default: 0.5
+  p4:
+    name_cn: 阶数n
+    dtype: float
+    default: 3.0
+  p5:
+    name_cn: 自变量x
+    dtype: float
+    default: 1.5
+
+variables:
+  y_aie:
+    name_cn: 缩放Airy_Ai
+    dtype: float
+    var_type: output
+  y_bie:
+    name_cn: 缩放Airy_Bi
+    dtype: float
+    var_type: output
+  y_aip:
+    name_cn: Airy_Ai导数
+    dtype: float
+    var_type: output
+  y_bip:
+    name_cn: Airy_Bi导数
+    dtype: float
+    var_type: output
+  y_expn:
+    name_cn: 广义指数积分
+    dtype: float
+    var_type: output
+  y_exp1:
+    name_cn: E1积分
+    dtype: float
+    var_type: output
+  y_shi:
+    name_cn: 双曲正弦积分
+    dtype: float
+    var_type: output
+  y_chi:
+    name_cn: 双曲余弦积分
+    dtype: float
+    var_type: output
+  y_itstruve0:
+    name_cn: Struve积分
+    dtype: float
+    var_type: output
+  y_log_expit:
+    name_cn: LogSigmoid
+    dtype: float
+    var_type: output
+  y_softplus:
+    name_cn: Softplus
+    dtype: float
+    var_type: output
+  y_log_ndtr:
+    name_cn: LogNdtr
+    dtype: float
+    var_type: output
+  y_betaincc:
+    name_cn: Beta补函数
+    dtype: float
+    var_type: output
+  y_bernoulli:
+    name_cn: Bernoulli数
+    dtype: float
+    var_type: output
+  y_euler:
+    name_cn: Euler数
+    dtype: float
+    var_type: output
+  y_ellipkm1:
+    name_cn: EllipK_1m
+    dtype: float
+    var_type: output
+  y_berp:
+    name_cn: Kelvin_berp
+    dtype: float
+    var_type: output
+  y_beip:
+    name_cn: Kelvin_beip
+    dtype: float
+    var_type: output
+  y_kerp:
+    name_cn: Kelvin_kerp
+    dtype: float
+    var_type: output
+  y_keip:
+    name_cn: Kelvin_keip
+    dtype: float
+    var_type: output
+  y_binom:
+    name_cn: 二项系数
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_aie
+    name: 缩放Airy_Ai
+    output: y_aie
+    expression:
+      op: aie
+      args:
+        - { ref: p5 }
+
+  - id: test_bie
+    name: 缩放Airy_Bi
+    output: y_bie
+    expression:
+      op: bie
+      args:
+        - { ref: p5 }
+
+  - id: test_aip
+    name: Airy_Ai导数
+    output: y_aip
+    expression:
+      op: aip
+      args:
+        - { ref: p5 }
+
+  - id: test_bip
+    name: Airy_Bi导数
+    output: y_bip
+    expression:
+      op: bip
+      args:
+        - { ref: p5 }
+
+  - id: test_expn
+    name: 广义指数积分
+    output: y_expn
+    expression:
+      op: expn
+      args:
+        - { ref: p4 }
+        - { ref: p5 }
+
+  - id: test_exp1
+    name: E1积分
+    output: y_exp1
+    expression:
+      op: exp1
+      args:
+        - { ref: p5 }
+
+  - id: test_shi
+    name: 双曲正弦积分
+    output: y_shi
+    expression:
+      op: shi
+      args:
+        - { ref: p5 }
+
+  - id: test_chi
+    name: 双曲余弦积分
+    output: y_chi
+    expression:
+      op: chi
+      args:
+        - { ref: p5 }
+
+  - id: test_itstruve0
+    name: Struve积分
+    output: y_itstruve0
+    expression:
+      op: itstruve0
+      args:
+        - { ref: p5 }
+
+  - id: test_log_expit
+    name: LogSigmoid
+    output: y_log_expit
+    expression:
+      op: log_expit
+      args:
+        - { ref: p5 }
+
+  - id: test_softplus
+    name: Softplus
+    output: y_softplus
+    expression:
+      op: softplus
+      args:
+        - { ref: p5 }
+
+  - id: test_log_ndtr
+    name: LogNdtr
+    output: y_log_ndtr
+    expression:
+      op: log_ndtr
+      args:
+        - { ref: p5 }
+
+  - id: test_betaincc
+    name: Beta补函数
+    output: y_betaincc
+    expression:
+      op: betaincc
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_bernoulli
+    name: Bernoulli数
+    output: y_bernoulli
+    expression:
+      op: bernoulli
+      args:
+        - { ref: p4 }
+
+  - id: test_euler
+    name: Euler数
+    output: y_euler
+    expression:
+      op: euler
+      args:
+        - { ref: p4 }
+
+  - id: test_ellipkm1
+    name: EllipK_1m
+    output: y_ellipkm1
+    expression:
+      op: ellipkm1
+      args:
+        - { ref: p3 }
+
+  - id: test_berp
+    name: Kelvin_berp
+    output: y_berp
+    expression:
+      op: berp
+      args:
+        - { ref: p5 }
+
+  - id: test_beip
+    name: Kelvin_beip
+    output: y_beip
+    expression:
+      op: beip
+      args:
+        - { ref: p5 }
+
+  - id: test_kerp
+    name: Kelvin_kerp
+    output: y_kerp
+    expression:
+      op: kerp
+      args:
+        - { ref: p5 }
+
+  - id: test_keip
+    name: Kelvin_keip
+    output: y_keip
+    expression:
+      op: keip
+      args:
+        - { ref: p5 }
+
+  - id: test_binom
+    name: 二项系数
+    output: y_binom
+    expression:
+      op: binom
+      args:
+        - { ref: p4 }
+        - { ref: p1 }

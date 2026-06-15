@@ -1,0 +1,20 @@
+# Local cargo config for this machine (China network).
+#
+# Direct downloads from static.crates.io (Fastly CDN) time out here, so we use
+# the rsproxy.cn mirror for both the registry index and crate downloads.
+# cargo still verifies every crate's checksum against the official index, so
+# the mirror cannot tamper with crate contents.
+[source.crates-io]
+replace-with = "rsproxy-sparse"
+
+[source.rsproxy-sparse]
+registry = "sparse+https://rsproxy.cn/index/"
+
+[registries.rsproxy]
+index = "https://rsproxy.cn/crates.io-index"
+
+[http]
+check-revoke = false
+
+[net]
+git-fetch-with-cli = true

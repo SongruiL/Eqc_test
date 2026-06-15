@@ -1,0 +1,212 @@
+# Struve/Hankel 函数测试
+meta:
+  id: OPERATORS_STRUVE_HANKEL
+  model: StruveHankelOperators
+  name_cn: Struve/Hankel函数测试
+  version: "1.0"
+  description: 测试Struve和Hankel函数
+
+parameters:
+  p1:
+    name_cn: 输入x
+    dtype: float
+    default: 2.0
+  p2:
+    name_cn: 阶数n
+    dtype: float
+    default: 1.0
+
+variables:
+  y_struve_h:
+    name_cn: Struve_H
+    dtype: float
+    var_type: output
+  y_struve_l:
+    name_cn: Struve_L
+    dtype: float
+    var_type: output
+  y_struve:
+    name_cn: Struve别名
+    dtype: float
+    var_type: output
+  y_modstruve:
+    name_cn: 修改Struve
+    dtype: float
+    var_type: output
+  y_itstruve0:
+    name_cn: Struve积分0
+    dtype: float
+    var_type: output
+  y_it2struve0:
+    name_cn: Struve积分2_0
+    dtype: float
+    var_type: output
+  y_itmodstruve0:
+    name_cn: 修改Struve积分0
+    dtype: float
+    var_type: output
+  y_hankel1:
+    name_cn: Hankel第一类
+    dtype: float
+    var_type: output
+  y_hankel2:
+    name_cn: Hankel第二类
+    dtype: float
+    var_type: output
+  y_hankel_1:
+    name_cn: Hankel1别名
+    dtype: float
+    var_type: output
+  y_hankel_2:
+    name_cn: Hankel2别名
+    dtype: float
+    var_type: output
+  y_hankel1e:
+    name_cn: 缩放Hankel1
+    dtype: float
+    var_type: output
+  y_hankel2e:
+    name_cn: 缩放Hankel2
+    dtype: float
+    var_type: output
+  y_hankel1p:
+    name_cn: Hankel1导数
+    dtype: float
+    var_type: output
+  y_hankel2p:
+    name_cn: Hankel2导数
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_struve_h
+    name: Struve_H函数
+    output: y_struve_h
+    expression:
+      op: struve_h
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_struve_l
+    name: Struve_L函数
+    output: y_struve_l
+    expression:
+      op: struve_l
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_struve
+    name: Struve别名
+    output: y_struve
+    expression:
+      op: struve
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_modstruve
+    name: 修改Struve
+    output: y_modstruve
+    expression:
+      op: modstruve
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_itstruve0
+    name: Struve积分0
+    output: y_itstruve0
+    expression:
+      op: itstruve0
+      args:
+        - { ref: p1 }
+
+  - id: test_it2struve0
+    name: Struve积分2_0
+    output: y_it2struve0
+    expression:
+      op: it2struve0
+      args:
+        - { ref: p1 }
+
+  - id: test_itmodstruve0
+    name: 修改Struve积分0
+    output: y_itmodstruve0
+    expression:
+      op: itmodstruve0
+      args:
+        - { ref: p1 }
+
+  - id: test_hankel1
+    name: Hankel第一类
+    output: y_hankel1
+    expression:
+      op: hankel1
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_hankel2
+    name: Hankel第二类
+    output: y_hankel2
+    expression:
+      op: hankel2
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_hankel_1
+    name: Hankel1别名
+    output: y_hankel_1
+    expression:
+      op: hankel_1
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_hankel_2
+    name: Hankel2别名
+    output: y_hankel_2
+    expression:
+      op: hankel_2
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_hankel1e
+    name: 缩放Hankel1
+    output: y_hankel1e
+    expression:
+      op: hankel1e
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_hankel2e
+    name: 缩放Hankel2
+    output: y_hankel2e
+    expression:
+      op: hankel2e
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_hankel1p
+    name: Hankel1导数
+    output: y_hankel1p
+    expression:
+      op: h1vp
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_hankel2p
+    name: Hankel2导数
+    output: y_hankel2p
+    expression:
+      op: h2vp
+      args:
+        - { ref: p2 }
+        - { ref: p1 }

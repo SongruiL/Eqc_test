@@ -1,0 +1,32 @@
+; Jacobi 椭圆函数和广义正交多项式测试
+
+; Jacobi 椭圆函数
+(jacobi_sn u m)
+(jacobi_cn u m)
+(jacobi_dn u m)
+(sn u m)
+(cn u m)
+(dn u m)
+
+; 广义正交多项式
+(gegenbauer n alpha x)
+(ultraspherical n alpha x)
+(jacobi_p n alpha beta x)
+
+; Theta 函数
+(theta1 z q)
+(theta2 z q)
+(theta3 z q)
+(theta4 z q)
+(jtheta1 z q)
+(jtheta2 z q)
+(jtheta3 z q)
+(jtheta4 z q)
+
+; 抛物柱面函数
+(pbdv v x)
+(pbvv v x)
+(pbwa a x)
+(parabolic_d v x)
+(parabolic_v v x)
+(parabolic_w a x)

@@ -1,0 +1,104 @@
+# Fresnel 和积分扩展测试
+meta:
+  id: OPERATORS_FRESNEL_EXTENDED
+  model: FresnelExtendedOperators
+  name_cn: Fresnel和积分扩展测试
+  version: "1.0"
+  description: 测试Fresnel和积分函数的别名
+
+parameters:
+  p1:
+    name_cn: 输入x
+    dtype: float
+    default: 1.0
+  p2:
+    name_cn: 参数a
+    dtype: float
+    default: 0.5
+
+variables:
+  y_fresnel:
+    name_cn: Fresnel组合
+    dtype: float
+    var_type: output
+  y_modfresnelm:
+    name_cn: 修改Fresnel负
+    dtype: float
+    var_type: output
+  y_mod_fresnel_minus:
+    name_cn: 修改Fresnel负别名
+    dtype: float
+    var_type: output
+  y_modfresnelp:
+    name_cn: 修改Fresnel正
+    dtype: float
+    var_type: output
+  y_mod_fresnel_plus:
+    name_cn: 修改Fresnel正别名
+    dtype: float
+    var_type: output
+  y_shichi:
+    name_cn: Shi和Chi组合
+    dtype: float
+    var_type: output
+  y_sici:
+    name_cn: Si和Ci组合
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_fresnel
+    name: Fresnel组合
+    output: y_fresnel
+    expression:
+      op: fresnel
+      args:
+        - { ref: p1 }
+
+  - id: test_modfresnelm
+    name: 修改Fresnel负
+    output: y_modfresnelm
+    expression:
+      op: modfresnelm
+      args:
+        - { ref: p1 }
+
+  - id: test_mod_fresnel_minus
+    name: 修改Fresnel负别名
+    output: y_mod_fresnel_minus
+    expression:
+      op: mod_fresnel_minus
+      args:
+        - { ref: p1 }
+
+  - id: test_modfresnelp
+    name: 修改Fresnel正
+    output: y_modfresnelp
+    expression:
+      op: modfresnelp
+      args:
+        - { ref: p1 }
+
+  - id: test_mod_fresnel_plus
+    name: 修改Fresnel正别名
+    output: y_mod_fresnel_plus
+    expression:
+      op: mod_fresnel_plus
+      args:
+        - { ref: p1 }
+
+  - id: test_shichi
+    name: Shi和Chi组合
+    output: y_shichi
+    expression:
+      op: shichi
+      args:
+        - { ref: p1 }
+
+  - id: test_sici
+    name: Si和Ci组合
+    output: y_sici
+    expression:
+      op: sici
+      args:
+        - { ref: p1 }

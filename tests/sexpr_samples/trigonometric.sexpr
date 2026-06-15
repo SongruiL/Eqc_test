@@ -1,0 +1,46 @@
+; 三角函数测试
+
+; 基本三角函数
+(sin x)
+(cos x)
+(tan x)
+
+; 反三角函数
+(asin x)
+(acos x)
+(atan x)
+(atan2 y x)
+
+; 双曲函数
+(sinh x)
+(cosh x)
+(tanh x)
+
+; 反双曲函数
+(asinh x)
+(acosh x)
+(atanh x)
+
+; 倒数三角函数
+(sec x)
+(csc x)
+(cot x)
+(asec x)
+(acsc x)
+(acot x)
+
+; 倒数双曲函数
+(sech x)
+(csch x)
+(coth x)
+(asech x)
+(acsch x)
+(acoth x)
+
+; 使用别名
+(arcsin x)
+(arccos x)
+(arctan x)
+(arcsinh x)
+(arccosh x)
+(arctanh x)

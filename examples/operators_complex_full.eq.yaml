@@ -1,0 +1,230 @@
+# 复数运算测试
+meta:
+  id: OPERATORS_COMPLEX_FULL
+  model: ComplexFullOperators
+  name_cn: 复数运算测试
+  version: "1.0"
+  description: 测试复数相关运算
+
+parameters:
+  p1:
+    name_cn: 实部a
+    dtype: float
+    default: 3.0
+  p2:
+    name_cn: 虚部b
+    dtype: float
+    default: 4.0
+  p3:
+    name_cn: 输入x
+    dtype: float
+    default: 0.5
+
+variables:
+  y_complex:
+    name_cn: 复数构造
+    dtype: float
+    var_type: output
+  y_real:
+    name_cn: 实部
+    dtype: float
+    var_type: output
+  y_re:
+    name_cn: 实部别名
+    dtype: float
+    var_type: output
+  y_imag:
+    name_cn: 虚部
+    dtype: float
+    var_type: output
+  y_im:
+    name_cn: 虚部别名
+    dtype: float
+    var_type: output
+  y_conj:
+    name_cn: 共轭
+    dtype: float
+    var_type: output
+  y_conjugate:
+    name_cn: 共轭别名
+    dtype: float
+    var_type: output
+  y_cabs:
+    name_cn: 复数模
+    dtype: float
+    var_type: output
+  y_carg:
+    name_cn: 复数辐角
+    dtype: float
+    var_type: output
+  y_arg:
+    name_cn: 辐角别名
+    dtype: float
+    var_type: output
+  y_polar:
+    name_cn: 极坐标
+    dtype: float
+    var_type: output
+  y_complex_sinh:
+    name_cn: 复sinh
+    dtype: float
+    var_type: output
+  y_complex_cosh:
+    name_cn: 复cosh
+    dtype: float
+    var_type: output
+  y_complex_tanh:
+    name_cn: 复tanh
+    dtype: float
+    var_type: output
+  y_complex_asin:
+    name_cn: 复asin
+    dtype: float
+    var_type: output
+  y_complex_acos:
+    name_cn: 复acos
+    dtype: float
+    var_type: output
+  y_complex_atan:
+    name_cn: 复atan
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_complex
+    name: 复数构造
+    output: y_complex
+    expression:
+      op: complex
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_real
+    name: 实部提取
+    output: y_real
+    expression:
+      op: real
+      args:
+        - { op: complex, args: [{ ref: p1 }, { ref: p2 }] }
+
+  - id: test_re
+    name: 实部别名
+    output: y_re
+    expression:
+      op: re
+      args:
+        - { op: complex, args: [{ ref: p1 }, { ref: p2 }] }
+
+  - id: test_imag
+    name: 虚部提取
+    output: y_imag
+    expression:
+      op: imag
+      args:
+        - { op: complex, args: [{ ref: p1 }, { ref: p2 }] }
+
+  - id: test_im
+    name: 虚部别名
+    output: y_im
+    expression:
+      op: im
+      args:
+        - { op: complex, args: [{ ref: p1 }, { ref: p2 }] }
+
+  - id: test_conj
+    name: 共轭
+    output: y_conj
+    expression:
+      op: conj
+      args:
+        - { op: complex, args: [{ ref: p1 }, { ref: p2 }] }
+
+  - id: test_conjugate
+    name: 共轭别名
+    output: y_conjugate
+    expression:
+      op: conjugate
+      args:
+        - { op: complex, args: [{ ref: p1 }, { ref: p2 }] }
+
+  - id: test_cabs
+    name: 复数模
+    output: y_cabs
+    expression:
+      op: cabs
+      args:
+        - { op: complex, args: [{ ref: p1 }, { ref: p2 }] }
+
+  - id: test_carg
+    name: 复数辐角
+    output: y_carg
+    expression:
+      op: carg
+      args:
+        - { op: complex, args: [{ ref: p1 }, { ref: p2 }] }
+
+  - id: test_arg
+    name: 辐角别名
+    output: y_arg
+    expression:
+      op: arg
+      args:
+        - { op: complex, args: [{ ref: p1 }, { ref: p2 }] }
+
+  - id: test_polar
+    name: 极坐标
+    output: y_polar
+    expression:
+      op: polar
+      args:
+        - { ref: p1 }
+        - { ref: p3 }
+
+  - id: test_complex_sinh
+    name: 复sinh
+    output: y_complex_sinh
+    expression:
+      op: complex_sinh
+      args:
+        - { op: complex, args: [{ ref: p3 }, { ref: p3 }] }
+
+  - id: test_complex_cosh
+    name: 复cosh
+    output: y_complex_cosh
+    expression:
+      op: complex_cosh
+      args:
+        - { op: complex, args: [{ ref: p3 }, { ref: p3 }] }
+
+  - id: test_complex_tanh
+    name: 复tanh
+    output: y_complex_tanh
+    expression:
+      op: complex_tanh
+      args:
+        - { op: complex, args: [{ ref: p3 }, { ref: p3 }] }
+
+  - id: test_complex_asin
+    name: 复asin
+    output: y_complex_asin
+    expression:
+      op: complex_asin
+      args:
+        - { op: complex, args: [{ ref: p3 }, { ref: p3 }] }
+
+  - id: test_complex_acos
+    name: 复acos
+    output: y_complex_acos
+    expression:
+      op: complex_acos
+      args:
+        - { op: complex, args: [{ ref: p3 }, { ref: p3 }] }
+
+  - id: test_complex_atan
+    name: 复atan
+    output: y_complex_atan
+    expression:
+      op: complex_atan
+      args:
+        - { op: complex, args: [{ ref: p3 }, { ref: p3 }] }

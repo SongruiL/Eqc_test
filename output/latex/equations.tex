@@ -1,0 +1,132 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[utf8]{inputenc}
+\usepackage{CJKutf8}
+
+\title{方程定义文档}
+\author{Equation Compiler}
+\date{\today}
+
+\begin{document}
+\begin{CJK}{UTF8}{gbsn}
+
+\maketitle
+
+\tableofcontents
+\newpage
+
+\section{级联计算演示 (CASCADE)}
+
+展示方程之间的 DAG 依赖关系
+
+\subsection{方程}
+
+\subsubsection{stage1: 一阶变换}
+
+\begin{equation}
+    y1 = p1 \times x
+\end{equation}
+
+\subsubsection{stage2: 二阶变换}
+
+\begin{equation}
+    y2 = y1 + p2 \times x
+\end{equation}
+
+\subsubsection{stage3: 最终输出}
+
+\begin{equation}
+    y_{final} = \sqrt{|y2|}
+\end{equation}
+
+\section{数学运算演示 (MATH_DEMO)}
+
+演示 equation-compiler 支持的各种数学运算符
+
+\subsection{方程}
+
+\subsubsection{damped_oscillation: 阻尼振荡}
+
+\begin{equation}
+    y_{damped} = p1 \times e^{-p3 \times t} \times \sin(2 \times \pi \times p2 \times t)
+\end{equation}
+
+\subsubsection{tanh_activation: 双曲正切激活}
+
+\begin{equation}
+    y_{tanh} = \tanh(p1 \times x)
+\end{equation}
+
+\subsubsection{angle_calc: 角度计算}
+
+\begin{equation}
+    theta = \text{atan2}(x, t)
+\end{equation}
+
+\subsubsection{rounding_demo: 取整运算}
+
+\begin{equation}
+    y_{round} = \lfloor x \rfloor + \lceil \frac{t}{2} \rceil
+\end{equation}
+
+\subsubsection{sign_abs_demo: 符号与绝对值}
+
+\begin{equation}
+    y_{sign} = \text{sgn}(x) \times \sqrt{|x|}
+\end{equation}
+
+\subsubsection{root_log_demo: 立方根与对数}
+
+\begin{equation}
+    y_{log} = \sqrt[3]{x} + \log_{2}(t + 1)
+\end{equation}
+
+\subsubsection{relu_activation: ReLU激活}
+
+\begin{equation}
+    y_{relu} = \begin{cases} x & \text{if } x > 0 \\ 0 & \text{otherwise} \end{cases}
+\end{equation}
+
+\subsubsection{modulo_demo: 取余运算}
+
+\begin{equation}
+    y_{mod} = \lfloor t \times 10 \rfloor \mod 3
+\end{equation}
+
+\subsubsection{inverse_trig: 反三角函数}
+
+\begin{equation}
+    y_{asin} = 2 \times \arcsin(\frac{x}{|x| + 1})
+\end{equation}
+
+\subsubsection{exp_growth: 指数增长}
+
+\begin{equation}
+    y_{exp} = e^{p3 \times t}
+\end{equation}
+
+\section{光合作用 (PHOTO)}
+
+计算叶片光合速率
+
+\subsection{方程}
+
+\subsubsection{PHOTO-01: 动态Pmax}
+
+\begin{equation}
+    Pmax_{l} = p1 + p2 \times reserve_{ratio}
+\end{equation}
+
+\textit{参考: Lescourret 1998}
+
+\subsubsection{PHOTO-02: Higgins光响应}
+
+\begin{equation}
+    A_{leaf} = Pmax_{l} + p3 \times 1 - e^{\frac{-p4 \times ppfd}{Pmax_{l} + p3}} - p3
+\end{equation}
+
+\textit{参考: Higgins 1992, Eq. 3}
+
+\end{CJK}
+\end{document}

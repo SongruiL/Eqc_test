@@ -1,0 +1,62 @@
+; GSL 扩展函数测试
+
+; Airy 零点
+(ai_zero s)
+(bi_zero s)
+(airy_zero_ai s)
+(airy_zero_bi s)
+
+; Bessel 零点
+(bessel_zero_j0 s)
+(bessel_zero_j1 s)
+(bessel_zero_jnu nu s)
+(j0_zero s)
+(j1_zero s)
+(jnu_zero nu s)
+
+; 球 Legendre
+(sph_legendre l m theta)
+(lpmv m v x)
+
+; Clausen 函数
+(clausen x)
+
+; Debye 函数
+(debye n x)
+
+; 同步辐射函数
+(synchrotron1 x)
+(synchrotron2 x)
+
+; 输运函数
+(transport n x)
+
+; Fermi-Dirac 函数
+(fermi_dirac j x)
+
+; Dirichlet 核
+(diric n x)
+(dirichlet n x)
+
+; Tukey lambda
+(tklmbda lam x)
+(tukey_lambda lam x)
+
+; 积分组合
+(sici x)
+(shichi x)
+
+; 阶乘扩展
+(factorial2 n)
+(double_factorial n)
+(factorialk n k)
+(stirling2 n k)
+(poch a x)
+(pochhammer a x)
+
+; 二项系数扩展
+(binom n k)
+
+; 数论
+(bernoulli n)
+(euler n)

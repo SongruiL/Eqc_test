@@ -1,0 +1,120 @@
+# 基础数学补充测试
+meta:
+  id: OPERATORS_MISC
+  model: MiscFunctions
+  name_cn: 基础数学补充测试
+  version: "1.0"
+  description: 测试hypot, clamp, sinc等函数
+
+parameters:
+  p1:
+    name_cn: x值
+    dtype: float
+    default: 3.0
+  p2:
+    name_cn: y值
+    dtype: float
+    default: 4.0
+  p3:
+    name_cn: z值
+    dtype: float
+    default: 0.0
+  p4:
+    name_cn: 最小值
+    dtype: float
+    default: 0.0
+  p5:
+    name_cn: 最大值
+    dtype: float
+    default: 10.0
+  p6:
+    name_cn: 底数
+    dtype: float
+    default: 2.0
+  p7:
+    name_cn: sinc输入
+    dtype: float
+    default: 1.57
+
+variables:
+  y_hypot:
+    name_cn: 斜边
+    dtype: float
+    var_type: output
+  y_hypot3:
+    name_cn: 三维斜边
+    dtype: float
+    var_type: output
+  y_clamp:
+    name_cn: 限制范围
+    dtype: float
+    var_type: output
+  y_fma:
+    name_cn: 融合乘加
+    dtype: float
+    var_type: output
+  y_logn:
+    name_cn: 任意底对数
+    dtype: float
+    var_type: output
+  y_sinc:
+    name_cn: sinc函数
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_hypot
+    name: 斜边计算
+    output: y_hypot
+    expression:
+      op: hypot
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_hypot3
+    name: 三维斜边
+    output: y_hypot3
+    expression:
+      op: hypot3
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_clamp
+    name: 限制范围
+    output: y_clamp
+    expression:
+      op: clamp
+      args:
+        - { ref: p1 }
+        - { ref: p4 }
+        - { ref: p5 }
+
+  - id: test_fma
+    name: 融合乘加
+    output: y_fma
+    expression:
+      op: fma
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_logn
+    name: 任意底对数
+    output: y_logn
+    expression:
+      op: logn
+      args:
+        - { ref: p6 }
+        - { ref: p1 }
+
+  - id: test_sinc
+    name: sinc函数
+    output: y_sinc
+    expression:
+      op: sinc
+      args:
+        - { ref: p7 }

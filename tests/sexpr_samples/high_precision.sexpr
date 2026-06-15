@@ -1,0 +1,46 @@
+; 高精度和便利函数测试
+
+; 高精度便利函数
+(cosm1 x)
+(powm1 x y)
+(exp10 x)
+(log1pmx x)
+(loggamma x)
+
+; 便利函数
+(agm a b)
+(exprel x)
+(xlogy x y)
+(xlog1py x y)
+
+; Zeta 扩展
+(hurwitz_zeta s a)
+(zetac s)
+(polylog n z)
+
+; 扩展误差函数
+(erfcx x)
+(erfi x)
+(erfcinv p)
+
+; 扩展 Gamma
+(hyperu a b x)
+(rgamma x)
+(gammasgn x)
+
+; Carlson 椭圆积分
+(elliprc x y)
+(elliprd x y z)
+(elliprf x y z)
+(elliprg x y z)
+(elliprj x y z p)
+
+; 椭圆扩展
+(ellipkm1 p)
+
+; 度数三角函数
+(cosdg x)
+(sindg x)
+(tandg x)
+(cotdg x)
+(radian d m s)

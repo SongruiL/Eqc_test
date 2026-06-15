@@ -1,0 +1,116 @@
+# 误差函数测试
+meta:
+  id: OPERATORS_ERROR_FUNCS
+  model: ErrorFuncsOperators
+  name_cn: 误差函数测试
+  version: "1.0"
+  description: 测试误差函数系列
+
+parameters:
+  p1:
+    name_cn: 输入x
+    dtype: float
+    default: 0.5
+  p2:
+    name_cn: 概率p
+    dtype: float
+    default: 0.8
+
+variables:
+  y_erf:
+    name_cn: 误差函数
+    dtype: float
+    var_type: output
+  y_erfc:
+    name_cn: 补误差函数
+    dtype: float
+    var_type: output
+  y_erfinv:
+    name_cn: 误差函数逆
+    dtype: float
+    var_type: output
+  y_erfcinv:
+    name_cn: 补误差函数逆
+    dtype: float
+    var_type: output
+  y_erfi:
+    name_cn: 虚误差函数
+    dtype: float
+    var_type: output
+  y_erfcx:
+    name_cn: 缩放补误差函数
+    dtype: float
+    var_type: output
+  y_wofz:
+    name_cn: Faddeeva函数
+    dtype: float
+    var_type: output
+  y_faddeeva:
+    name_cn: Faddeeva别名
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_erf
+    name: 误差函数
+    output: y_erf
+    expression:
+      op: erf
+      args:
+        - { ref: p1 }
+
+  - id: test_erfc
+    name: 补误差函数
+    output: y_erfc
+    expression:
+      op: erfc
+      args:
+        - { ref: p1 }
+
+  - id: test_erfinv
+    name: 误差函数逆
+    output: y_erfinv
+    expression:
+      op: erfinv
+      args:
+        - { ref: p1 }
+
+  - id: test_erfcinv
+    name: 补误差函数逆
+    output: y_erfcinv
+    expression:
+      op: erfcinv
+      args:
+        - { ref: p2 }
+
+  - id: test_erfi
+    name: 虚误差函数
+    output: y_erfi
+    expression:
+      op: erfi
+      args:
+        - { ref: p1 }
+
+  - id: test_erfcx
+    name: 缩放补误差函数
+    output: y_erfcx
+    expression:
+      op: erfcx
+      args:
+        - { ref: p1 }
+
+  - id: test_wofz
+    name: Faddeeva函数
+    output: y_wofz
+    expression:
+      op: wofz
+      args:
+        - { ref: p1 }
+
+  - id: test_faddeeva
+    name: Faddeeva别名
+    output: y_faddeeva
+    expression:
+      op: faddeeva
+      args:
+        - { ref: p1 }

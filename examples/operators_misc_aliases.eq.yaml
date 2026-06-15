@@ -1,0 +1,204 @@
+# 杂项别名测试
+meta:
+  id: OPERATORS_MISC_ALIASES
+  model: MiscAliasesOperators
+  name_cn: 杂项别名测试
+  version: "1.0"
+  description: 测试杂项函数的别名
+
+parameters:
+  p1:
+    name_cn: 输入x
+    dtype: float
+    default: 1.0
+  p2:
+    name_cn: 参数a
+    dtype: float
+    default: 0.5
+  p3:
+    name_cn: 参数b
+    dtype: float
+    default: 2.0
+
+variables:
+  y_dirichlet:
+    name_cn: Dirichlet核
+    dtype: float
+    var_type: output
+  y_tklmbda:
+    name_cn: Tukey_lambda
+    dtype: float
+    var_type: output
+  y_tukey_lambda:
+    name_cn: Tukey_lambda别名
+    dtype: float
+    var_type: output
+  y_smirnov:
+    name_cn: Smirnov分布
+    dtype: float
+    var_type: output
+  y_smirnovi:
+    name_cn: Smirnov逆
+    dtype: float
+    var_type: output
+  y_kolmogi:
+    name_cn: Kolmogorov逆
+    dtype: float
+    var_type: output
+  y_kl_divergence:
+    name_cn: KL散度别名
+    dtype: float
+    var_type: output
+  y_relative_entropy:
+    name_cn: 相对熵别名
+    dtype: float
+    var_type: output
+  y_lambertw_m1:
+    name_cn: Lambert_W-1别名
+    dtype: float
+    var_type: output
+  y_log_wright_bessel:
+    name_cn: 对数Wright_Bessel
+    dtype: float
+    var_type: output
+  y_log_softmax:
+    name_cn: Log_Softmax
+    dtype: float
+    var_type: output
+  y_logsumexp:
+    name_cn: LogSumExp
+    dtype: float
+    var_type: output
+  y_softmax:
+    name_cn: Softmax
+    dtype: float
+    var_type: output
+  y_jacobi_poly:
+    name_cn: Jacobi多项式别名
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_dirichlet
+    name: Dirichlet核
+    output: y_dirichlet
+    expression:
+      op: dirichlet
+      args:
+        - { ref: p3 }
+        - { ref: p1 }
+
+  - id: test_tklmbda
+    name: Tukey_lambda
+    output: y_tklmbda
+    expression:
+      op: tklmbda
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_tukey_lambda
+    name: Tukey_lambda别名
+    output: y_tukey_lambda
+    expression:
+      op: tukey_lambda
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_smirnov
+    name: Smirnov分布
+    output: y_smirnov
+    expression:
+      op: smirnov
+      args:
+        - { ref: p3 }
+        - { ref: p2 }
+
+  - id: test_smirnovi
+    name: Smirnov逆
+    output: y_smirnovi
+    expression:
+      op: smirnovi
+      args:
+        - { ref: p3 }
+        - { ref: p2 }
+
+  - id: test_kolmogi
+    name: Kolmogorov逆
+    output: y_kolmogi
+    expression:
+      op: kolmogi
+      args:
+        - { ref: p2 }
+
+  - id: test_kl_divergence
+    name: KL散度别名
+    output: y_kl_divergence
+    expression:
+      op: kl_divergence
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_relative_entropy
+    name: 相对熵别名
+    output: y_relative_entropy
+    expression:
+      op: relative_entropy
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_lambertw_m1
+    name: Lambert_W-1别名
+    output: y_lambertw_m1
+    expression:
+      op: lambertw_m1
+      args:
+        - { op: neg, args: [{ op: div, args: [{ ref: p2 }, { ref: p1 }] }] }
+
+  - id: test_log_wright_bessel
+    name: 对数Wright_Bessel
+    output: y_log_wright_bessel
+    expression:
+      op: log_wright_bessel
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+        - { ref: p3 }
+
+  - id: test_log_softmax
+    name: Log_Softmax
+    output: y_log_softmax
+    expression:
+      op: log_softmax
+      args:
+        - { ref: p1 }
+
+  - id: test_logsumexp
+    name: LogSumExp
+    output: y_logsumexp
+    expression:
+      op: logsumexp
+      args:
+        - { ref: p1 }
+
+  - id: test_softmax
+    name: Softmax
+    output: y_softmax
+    expression:
+      op: softmax
+      args:
+        - { ref: p1 }
+
+  - id: test_jacobi_poly
+    name: Jacobi多项式别名
+    output: y_jacobi_poly
+    expression:
+      op: jacobi_poly
+      args:
+        - { ref: p3 }
+        - { ref: p2 }
+        - { ref: p1 }
+        - { ref: p2 }

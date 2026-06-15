@@ -1,0 +1,163 @@
+# 球谐函数测试
+meta:
+  id: OPERATORS_SPHERICAL_HARMONIC
+  model: SphericalHarmonicOperators
+  name_cn: 球谐函数测试
+  version: "1.0"
+  description: 测试球谐函数和Hankel导数
+
+parameters:
+  p1:
+    name_cn: 阶数l
+    dtype: float
+    default: 2.0
+  p2:
+    name_cn: 阶数m
+    dtype: float
+    default: 1.0
+  p3:
+    name_cn: 极角theta
+    dtype: float
+    default: 0.5
+  p4:
+    name_cn: 方位角phi
+    dtype: float
+    default: 0.3
+  p5:
+    name_cn: 输入x
+    dtype: float
+    default: 2.0
+
+variables:
+  y_spherical_harmonic:
+    name_cn: 球谐函数
+    dtype: float
+    var_type: output
+  y_sph_harm:
+    name_cn: 球谐函数别名
+    dtype: float
+    var_type: output
+  y_ylm:
+    name_cn: Ylm别名
+    dtype: float
+    var_type: output
+  y_hankel1p:
+    name_cn: Hankel1导数
+    dtype: float
+    var_type: output
+  y_hankel2p:
+    name_cn: Hankel2导数
+    dtype: float
+    var_type: output
+  y_kelvin:
+    name_cn: Kelvin组合
+    dtype: float
+    var_type: output
+  y_kelvin_beip:
+    name_cn: Kelvin_beip
+    dtype: float
+    var_type: output
+  y_kelvin_berp:
+    name_cn: Kelvin_berp
+    dtype: float
+    var_type: output
+  y_kelvin_keip:
+    name_cn: Kelvin_keip
+    dtype: float
+    var_type: output
+  y_kelvin_kerp:
+    name_cn: Kelvin_kerp
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_spherical_harmonic
+    name: 球谐函数
+    output: y_spherical_harmonic
+    expression:
+      op: spherical_harmonic
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p4 }
+
+  - id: test_sph_harm
+    name: 球谐函数别名
+    output: y_sph_harm
+    expression:
+      op: sph_harm
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+        - { ref: p3 }
+        - { ref: p4 }
+
+  - id: test_ylm
+    name: Ylm别名
+    output: y_ylm
+    expression:
+      op: ylm
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p4 }
+
+  - id: test_hankel1p
+    name: Hankel1导数
+    output: y_hankel1p
+    expression:
+      op: hankel1p
+      args:
+        - { ref: p2 }
+        - { ref: p5 }
+
+  - id: test_hankel2p
+    name: Hankel2导数
+    output: y_hankel2p
+    expression:
+      op: hankel2p
+      args:
+        - { ref: p2 }
+        - { ref: p5 }
+
+  - id: test_kelvin
+    name: Kelvin组合
+    output: y_kelvin
+    expression:
+      op: kelvin
+      args:
+        - { ref: p5 }
+
+  - id: test_kelvin_beip
+    name: Kelvin_beip
+    output: y_kelvin_beip
+    expression:
+      op: kelvin_beip
+      args:
+        - { ref: p5 }
+
+  - id: test_kelvin_berp
+    name: Kelvin_berp
+    output: y_kelvin_berp
+    expression:
+      op: kelvin_berp
+      args:
+        - { ref: p5 }
+
+  - id: test_kelvin_keip
+    name: Kelvin_keip
+    output: y_kelvin_keip
+    expression:
+      op: kelvin_keip
+      args:
+        - { ref: p5 }
+
+  - id: test_kelvin_kerp
+    name: Kelvin_kerp
+    output: y_kelvin_kerp
+    expression:
+      op: kelvin_kerp
+      args:
+        - { ref: p5 }

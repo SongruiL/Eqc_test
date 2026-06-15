@@ -1,0 +1,123 @@
+# 光合作用模块示例
+# 演示方程编译器的基本使用方法
+
+meta:
+  id: "PHOTO"
+  model: "QualiTree"
+  name_cn: "光合作用"
+  name_en: "Photosynthesis"
+  version: "1.0"
+  description: "计算叶片光合速率"
+  reference: "Lescourret 1998; Higgins 1992"
+  source_files:
+    - "QualiTree/qualitree/modules/photosynthesis.py"
+
+# 参数定义（常量，可被GP优化）
+parameters:
+  p1:
+    name_cn: "基础光饱和光合"
+    name_en: "Base light-saturated photosynthesis"
+    type: float
+    default: 20.14
+    unit: "μmol CO₂/m²/s"
+    bounds: [10.0, 40.0]
+    optimizable: true
+    
+  p2:
+    name_cn: "储备反馈系数"
+    type: float
+    default: -66.95
+    unit: "μmol CO₂/m²/s"
+    bounds: [-100.0, 0.0]
+    optimizable: true
+
+  p3:
+    name_cn: "暗呼吸速率"
+    type: float
+    default: 0.72
+    unit: "μmol CO₂/m²/s"
+    optimizable: false
+
+  p4:
+    name_cn: "量子效率"
+    type: float
+    default: 0.044
+    unit: "μmol CO₂/μmol photon"
+    optimizable: true
+
+# 变量定义
+variables:
+  # 输入变量（来自其他模块或外部）
+  ppfd:
+    type: input
+    dtype: float
+    unit: "μmol/m²/s"
+    description: "光合有效辐射"
+    
+  reserve_ratio:
+    type: input
+    dtype: float
+    unit: "dimensionless"
+    description: "储备/生物量比"
+
+  # 中间变量（本模块内部计算）
+  Pmax_l:
+    type: intermediate
+    dtype: float
+    unit: "μmol CO₂/m²/s"
+    description: "动态光饱和光合速率"
+    
+  # 输出变量（供其他模块使用）
+  A_leaf:
+    type: output
+    dtype: float
+    unit: "μmol CO₂/m²/s"
+    description: "叶片光合速率"
+
+# 方程定义（核心）
+equations:
+  - id: "PHOTO-01"
+    name: "动态Pmax"
+    output: Pmax_l
+    expression:
+      op: add
+      args:
+        - { ref: p1 }
+        - op: mul
+          args:
+            - { ref: p2 }
+            - { ref: reserve_ratio }
+    formula_display: "Pmax_l = p1 + p2 × reserve_ratio"
+    reference: "Lescourret 1998"
+    
+  - id: "PHOTO-02"
+    name: "Higgins光响应"
+    output: A_leaf
+    expression:
+      op: sub
+      args:
+        - op: mul
+          args:
+            - op: add
+              args:
+                - { ref: Pmax_l }
+                - { ref: p3 }
+            - op: sub
+              args:
+                - { const: 1.0 }
+                - op: exp
+                  args:
+                    - op: div
+                      args:
+                        - op: mul
+                          args:
+                            - op: neg
+                              args: [{ ref: p4 }]
+                            - { ref: ppfd }
+                        - op: add
+                          args:
+                            - { ref: Pmax_l }
+                            - { ref: p3 }
+        - { ref: p3 }
+    formula_display: "A = (Pmax_l + p3) × (1 - exp(-p4 × PPFD / (Pmax_l + p3))) - p3"
+    reference: "Higgins 1992, Eq. 3"

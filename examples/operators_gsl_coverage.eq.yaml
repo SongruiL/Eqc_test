@@ -1,0 +1,182 @@
+# GSL 扩展运算符覆盖测试
+meta:
+  id: OPERATORS_GSL_COVERAGE
+  model: GslCoverageOperators
+  name_cn: GSL扩展运算符覆盖测试
+  version: "1.0"
+  description: 测试所有新增的GSL扩展运算符
+
+parameters:
+  p1:
+    name_cn: 输入x
+    dtype: float
+    default: 1.5
+  p2:
+    name_cn: 阶数n
+    dtype: float
+    default: 3.0
+  p3:
+    name_cn: 参数m
+    dtype: float
+    default: 0.5
+
+variables:
+  y_ai_zero:
+    name_cn: Airy_Ai零点
+    dtype: float
+    var_type: output
+  y_bi_zero:
+    name_cn: Airy_Bi零点
+    dtype: float
+    var_type: output
+  y_j0_zero:
+    name_cn: Bessel_J0零点
+    dtype: float
+    var_type: output
+  y_j1_zero:
+    name_cn: Bessel_J1零点
+    dtype: float
+    var_type: output
+  y_jnu_zero:
+    name_cn: Bessel_Jnu零点
+    dtype: float
+    var_type: output
+  y_sph_legendre:
+    name_cn: 球谐Legendre
+    dtype: float
+    var_type: output
+  y_clausen:
+    name_cn: Clausen函数
+    dtype: float
+    var_type: output
+  y_debye:
+    name_cn: Debye函数
+    dtype: float
+    var_type: output
+  y_synchrotron1:
+    name_cn: Synchrotron1
+    dtype: float
+    var_type: output
+  y_synchrotron2:
+    name_cn: Synchrotron2
+    dtype: float
+    var_type: output
+  y_transport:
+    name_cn: Transport函数
+    dtype: float
+    var_type: output
+  y_fermi_dirac:
+    name_cn: Fermi-Dirac函数
+    dtype: float
+    var_type: output
+
+equations:
+  # Airy 零点
+  - id: test_ai_zero
+    name: Airy_Ai零点测试
+    output: y_ai_zero
+    expression:
+      op: ai_zero
+      args:
+        - { ref: p2 }
+
+  - id: test_bi_zero
+    name: Airy_Bi零点测试
+    output: y_bi_zero
+    expression:
+      op: bi_zero
+      args:
+        - { ref: p2 }
+
+  # Bessel 零点
+  - id: test_j0_zero
+    name: Bessel_J0零点测试
+    output: y_j0_zero
+    expression:
+      op: bessel_zero_j0
+      args:
+        - { ref: p2 }
+
+  - id: test_j1_zero
+    name: Bessel_J1零点测试
+    output: y_j1_zero
+    expression:
+      op: bessel_zero_j1
+      args:
+        - { ref: p2 }
+
+  - id: test_jnu_zero
+    name: Bessel_Jnu零点测试
+    output: y_jnu_zero
+    expression:
+      op: bessel_zero_jnu
+      args:
+        - { ref: p2 }
+        - { ref: p2 }
+
+  # 球谐 Legendre
+  - id: test_sph_legendre
+    name: 球谐Legendre测试
+    output: y_sph_legendre
+    expression:
+      op: sph_legendre
+      args:
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+
+  # Clausen 函数
+  - id: test_clausen
+    name: Clausen函数测试
+    output: y_clausen
+    expression:
+      op: clausen
+      args:
+        - { ref: p1 }
+
+  # Debye 函数
+  - id: test_debye
+    name: Debye函数测试
+    output: y_debye
+    expression:
+      op: debye
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  # Synchrotron 函数
+  - id: test_synchrotron1
+    name: Synchrotron1测试
+    output: y_synchrotron1
+    expression:
+      op: synchrotron1
+      args:
+        - { ref: p1 }
+
+  - id: test_synchrotron2
+    name: Synchrotron2测试
+    output: y_synchrotron2
+    expression:
+      op: synchrotron2
+      args:
+        - { ref: p1 }
+
+  # Transport 函数
+  - id: test_transport
+    name: Transport函数测试
+    output: y_transport
+    expression:
+      op: transport
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  # Fermi-Dirac 函数
+  - id: test_fermi_dirac
+    name: Fermi-Dirac函数测试
+    output: y_fermi_dirac
+    expression:
+      op: fermi_dirac
+      args:
+        - { ref: p2 }
+        - { ref: p1 }

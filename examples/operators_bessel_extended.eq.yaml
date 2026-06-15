@@ -1,0 +1,302 @@
+# Bessel 函数扩展测试
+meta:
+  id: OPERATORS_BESSEL_EXTENDED
+  model: BesselExtendedOperators
+  name_cn: Bessel函数扩展测试
+  version: "1.0"
+  description: 测试Bessel函数的扩展变体
+
+parameters:
+  p1:
+    name_cn: 输入x
+    dtype: float
+    default: 2.0
+  p2:
+    name_cn: 阶数n
+    dtype: float
+    default: 1.0
+  p3:
+    name_cn: 零点序号s
+    dtype: float
+    default: 2.0
+
+variables:
+  y_bessel_i0e:
+    name_cn: I0缩放
+    dtype: float
+    var_type: output
+  y_bessel_i1:
+    name_cn: I1
+    dtype: float
+    var_type: output
+  y_bessel_i1e:
+    name_cn: I1缩放
+    dtype: float
+    var_type: output
+  y_bessel_in:
+    name_cn: In
+    dtype: float
+    var_type: output
+  y_bessel_ine:
+    name_cn: In缩放
+    dtype: float
+    var_type: output
+  y_bessel_inp:
+    name_cn: In导数
+    dtype: float
+    var_type: output
+  y_bessel_jne:
+    name_cn: Jn缩放
+    dtype: float
+    var_type: output
+  y_bessel_jnp:
+    name_cn: Jn导数
+    dtype: float
+    var_type: output
+  y_bessel_k0e:
+    name_cn: K0缩放
+    dtype: float
+    var_type: output
+  y_bessel_k1:
+    name_cn: K1
+    dtype: float
+    var_type: output
+  y_bessel_k1e:
+    name_cn: K1缩放
+    dtype: float
+    var_type: output
+  y_bessel_kn:
+    name_cn: Kn
+    dtype: float
+    var_type: output
+  y_bessel_kne:
+    name_cn: Kn缩放
+    dtype: float
+    var_type: output
+  y_bessel_knp:
+    name_cn: Kn导数
+    dtype: float
+    var_type: output
+  y_bessel_y1:
+    name_cn: Y1
+    dtype: float
+    var_type: output
+  y_bessel_yn:
+    name_cn: Yn
+    dtype: float
+    var_type: output
+  y_bessel_yne:
+    name_cn: Yn缩放
+    dtype: float
+    var_type: output
+  y_bessel_ynp:
+    name_cn: Yn导数
+    dtype: float
+    var_type: output
+  y_besselpoly:
+    name_cn: Bessel多项式
+    dtype: float
+    var_type: output
+  y_j0_zero:
+    name_cn: J0零点
+    dtype: float
+    var_type: output
+  y_j1_zero:
+    name_cn: J1零点
+    dtype: float
+    var_type: output
+  y_jnu_zero:
+    name_cn: Jnu零点
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_bessel_i0e
+    name: I0缩放
+    output: y_bessel_i0e
+    expression:
+      op: bessel_i0e
+      args:
+        - { ref: p1 }
+
+  - id: test_bessel_i1
+    name: I1函数
+    output: y_bessel_i1
+    expression:
+      op: bessel_i1
+      args:
+        - { ref: p1 }
+
+  - id: test_bessel_i1e
+    name: I1缩放
+    output: y_bessel_i1e
+    expression:
+      op: bessel_i1e
+      args:
+        - { ref: p1 }
+
+  - id: test_bessel_in
+    name: In函数
+    output: y_bessel_in
+    expression:
+      op: bessel_in
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_bessel_ine
+    name: In缩放
+    output: y_bessel_ine
+    expression:
+      op: bessel_ine
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_bessel_inp
+    name: In导数
+    output: y_bessel_inp
+    expression:
+      op: bessel_inp
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_bessel_jne
+    name: Jn缩放
+    output: y_bessel_jne
+    expression:
+      op: bessel_jne
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_bessel_jnp
+    name: Jn导数
+    output: y_bessel_jnp
+    expression:
+      op: bessel_jnp
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_bessel_k0e
+    name: K0缩放
+    output: y_bessel_k0e
+    expression:
+      op: bessel_k0e
+      args:
+        - { ref: p1 }
+
+  - id: test_bessel_k1
+    name: K1函数
+    output: y_bessel_k1
+    expression:
+      op: bessel_k1
+      args:
+        - { ref: p1 }
+
+  - id: test_bessel_k1e
+    name: K1缩放
+    output: y_bessel_k1e
+    expression:
+      op: bessel_k1e
+      args:
+        - { ref: p1 }
+
+  - id: test_bessel_kn
+    name: Kn函数
+    output: y_bessel_kn
+    expression:
+      op: bessel_kn
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_bessel_kne
+    name: Kn缩放
+    output: y_bessel_kne
+    expression:
+      op: bessel_kne
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_bessel_knp
+    name: Kn导数
+    output: y_bessel_knp
+    expression:
+      op: bessel_knp
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_bessel_y1
+    name: Y1函数
+    output: y_bessel_y1
+    expression:
+      op: bessel_y1
+      args:
+        - { ref: p1 }
+
+  - id: test_bessel_yn
+    name: Yn函数
+    output: y_bessel_yn
+    expression:
+      op: bessel_yn
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_bessel_yne
+    name: Yn缩放
+    output: y_bessel_yne
+    expression:
+      op: bessel_yne
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_bessel_ynp
+    name: Yn导数
+    output: y_bessel_ynp
+    expression:
+      op: bessel_ynp
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_besselpoly
+    name: Bessel多项式
+    output: y_besselpoly
+    expression:
+      op: besselpoly
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_j0_zero
+    name: J0零点
+    output: y_j0_zero
+    expression:
+      op: j0_zero
+      args:
+        - { ref: p3 }
+
+  - id: test_j1_zero
+    name: J1零点
+    output: y_j1_zero
+    expression:
+      op: j1_zero
+      args:
+        - { ref: p3 }
+
+  - id: test_jnu_zero
+    name: Jnu零点
+    output: y_jnu_zero
+    expression:
+      op: jnu_zero
+      args:
+        - { ref: p2 }
+        - { ref: p3 }

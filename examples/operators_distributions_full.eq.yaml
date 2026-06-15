@@ -1,0 +1,296 @@
+# 分布函数完整覆盖测试
+meta:
+  id: OPERATORS_DISTRIBUTIONS_FULL
+  model: DistributionsFullOperators
+  name_cn: 分布函数完整覆盖测试
+  version: "1.0"
+  description: 测试所有概率分布函数（CDF/SF/PPF）
+
+parameters:
+  p1:
+    name_cn: 输入x
+    dtype: float
+    default: 1.5
+  p2:
+    name_cn: 自由度n
+    dtype: float
+    default: 5.0
+  p3:
+    name_cn: 参数a
+    dtype: float
+    default: 2.0
+  p4:
+    name_cn: 参数b
+    dtype: float
+    default: 3.0
+  p5:
+    name_cn: 概率p
+    dtype: float
+    default: 0.5
+
+variables:
+  y_bdtr:
+    name_cn: 二项分布CDF
+    dtype: float
+    var_type: output
+  y_bdtrc:
+    name_cn: 二项分布SF
+    dtype: float
+    var_type: output
+  y_bdtri:
+    name_cn: 二项分布PPF
+    dtype: float
+    var_type: output
+  y_chdtr:
+    name_cn: 卡方分布CDF
+    dtype: float
+    var_type: output
+  y_chdtrc:
+    name_cn: 卡方分布SF
+    dtype: float
+    var_type: output
+  y_chdtri:
+    name_cn: 卡方分布PPF
+    dtype: float
+    var_type: output
+  y_fdtr:
+    name_cn: F分布CDF
+    dtype: float
+    var_type: output
+  y_fdtrc:
+    name_cn: F分布SF
+    dtype: float
+    var_type: output
+  y_fdtri:
+    name_cn: F分布PPF
+    dtype: float
+    var_type: output
+  y_stdtr:
+    name_cn: t分布CDF
+    dtype: float
+    var_type: output
+  y_stdtrc:
+    name_cn: t分布SF
+    dtype: float
+    var_type: output
+  y_stdtrit:
+    name_cn: t分布PPF
+    dtype: float
+    var_type: output
+  y_pdtr:
+    name_cn: 泊松分布CDF
+    dtype: float
+    var_type: output
+  y_pdtrc:
+    name_cn: 泊松分布SF
+    dtype: float
+    var_type: output
+  y_pdtri:
+    name_cn: 泊松分布PPF
+    dtype: float
+    var_type: output
+  y_btdtr:
+    name_cn: Beta分布CDF
+    dtype: float
+    var_type: output
+  y_btdtrc:
+    name_cn: Beta分布SF
+    dtype: float
+    var_type: output
+  y_gdtr:
+    name_cn: Gamma分布CDF
+    dtype: float
+    var_type: output
+  y_gdtrc:
+    name_cn: Gamma分布SF
+    dtype: float
+    var_type: output
+
+equations:
+  # 二项分布
+  - id: test_bdtr
+    name: 二项分布CDF
+    output: y_bdtr
+    expression:
+      op: bdtr
+      args:
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p5 }
+
+  - id: test_bdtrc
+    name: 二项分布SF
+    output: y_bdtrc
+    expression:
+      op: bdtrc
+      args:
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p5 }
+
+  - id: test_bdtri
+    name: 二项分布PPF
+    output: y_bdtri
+    expression:
+      op: bdtri
+      args:
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p5 }
+
+  # 卡方分布
+  - id: test_chdtr
+    name: 卡方分布CDF
+    output: y_chdtr
+    expression:
+      op: chdtr
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_chdtrc
+    name: 卡方分布SF
+    output: y_chdtrc
+    expression:
+      op: chdtrc
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_chdtri
+    name: 卡方分布PPF
+    output: y_chdtri
+    expression:
+      op: chdtri
+      args:
+        - { ref: p2 }
+        - { ref: p5 }
+
+  # F 分布
+  - id: test_fdtr
+    name: F分布CDF
+    output: y_fdtr
+    expression:
+      op: fdtr
+      args:
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+
+  - id: test_fdtrc
+    name: F分布SF
+    output: y_fdtrc
+    expression:
+      op: fdtrc
+      args:
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+
+  - id: test_fdtri
+    name: F分布PPF
+    output: y_fdtri
+    expression:
+      op: fdtri
+      args:
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p5 }
+
+  # Student t 分布
+  - id: test_stdtr
+    name: t分布CDF
+    output: y_stdtr
+    expression:
+      op: stdtr
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_stdtrc
+    name: t分布SF
+    output: y_stdtrc
+    expression:
+      op: stdtrc
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_stdtrit
+    name: t分布PPF
+    output: y_stdtrit
+    expression:
+      op: stdtrit
+      args:
+        - { ref: p2 }
+        - { ref: p5 }
+
+  # 泊松分布
+  - id: test_pdtr
+    name: 泊松分布CDF
+    output: y_pdtr
+    expression:
+      op: pdtr
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_pdtrc
+    name: 泊松分布SF
+    output: y_pdtrc
+    expression:
+      op: pdtrc
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_pdtri
+    name: 泊松分布PPF
+    output: y_pdtri
+    expression:
+      op: pdtri
+      args:
+        - { ref: p2 }
+        - { ref: p5 }
+
+  # Beta 分布
+  - id: test_btdtr
+    name: Beta分布CDF
+    output: y_btdtr
+    expression:
+      op: btdtr
+      args:
+        - { ref: p3 }
+        - { ref: p4 }
+        - { ref: p5 }
+
+  - id: test_btdtrc
+    name: Beta分布SF
+    output: y_btdtrc
+    expression:
+      op: btdtrc
+      args:
+        - { ref: p3 }
+        - { ref: p4 }
+        - { ref: p5 }
+
+  # Gamma 分布
+  - id: test_gdtr
+    name: Gamma分布CDF
+    output: y_gdtr
+    expression:
+      op: gdtr
+      args:
+        - { ref: p3 }
+        - { ref: p4 }
+        - { ref: p1 }
+
+  - id: test_gdtrc
+    name: Gamma分布SF
+    output: y_gdtrc
+    expression:
+      op: gdtrc
+      args:
+        - { ref: p3 }
+        - { ref: p4 }
+        - { ref: p1 }

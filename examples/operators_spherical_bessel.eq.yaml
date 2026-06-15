@@ -1,0 +1,124 @@
+# 球 Bessel 函数测试
+meta:
+  id: OPERATORS_SPHERICAL_BESSEL
+  model: SphericalBesselOperators
+  name_cn: 球Bessel函数测试
+  version: "1.0"
+  description: 测试球Bessel函数的别名
+
+parameters:
+  p1:
+    name_cn: 输入x
+    dtype: float
+    default: 2.0
+  p2:
+    name_cn: 阶数n
+    dtype: float
+    default: 1.0
+
+variables:
+  y_sph_bessel_i:
+    name_cn: 球Bessel_i
+    dtype: float
+    var_type: output
+  y_sph_bessel_j:
+    name_cn: 球Bessel_j
+    dtype: float
+    var_type: output
+  y_sph_bessel_k:
+    name_cn: 球Bessel_k
+    dtype: float
+    var_type: output
+  y_sph_bessel_y:
+    name_cn: 球Bessel_y
+    dtype: float
+    var_type: output
+  y_jl:
+    name_cn: jl函数
+    dtype: float
+    var_type: output
+  y_yl:
+    name_cn: yl函数
+    dtype: float
+    var_type: output
+  y_il:
+    name_cn: il函数
+    dtype: float
+    var_type: output
+  y_kl:
+    name_cn: kl函数
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_sph_bessel_i
+    name: 球Bessel_i
+    output: y_sph_bessel_i
+    expression:
+      op: sph_bessel_i
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_sph_bessel_j
+    name: 球Bessel_j
+    output: y_sph_bessel_j
+    expression:
+      op: sph_bessel_j
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_sph_bessel_k
+    name: 球Bessel_k
+    output: y_sph_bessel_k
+    expression:
+      op: sph_bessel_k
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_sph_bessel_y
+    name: 球Bessel_y
+    output: y_sph_bessel_y
+    expression:
+      op: sph_bessel_y
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_jl
+    name: jl函数
+    output: y_jl
+    expression:
+      op: jl
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_yl
+    name: yl函数
+    output: y_yl
+    expression:
+      op: yl
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_il
+    name: il函数
+    output: y_il
+    expression:
+      op: il
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_kl
+    name: kl函数
+    output: y_kl
+    expression:
+      op: kl
+      args:
+        - { ref: p2 }
+        - { ref: p1 }

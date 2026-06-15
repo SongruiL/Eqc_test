@@ -1,0 +1,128 @@
+# 基础三角函数测试
+meta:
+  id: OPERATORS_TRIG_BASIC
+  model: TrigBasicOperators
+  name_cn: 基础三角函数测试
+  version: "1.0"
+  description: 测试基础三角函数及其反函数
+
+parameters:
+  p1:
+    name_cn: 角度x
+    dtype: float
+    default: 0.5
+  p2:
+    name_cn: 比值y
+    dtype: float
+    default: 0.5
+
+variables:
+  y_cos:
+    name_cn: 余弦
+    dtype: float
+    var_type: output
+  y_sin:
+    name_cn: 正弦
+    dtype: float
+    var_type: output
+  y_tan:
+    name_cn: 正切
+    dtype: float
+    var_type: output
+  y_acos:
+    name_cn: 反余弦
+    dtype: float
+    var_type: output
+  y_asin:
+    name_cn: 反正弦
+    dtype: float
+    var_type: output
+  y_atan:
+    name_cn: 反正切
+    dtype: float
+    var_type: output
+  y_arccos:
+    name_cn: 反余弦别名
+    dtype: float
+    var_type: output
+  y_arcsin:
+    name_cn: 反正弦别名
+    dtype: float
+    var_type: output
+  y_arctan:
+    name_cn: 反正切别名
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_cos
+    name: 余弦函数
+    output: y_cos
+    expression:
+      op: cos
+      args:
+        - { ref: p1 }
+
+  - id: test_sin
+    name: 正弦函数
+    output: y_sin
+    expression:
+      op: sin
+      args:
+        - { ref: p1 }
+
+  - id: test_tan
+    name: 正切函数
+    output: y_tan
+    expression:
+      op: tan
+      args:
+        - { ref: p1 }
+
+  - id: test_acos
+    name: 反余弦函数
+    output: y_acos
+    expression:
+      op: acos
+      args:
+        - { ref: p2 }
+
+  - id: test_asin
+    name: 反正弦函数
+    output: y_asin
+    expression:
+      op: asin
+      args:
+        - { ref: p2 }
+
+  - id: test_atan
+    name: 反正切函数
+    output: y_atan
+    expression:
+      op: atan
+      args:
+        - { ref: p1 }
+
+  - id: test_arccos
+    name: 反余弦别名
+    output: y_arccos
+    expression:
+      op: arccos
+      args:
+        - { ref: p2 }
+
+  - id: test_arcsin
+    name: 反正弦别名
+    output: y_arcsin
+    expression:
+      op: arcsin
+      args:
+        - { ref: p2 }
+
+  - id: test_arctan
+    name: 反正切别名
+    output: y_arctan
+    expression:
+      op: arctan
+      args:
+        - { ref: p1 }

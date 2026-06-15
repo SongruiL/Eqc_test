@@ -1,0 +1,196 @@
+# Airy/Kelvin 函数完整测试
+meta:
+  id: OPERATORS_AIRY_KELVIN_FULL
+  model: AiryKelvinFullOperators
+  name_cn: Airy/Kelvin函数完整测试
+  version: "1.0"
+  description: 测试Airy函数和Kelvin函数
+
+parameters:
+  p1:
+    name_cn: 输入x
+    dtype: float
+    default: 1.0
+
+variables:
+  y_airy_ai:
+    name_cn: Airy_Ai
+    dtype: float
+    var_type: output
+  y_airy_bi:
+    name_cn: Airy_Bi
+    dtype: float
+    var_type: output
+  y_airy_aie:
+    name_cn: 缩放Airy_Ai
+    dtype: float
+    var_type: output
+  y_airy_bie:
+    name_cn: 缩放Airy_Bi
+    dtype: float
+    var_type: output
+  y_airy_aip:
+    name_cn: Airy_Ai导数
+    dtype: float
+    var_type: output
+  y_airy_bip:
+    name_cn: Airy_Bi导数
+    dtype: float
+    var_type: output
+  y_ber:
+    name_cn: Kelvin_ber
+    dtype: float
+    var_type: output
+  y_bei:
+    name_cn: Kelvin_bei
+    dtype: float
+    var_type: output
+  y_ker:
+    name_cn: Kelvin_ker
+    dtype: float
+    var_type: output
+  y_kei:
+    name_cn: Kelvin_kei
+    dtype: float
+    var_type: output
+  y_kelvin_ber:
+    name_cn: Kelvin_ber别名
+    dtype: float
+    var_type: output
+  y_kelvin_bei:
+    name_cn: Kelvin_bei别名
+    dtype: float
+    var_type: output
+  y_kelvin_ker:
+    name_cn: Kelvin_ker别名
+    dtype: float
+    var_type: output
+  y_kelvin_kei:
+    name_cn: Kelvin_kei别名
+    dtype: float
+    var_type: output
+  y_itairy:
+    name_cn: Airy积分
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_airy_ai
+    name: Airy_Ai函数
+    output: y_airy_ai
+    expression:
+      op: airy_ai
+      args:
+        - { ref: p1 }
+
+  - id: test_airy_bi
+    name: Airy_Bi函数
+    output: y_airy_bi
+    expression:
+      op: airy_bi
+      args:
+        - { ref: p1 }
+
+  - id: test_airy_aie
+    name: 缩放Airy_Ai
+    output: y_airy_aie
+    expression:
+      op: airy_aie
+      args:
+        - { ref: p1 }
+
+  - id: test_airy_bie
+    name: 缩放Airy_Bi
+    output: y_airy_bie
+    expression:
+      op: airy_bie
+      args:
+        - { ref: p1 }
+
+  - id: test_airy_aip
+    name: Airy_Ai导数
+    output: y_airy_aip
+    expression:
+      op: airy_aip
+      args:
+        - { ref: p1 }
+
+  - id: test_airy_bip
+    name: Airy_Bi导数
+    output: y_airy_bip
+    expression:
+      op: airy_bip
+      args:
+        - { ref: p1 }
+
+  - id: test_ber
+    name: Kelvin_ber
+    output: y_ber
+    expression:
+      op: ber
+      args:
+        - { ref: p1 }
+
+  - id: test_bei
+    name: Kelvin_bei
+    output: y_bei
+    expression:
+      op: bei
+      args:
+        - { ref: p1 }
+
+  - id: test_ker
+    name: Kelvin_ker
+    output: y_ker
+    expression:
+      op: ker
+      args:
+        - { ref: p1 }
+
+  - id: test_kei
+    name: Kelvin_kei
+    output: y_kei
+    expression:
+      op: kei
+      args:
+        - { ref: p1 }
+
+  - id: test_kelvin_ber
+    name: Kelvin_ber别名
+    output: y_kelvin_ber
+    expression:
+      op: kelvin_ber
+      args:
+        - { ref: p1 }
+
+  - id: test_kelvin_bei
+    name: Kelvin_bei别名
+    output: y_kelvin_bei
+    expression:
+      op: kelvin_bei
+      args:
+        - { ref: p1 }
+
+  - id: test_kelvin_ker
+    name: Kelvin_ker别名
+    output: y_kelvin_ker
+    expression:
+      op: kelvin_ker
+      args:
+        - { ref: p1 }
+
+  - id: test_kelvin_kei
+    name: Kelvin_kei别名
+    output: y_kelvin_kei
+    expression:
+      op: kelvin_kei
+      args:
+        - { ref: p1 }
+
+  - id: test_itairy
+    name: Airy积分
+    output: y_itairy
+    expression:
+      op: itairy
+      args:
+        - { ref: p1 }

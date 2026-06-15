@@ -1,0 +1,286 @@
+# 其他特殊函数测试
+meta:
+  id: OPERATORS_MISC_SPECIAL
+  model: MiscSpecialOperators
+  name_cn: 其他特殊函数测试
+  version: "1.0"
+  description: 测试其他特殊函数
+
+parameters:
+  p1:
+    name_cn: 输入x
+    dtype: float
+    default: 2.0
+  p2:
+    name_cn: 参数s
+    dtype: float
+    default: 2.0
+  p3:
+    name_cn: 参数a
+    dtype: float
+    default: 1.0
+
+variables:
+  y_zeta:
+    name_cn: Riemann_zeta
+    dtype: float
+    var_type: output
+  y_riemann_zeta:
+    name_cn: Riemann_zeta别名
+    dtype: float
+    var_type: output
+  y_zetac:
+    name_cn: zeta补函数
+    dtype: float
+    var_type: output
+  y_hurwitz_zeta:
+    name_cn: Hurwitz_zeta
+    dtype: float
+    var_type: output
+  y_polylog:
+    name_cn: 多重对数
+    dtype: float
+    var_type: output
+  y_riemann_siegel_z:
+    name_cn: Riemann_Siegel_Z
+    dtype: float
+    var_type: output
+  y_siegelz:
+    name_cn: Siegel_Z别名
+    dtype: float
+    var_type: output
+  y_riemann_siegel_theta:
+    name_cn: Riemann_Siegel_theta
+    dtype: float
+    var_type: output
+  y_siegeltheta:
+    name_cn: Siegel_theta别名
+    dtype: float
+    var_type: output
+  y_owens_t:
+    name_cn: Owen_T
+    dtype: float
+    var_type: output
+  y_owenst:
+    name_cn: Owen_T别名
+    dtype: float
+    var_type: output
+  y_wright_bessel:
+    name_cn: Wright_Bessel
+    dtype: float
+    var_type: output
+  y_wright_omega:
+    name_cn: Wright_Omega
+    dtype: float
+    var_type: output
+  y_wrightomega:
+    name_cn: Wright_Omega别名
+    dtype: float
+    var_type: output
+  y_voigt:
+    name_cn: Voigt函数
+    dtype: float
+    var_type: output
+  y_voigt_profile:
+    name_cn: Voigt_profile
+    dtype: float
+    var_type: output
+  y_lambert_w:
+    name_cn: Lambert_W
+    dtype: float
+    var_type: output
+  y_lambertw:
+    name_cn: Lambert_W别名
+    dtype: float
+    var_type: output
+  y_w0:
+    name_cn: W0别名
+    dtype: float
+    var_type: output
+  y_lambert_wm1:
+    name_cn: Lambert_W-1
+    dtype: float
+    var_type: output
+  y_wm1:
+    name_cn: W-1别名
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_zeta
+    name: Riemann_zeta
+    output: y_zeta
+    expression:
+      op: zeta
+      args:
+        - { ref: p2 }
+
+  - id: test_riemann_zeta
+    name: Riemann_zeta别名
+    output: y_riemann_zeta
+    expression:
+      op: riemann_zeta
+      args:
+        - { ref: p2 }
+
+  - id: test_zetac
+    name: zeta补函数
+    output: y_zetac
+    expression:
+      op: zetac
+      args:
+        - { ref: p2 }
+
+  - id: test_hurwitz_zeta
+    name: Hurwitz_zeta
+    output: y_hurwitz_zeta
+    expression:
+      op: hurwitz_zeta
+      args:
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_polylog
+    name: 多重对数
+    output: y_polylog
+    expression:
+      op: polylog
+      args:
+        - { ref: p2 }
+        - { op: div, args: [{ ref: p1 }, { ref: p2 }] }
+
+  - id: test_riemann_siegel_z
+    name: Riemann_Siegel_Z
+    output: y_riemann_siegel_z
+    expression:
+      op: riemann_siegel_z
+      args:
+        - { ref: p1 }
+
+  - id: test_siegelz
+    name: Siegel_Z别名
+    output: y_siegelz
+    expression:
+      op: siegelz
+      args:
+        - { ref: p1 }
+
+  - id: test_riemann_siegel_theta
+    name: Riemann_Siegel_theta
+    output: y_riemann_siegel_theta
+    expression:
+      op: riemann_siegel_theta
+      args:
+        - { ref: p1 }
+
+  - id: test_siegeltheta
+    name: Siegel_theta别名
+    output: y_siegeltheta
+    expression:
+      op: siegeltheta
+      args:
+        - { ref: p1 }
+
+  - id: test_owens_t
+    name: Owen_T
+    output: y_owens_t
+    expression:
+      op: owens_t
+      args:
+        - { ref: p1 }
+        - { ref: p3 }
+
+  - id: test_owenst
+    name: Owen_T别名
+    output: y_owenst
+    expression:
+      op: owenst
+      args:
+        - { ref: p1 }
+        - { ref: p3 }
+
+  - id: test_wright_bessel
+    name: Wright_Bessel
+    output: y_wright_bessel
+    expression:
+      op: wright_bessel
+      args:
+        - { ref: p3 }
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_wright_omega
+    name: Wright_Omega
+    output: y_wright_omega
+    expression:
+      op: wright_omega
+      args:
+        - { ref: p1 }
+
+  - id: test_wrightomega
+    name: Wright_Omega别名
+    output: y_wrightomega
+    expression:
+      op: wrightomega
+      args:
+        - { ref: p1 }
+
+  - id: test_voigt
+    name: Voigt函数
+    output: y_voigt
+    expression:
+      op: voigt
+      args:
+        - { ref: p1 }
+        - { ref: p3 }
+        - { ref: p2 }
+
+  - id: test_voigt_profile
+    name: Voigt_profile
+    output: y_voigt_profile
+    expression:
+      op: voigt_profile
+      args:
+        - { ref: p1 }
+        - { ref: p3 }
+        - { ref: p2 }
+
+  - id: test_lambert_w
+    name: Lambert_W
+    output: y_lambert_w
+    expression:
+      op: lambert_w
+      args:
+        - { ref: p1 }
+
+  - id: test_lambertw
+    name: Lambert_W别名
+    output: y_lambertw
+    expression:
+      op: lambertw
+      args:
+        - { ref: p1 }
+
+  - id: test_w0
+    name: W0别名
+    output: y_w0
+    expression:
+      op: w0
+      args:
+        - { ref: p1 }
+
+  - id: test_lambert_wm1
+    name: Lambert_W-1
+    output: y_lambert_wm1
+    expression:
+      op: lambert_wm1
+      args:
+        - { op: neg, args: [{ op: div, args: [{ ref: p3 }, { ref: p1 }] }] }
+
+  - id: test_wm1
+    name: W-1别名
+    output: y_wm1
+    expression:
+      op: wm1
+      args:
+        - { op: neg, args: [{ op: div, args: [{ ref: p3 }, { ref: p1 }] }] }

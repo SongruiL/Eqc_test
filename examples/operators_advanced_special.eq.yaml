@@ -1,0 +1,109 @@
+# 高级特殊函数测试
+meta:
+  id: OPERATORS_ADVANCED_SPECIAL
+  model: AdvancedSpecialFunctions
+  name_cn: 高级特殊函数测试
+  version: "1.0"
+  description: 测试Airy, Fresnel, Dawson等函数
+
+parameters:
+  p1:
+    name_cn: 输入值x
+    dtype: float
+    default: 1.5
+  p2:
+    name_cn: 输入值a
+    dtype: float
+    default: 2.0
+  p3:
+    name_cn: 输入值b
+    dtype: float
+    default: 0.5
+
+variables:
+  y_expm1:
+    name_cn: e^x-1
+    dtype: float
+    var_type: output
+  y_log1p:
+    name_cn: ln(1+x)
+    dtype: float
+    var_type: output
+  y_exp2:
+    name_cn: 2^x
+    dtype: float
+    var_type: output
+  y_gammainc:
+    name_cn: 不完全伽马
+    dtype: float
+    var_type: output
+  y_airy:
+    name_cn: Airy函数
+    dtype: float
+    var_type: output
+  y_dawson:
+    name_cn: Dawson函数
+    dtype: float
+    var_type: output
+  y_si:
+    name_cn: 正弦积分
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_expm1
+    name: e^x-1高精度
+    output: y_expm1
+    expression:
+      op: expm1
+      args:
+        - { ref: p1 }
+
+  - id: test_log1p
+    name: ln(1+x)高精度
+    output: y_log1p
+    expression:
+      op: log1p
+      args:
+        - { ref: p1 }
+
+  - id: test_exp2
+    name: 2的幂
+    output: y_exp2
+    expression:
+      op: exp2
+      args:
+        - { ref: p1 }
+
+  - id: test_gammainc
+    name: 不完全伽马函数
+    output: y_gammainc
+    expression:
+      op: gammainc
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_airy_ai
+    name: Airy Ai函数
+    output: y_airy
+    expression:
+      op: airy_ai
+      args:
+        - { ref: p1 }
+
+  - id: test_dawson
+    name: Dawson函数
+    output: y_dawson
+    expression:
+      op: dawson
+      args:
+        - { ref: p1 }
+
+  - id: test_sinint
+    name: 正弦积分
+    output: y_si
+    expression:
+      op: sin_int
+      args:
+        - { ref: p1 }

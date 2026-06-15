@@ -1,0 +1,91 @@
+; 复杂公式测试
+
+; 二次公式
+; x = (-b ± sqrt(b² - 4ac)) / 2a
+(div
+  (add (neg b) (sqrt (sub (pow b 2) (mul 4 (mul a c)))))
+  (mul 2 a))
+
+; 高斯分布 PDF
+; f(x) = (1 / (σ√(2π))) * exp(-(x-μ)² / (2σ²))
+(mul
+  (div 1 (mul sigma (sqrt (mul 2 pi))))
+  (exp (neg (div (pow (sub x mu) 2) (mul 2 (pow sigma 2))))))
+
+; 欧拉公式
+; e^(ix) = cos(x) + i*sin(x)
+(add (cos x) (mul i (sin x)))
+
+; 黄金比例
+; φ = (1 + √5) / 2
+(div (add 1 (sqrt 5)) 2)
+
+; 圆的面积
+; A = π * r²
+(mul pi (pow r 2))
+
+; 球的体积
+; V = (4/3) * π * r³
+(mul (div 4 3) (mul pi (pow r 3)))
+
+; 复利公式
+; A = P * (1 + r/n)^(n*t)
+(mul P (pow (add 1 (div r n)) (mul n t)))
+
+; 对数的换底公式
+; log_a(x) = ln(x) / ln(a)
+(div (ln x) (ln a))
+
+; 双曲正弦的定义
+; sinh(x) = (e^x - e^(-x)) / 2
+(div (sub (exp x) (exp (neg x))) 2)
+
+; 双曲余弦的定义
+; cosh(x) = (e^x + e^(-x)) / 2
+(div (add (exp x) (exp (neg x))) 2)
+
+; 泰勒级数 (sin的前几项)
+; sin(x) ≈ x - x³/3! + x⁵/5! - x⁷/7!
+(sub
+  (add
+    (sub x (div (pow x 3) (factorial 3)))
+    (div (pow x 5) (factorial 5)))
+  (div (pow x 7) (factorial 7)))
+
+; 调和级数部分和
+(sum k 1 n (div 1 k))
+
+; 几何级数
+(sum k 0 n (pow r k))
+
+; Basel问题 (π²/6)
+(sum k 1 n (div 1 (pow k 2)))
+
+; 阶乘定义
+(product k 1 n k)
+
+; ReLU函数
+(if (gt x 0) x 0)
+
+; Sigmoid函数
+(div 1 (add 1 (exp (neg x))))
+
+; Softplus函数
+(ln (add 1 (exp x)))
+
+; 距离公式
+(sqrt (add (pow (sub x1 x2) 2) (pow (sub y1 y2) 2)))
+
+; 三维距离
+(sqrt (add (add (pow (sub x1 x2) 2) (pow (sub y1 y2) 2)) (pow (sub z1 z2) 2)))
+
+; 条件分段：符号函数
+(piecewise
+  ((lt x 0) -1)
+  ((gt x 0) 1)
+  :otherwise 0)
+
+; 条件分段：ReLU变体
+(piecewise
+  ((lt x 0) (mul 0.01 x))
+  :otherwise x)

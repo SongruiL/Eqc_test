@@ -1,0 +1,282 @@
+# 抛物柱面和球扁旋转体函数测试
+meta:
+  id: OPERATORS_PARABOLIC_SPHEROIDAL
+  model: ParabolicSpheroidalOperators
+  name_cn: 抛物柱面和球扁旋转体函数测试
+  version: "1.0"
+  description: 测试抛物柱面和球扁旋转体波函数
+
+parameters:
+  p1:
+    name_cn: 输入x
+    dtype: float
+    default: 1.0
+  p2:
+    name_cn: 阶数n
+    dtype: float
+    default: 1.0
+  p3:
+    name_cn: 参数c
+    dtype: float
+    default: 0.5
+
+variables:
+  y_pbdv:
+    name_cn: 抛物柱面D
+    dtype: float
+    var_type: output
+  y_pbvv:
+    name_cn: 抛物柱面V
+    dtype: float
+    var_type: output
+  y_pbwa:
+    name_cn: 抛物柱面W
+    dtype: float
+    var_type: output
+  y_parabolic_d:
+    name_cn: 抛物柱面D别名
+    dtype: float
+    var_type: output
+  y_parabolic_v:
+    name_cn: 抛物柱面V别名
+    dtype: float
+    var_type: output
+  y_parabolic_w:
+    name_cn: 抛物柱面W别名
+    dtype: float
+    var_type: output
+  y_pro_ang1:
+    name_cn: 长旋转体角函数
+    dtype: float
+    var_type: output
+  y_prolate_ang1:
+    name_cn: 长旋转体角函数别名
+    dtype: float
+    var_type: output
+  y_pro_rad1:
+    name_cn: 长旋转体径函数1
+    dtype: float
+    var_type: output
+  y_prolate_rad1:
+    name_cn: 长旋转体径函数1别名
+    dtype: float
+    var_type: output
+  y_pro_rad2:
+    name_cn: 长旋转体径函数2
+    dtype: float
+    var_type: output
+  y_prolate_rad2:
+    name_cn: 长旋转体径函数2别名
+    dtype: float
+    var_type: output
+  y_obl_ang1:
+    name_cn: 扁旋转体角函数
+    dtype: float
+    var_type: output
+  y_oblate_ang1:
+    name_cn: 扁旋转体角函数别名
+    dtype: float
+    var_type: output
+  y_obl_rad1:
+    name_cn: 扁旋转体径函数1
+    dtype: float
+    var_type: output
+  y_oblate_rad1:
+    name_cn: 扁旋转体径函数1别名
+    dtype: float
+    var_type: output
+  y_obl_rad2:
+    name_cn: 扁旋转体径函数2
+    dtype: float
+    var_type: output
+  y_oblate_rad2:
+    name_cn: 扁旋转体径函数2别名
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_pbdv
+    name: 抛物柱面D
+    output: y_pbdv
+    expression:
+      op: pbdv
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_pbvv
+    name: 抛物柱面V
+    output: y_pbvv
+    expression:
+      op: pbvv
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_pbwa
+    name: 抛物柱面W
+    output: y_pbwa
+    expression:
+      op: pbwa
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_parabolic_d
+    name: 抛物柱面D别名
+    output: y_parabolic_d
+    expression:
+      op: parabolic_d
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_parabolic_v
+    name: 抛物柱面V别名
+    output: y_parabolic_v
+    expression:
+      op: parabolic_v
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_parabolic_w
+    name: 抛物柱面W别名
+    output: y_parabolic_w
+    expression:
+      op: parabolic_w
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_pro_ang1
+    name: 长旋转体角函数
+    output: y_pro_ang1
+    expression:
+      op: pro_ang1
+      args:
+        - { ref: p2 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+
+  - id: test_prolate_ang1
+    name: 长旋转体角函数别名
+    output: y_prolate_ang1
+    expression:
+      op: prolate_ang1
+      args:
+        - { ref: p2 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+
+  - id: test_pro_rad1
+    name: 长旋转体径函数1
+    output: y_pro_rad1
+    expression:
+      op: pro_rad1
+      args:
+        - { ref: p2 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+
+  - id: test_prolate_rad1
+    name: 长旋转体径函数1别名
+    output: y_prolate_rad1
+    expression:
+      op: prolate_rad1
+      args:
+        - { ref: p2 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+
+  - id: test_pro_rad2
+    name: 长旋转体径函数2
+    output: y_pro_rad2
+    expression:
+      op: pro_rad2
+      args:
+        - { ref: p2 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+
+  - id: test_prolate_rad2
+    name: 长旋转体径函数2别名
+    output: y_prolate_rad2
+    expression:
+      op: prolate_rad2
+      args:
+        - { ref: p2 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+
+  - id: test_obl_ang1
+    name: 扁旋转体角函数
+    output: y_obl_ang1
+    expression:
+      op: obl_ang1
+      args:
+        - { ref: p2 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+
+  - id: test_oblate_ang1
+    name: 扁旋转体角函数别名
+    output: y_oblate_ang1
+    expression:
+      op: oblate_ang1
+      args:
+        - { ref: p2 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+
+  - id: test_obl_rad1
+    name: 扁旋转体径函数1
+    output: y_obl_rad1
+    expression:
+      op: obl_rad1
+      args:
+        - { ref: p2 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+
+  - id: test_oblate_rad1
+    name: 扁旋转体径函数1别名
+    output: y_oblate_rad1
+    expression:
+      op: oblate_rad1
+      args:
+        - { ref: p2 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+
+  - id: test_obl_rad2
+    name: 扁旋转体径函数2
+    output: y_obl_rad2
+    expression:
+      op: obl_rad2
+      args:
+        - { ref: p2 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+
+  - id: test_oblate_rad2
+    name: 扁旋转体径函数2别名
+    output: y_oblate_rad2
+    expression:
+      op: oblate_rad2
+      args:
+        - { ref: p2 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }

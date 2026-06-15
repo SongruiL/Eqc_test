@@ -1,0 +1,222 @@
+# 数学运算示例 - 演示各种算子的使用
+# 这个模块计算一个复合数学模型
+
+meta:
+  id: MATH_DEMO
+  model: MathDemo
+  name_cn: 数学运算演示
+  name_en: Math Demo
+  version: "1.0"
+  description: "演示 equation-compiler 支持的各种数学运算符"
+
+parameters:
+  p1:
+    name_cn: 振幅参数
+    dtype: float
+    default: 2.5
+    unit: "无量纲"
+    description: "控制波动振幅"
+  
+  p2:
+    name_cn: 频率参数
+    dtype: float
+    default: 1.0
+    unit: "Hz"
+    description: "控制波动频率"
+  
+  p3:
+    name_cn: 阻尼系数
+    dtype: float
+    default: 0.1
+    unit: "1/s"
+    description: "指数衰减的阻尼系数"
+
+variables:
+  t:
+    name_cn: 时间
+    dtype: float
+    unit: "s"
+    type: input
+    description: "时间变量"
+  
+  x:
+    name_cn: 空间坐标
+    dtype: float
+    unit: "m"
+    type: input
+    description: "空间位置"
+
+equations:
+  # 1. 阻尼振荡: A * exp(-λt) * sin(ωt)
+  - id: damped_oscillation
+    name: 阻尼振荡
+    output: y_damped
+    expression:
+      op: mul
+      args:
+        - { ref: p1 }  # 振幅 A
+        - op: mul
+          args:
+            - op: exp
+              args:
+                - op: neg
+                  args:
+                    - op: mul
+                      args:
+                        - { ref: p3 }  # 阻尼 λ
+                        - { ref: t }
+            - op: sin
+              args:
+                - op: mul
+                  args:
+                    - op: mul
+                      args:
+                        - { const: 2 }
+                        - { ref: pi }  # 使用 π 常量
+                    - op: mul
+                      args:
+                        - { ref: p2 }  # 频率 ω
+                        - { ref: t }
+    formula_display: "y = A \\cdot e^{-\\lambda t} \\cdot \\sin(2\\pi \\omega t)"
+
+  # 2. 双曲正切激活函数
+  - id: tanh_activation
+    name: 双曲正切激活
+    output: y_tanh
+    expression:
+      op: tanh
+      args:
+        - op: mul
+          args:
+            - { ref: p1 }
+            - { ref: x }
+    formula_display: "y = \\tanh(p_1 \\cdot x)"
+
+  # 3. 使用 atan2 计算角度
+  - id: angle_calc
+    name: 角度计算
+    output: theta
+    expression:
+      op: atan2
+      args:
+        - { ref: x }  # y 分量
+        - { ref: t }  # x 分量（这里用 t 代替）
+    formula_display: "\\theta = \\arctan2(x, t)"
+
+  # 4. 取整运算示例
+  - id: rounding_demo
+    name: 取整运算
+    output: y_round
+    expression:
+      op: add
+      args:
+        - op: floor
+          args:
+            - { ref: x }
+        - op: ceil
+          args:
+            - op: div
+              args:
+                - { ref: t }
+                - { const: 2 }
+    formula_display: "y = \\lfloor x \\rfloor + \\lceil t/2 \\rceil"
+
+  # 5. 符号函数与绝对值
+  - id: sign_abs_demo
+    name: 符号与绝对值
+    output: y_sign
+    expression:
+      op: mul
+      args:
+        - op: sign
+          args:
+            - { ref: x }
+        - op: sqrt
+          args:
+            - op: abs
+              args:
+                - { ref: x }
+    formula_display: "y = \\text{sgn}(x) \\cdot \\sqrt{|x|}"
+
+  # 6. 立方根与对数
+  - id: root_log_demo
+    name: 立方根与对数
+    output: y_log
+    expression:
+      op: add
+      args:
+        - op: cbrt
+          args:
+            - { ref: x }
+        - op: log2
+          args:
+            - op: add
+              args:
+                - { ref: t }
+                - { const: 1 }  # 避免 log(0)
+    formula_display: "y = \\sqrt[3]{x} + \\log_2(t + 1)"
+
+  # 7. 条件表达式 - ReLU 激活函数
+  - id: relu_activation
+    name: ReLU激活
+    output: y_relu
+    expression:
+      if: 
+        op: gt
+        args:
+          - { ref: x }
+          - { const: 0 }
+      then: { ref: x }
+      else: { const: 0 }
+    formula_display: "y = \\max(0, x)"
+
+  # 8. 取余运算
+  - id: modulo_demo
+    name: 取余运算
+    output: y_mod
+    expression:
+      op: mod
+      args:
+        - op: floor
+          args:
+            - op: mul
+              args:
+                - { ref: t }
+                - { const: 10 }
+        - { const: 3 }
+    formula_display: "y = \\lfloor 10t \\rfloor \\mod 3"
+
+  # 9. 反三角函数
+  - id: inverse_trig
+    name: 反三角函数
+    output: y_asin
+    expression:
+      op: mul
+      args:
+        - { const: 2 }
+        - op: asin
+          args:
+            - op: div
+              args:
+                - { ref: x }
+                - op: add
+                  args:
+                    - op: abs
+                      args:
+                        - { ref: x }
+                    - { const: 1 }
+    formula_display: "y = 2 \\arcsin\\left(\\frac{x}{|x| + 1}\\right)"
+
+  # 10. 使用 e 常量的指数增长
+  - id: exp_growth
+    name: 指数增长
+    output: y_exp
+    expression:
+      op: pow
+      args:
+        - { ref: e }  # 自然常数 e
+        - op: mul
+          args:
+            - { ref: p3 }
+            - { ref: t }
+    formula_display: "y = e^{\\lambda t}"

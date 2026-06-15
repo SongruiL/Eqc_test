@@ -1,0 +1,196 @@
+# Wigner 和 Coulomb 函数测试
+meta:
+  id: OPERATORS_WIGNER_COULOMB
+  model: WignerCoulombOperators
+  name_cn: Wigner和Coulomb函数测试
+  version: "1.0"
+  description: 测试Wigner符号和Coulomb波函数
+
+parameters:
+  p1:
+    name_cn: j1
+    dtype: float
+    default: 1.0
+  p2:
+    name_cn: j2
+    dtype: float
+    default: 1.0
+  p3:
+    name_cn: j3
+    dtype: float
+    default: 2.0
+  p4:
+    name_cn: 能量eta
+    dtype: float
+    default: 0.5
+  p5:
+    name_cn: 半径rho
+    dtype: float
+    default: 2.0
+
+variables:
+  y_wigner_3j:
+    name_cn: Wigner_3j
+    dtype: float
+    var_type: output
+  y_wigner3j:
+    name_cn: Wigner_3j别名
+    dtype: float
+    var_type: output
+  y_wigner_6j:
+    name_cn: Wigner_6j
+    dtype: float
+    var_type: output
+  y_wigner6j:
+    name_cn: Wigner_6j别名
+    dtype: float
+    var_type: output
+  y_wigner_9j:
+    name_cn: Wigner_9j
+    dtype: float
+    var_type: output
+  y_wigner9j:
+    name_cn: Wigner_9j别名
+    dtype: float
+    var_type: output
+  y_coulomb_f:
+    name_cn: Coulomb_F
+    dtype: float
+    var_type: output
+  y_coulombf:
+    name_cn: Coulomb_F别名
+    dtype: float
+    var_type: output
+  y_coulomb_g:
+    name_cn: Coulomb_G
+    dtype: float
+    var_type: output
+  y_coulombg:
+    name_cn: Coulomb_G别名
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_wigner_3j
+    name: Wigner_3j符号
+    output: y_wigner_3j
+    expression:
+      op: wigner_3j
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+        - { ref: p1 }
+        - { ref: p3 }
+
+  - id: test_wigner3j
+    name: Wigner_3j别名
+    output: y_wigner3j
+    expression:
+      op: wigner3j
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+        - { ref: p1 }
+        - { ref: p3 }
+
+  - id: test_wigner_6j
+    name: Wigner_6j符号
+    output: y_wigner_6j
+    expression:
+      op: wigner_6j
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_wigner6j
+    name: Wigner_6j别名
+    output: y_wigner6j
+    expression:
+      op: wigner6j
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_wigner_9j
+    name: Wigner_9j符号
+    output: y_wigner_9j
+    expression:
+      op: wigner_9j
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_wigner9j
+    name: Wigner_9j别名
+    output: y_wigner9j
+    expression:
+      op: wigner9j
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_coulomb_f
+    name: Coulomb_F
+    output: y_coulomb_f
+    expression:
+      op: coulomb_f
+      args:
+        - { ref: p1 }
+        - { ref: p4 }
+        - { ref: p5 }
+
+  - id: test_coulombf
+    name: Coulomb_F别名
+    output: y_coulombf
+    expression:
+      op: coulombf
+      args:
+        - { ref: p1 }
+        - { ref: p4 }
+        - { ref: p5 }
+
+  - id: test_coulomb_g
+    name: Coulomb_G
+    output: y_coulomb_g
+    expression:
+      op: coulomb_g
+      args:
+        - { ref: p1 }
+        - { ref: p4 }
+        - { ref: p5 }
+
+  - id: test_coulombg
+    name: Coulomb_G别名
+    output: y_coulombg
+    expression:
+      op: coulombg
+      args:
+        - { ref: p1 }
+        - { ref: p4 }
+        - { ref: p5 }

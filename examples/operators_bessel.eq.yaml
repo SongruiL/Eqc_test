@@ -1,0 +1,93 @@
+# 贝塞尔函数测试
+meta:
+  id: OPERATORS_BESSEL
+  model: BesselFunctions
+  name_cn: 贝塞尔函数测试
+  version: "1.0"
+  description: 测试各类贝塞尔函数
+
+parameters:
+  p1:
+    name_cn: 输入值x
+    dtype: float
+    default: 2.5
+  p2:
+    name_cn: 阶数n
+    dtype: float
+    default: 3.0
+
+variables:
+  y_j0:
+    name_cn: J0贝塞尔
+    dtype: float
+    var_type: output
+  y_j1:
+    name_cn: J1贝塞尔
+    dtype: float
+    var_type: output
+  y_jn:
+    name_cn: Jn贝塞尔
+    dtype: float
+    var_type: output
+  y_y0:
+    name_cn: Y0贝塞尔
+    dtype: float
+    var_type: output
+  y_i0:
+    name_cn: I0修正贝塞尔
+    dtype: float
+    var_type: output
+  y_k0:
+    name_cn: K0修正贝塞尔
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_bessel_j0
+    name: 第一类贝塞尔J0
+    output: y_j0
+    expression:
+      op: bessel_j0
+      args:
+        - { ref: p1 }
+
+  - id: test_bessel_j1
+    name: 第一类贝塞尔J1
+    output: y_j1
+    expression:
+      op: bessel_j1
+      args:
+        - { ref: p1 }
+
+  - id: test_bessel_jn
+    name: 第一类贝塞尔Jn
+    output: y_jn
+    expression:
+      op: bessel_jn
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_bessel_y0
+    name: 第二类贝塞尔Y0
+    output: y_y0
+    expression:
+      op: bessel_y0
+      args:
+        - { ref: p1 }
+
+  - id: test_bessel_i0
+    name: 修正贝塞尔I0
+    output: y_i0
+    expression:
+      op: bessel_i0
+      args:
+        - { ref: p1 }
+
+  - id: test_bessel_k0
+    name: 修正贝塞尔K0
+    output: y_k0
+    expression:
+      op: bessel_k0
+      args:
+        - { ref: p1 }

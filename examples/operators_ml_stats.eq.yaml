@@ -1,0 +1,199 @@
+# 机器学习与统计运算符测试
+meta:
+  id: OPERATORS_ML_STATS
+  model: MLStatsOperators
+  name_cn: 机器学习统计运算符测试
+  version: "1.0"
+  description: 测试Sigmoid、Box-Cox、信息论、阶乘扩展、Carlson椭圆积分等
+
+parameters:
+  p1:
+    name_cn: 概率值
+    dtype: float
+    default: 0.7
+  p2:
+    name_cn: lambda参数
+    dtype: float
+    default: 0.5
+  p3:
+    name_cn: 阶数n
+    dtype: float
+    default: 5.0
+  p4:
+    name_cn: 阶数k
+    dtype: float
+    default: 2.0
+  p5:
+    name_cn: 变量x
+    dtype: float
+    default: 1.5
+  p6:
+    name_cn: 变量y
+    dtype: float
+    default: 2.0
+  p7:
+    name_cn: 变量z
+    dtype: float
+    default: 3.0
+  p8:
+    name_cn: 参数s
+    dtype: float
+    default: 2.0
+  p9:
+    name_cn: 参数q
+    dtype: float
+    default: 1.0
+
+variables:
+  y_logit:
+    name_cn: Logit函数
+    dtype: float
+    var_type: output
+  y_expit:
+    name_cn: Sigmoid函数
+    dtype: float
+    var_type: output
+  y_boxcox:
+    name_cn: BoxCox变换
+    dtype: float
+    var_type: output
+  y_entr:
+    name_cn: 熵函数
+    dtype: float
+    var_type: output
+  y_kl_div:
+    name_cn: KL散度
+    dtype: float
+    var_type: output
+  y_factorial2:
+    name_cn: 双阶乘
+    dtype: float
+    var_type: output
+  y_poch:
+    name_cn: Pochhammer
+    dtype: float
+    var_type: output
+  y_elliprc:
+    name_cn: Carlson_RC
+    dtype: float
+    var_type: output
+  y_erfcx:
+    name_cn: 缩放互补误差
+    dtype: float
+    var_type: output
+  y_agm:
+    name_cn: 算术几何平均
+    dtype: float
+    var_type: output
+  y_hurwitz:
+    name_cn: Hurwitz_Zeta
+    dtype: float
+    var_type: output
+  y_polylog:
+    name_cn: 多重对数
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_logit
+    name: Logit函数
+    output: y_logit
+    expression:
+      op: logit
+      args:
+        - { ref: p1 }
+
+  - id: test_expit
+    name: Sigmoid函数
+    output: y_expit
+    expression:
+      op: expit
+      args:
+        - { ref: p5 }
+
+  - id: test_boxcox
+    name: BoxCox变换
+    output: y_boxcox
+    expression:
+      op: boxcox
+      args:
+        - { ref: p5 }
+        - { ref: p2 }
+
+  - id: test_entr
+    name: 熵函数
+    output: y_entr
+    expression:
+      op: entr
+      args:
+        - { ref: p1 }
+
+  - id: test_kl_div
+    name: KL散度
+    output: y_kl_div
+    expression:
+      op: kl_div
+      args:
+        - { ref: p1 }
+        - { ref: p6 }
+
+  - id: test_factorial2
+    name: 双阶乘
+    output: y_factorial2
+    expression:
+      op: factorial2
+      args:
+        - { ref: p3 }
+
+  - id: test_poch
+    name: Pochhammer
+    output: y_poch
+    expression:
+      op: poch
+      args:
+        - { ref: p5 }
+        - { ref: p4 }
+
+  - id: test_elliprc
+    name: Carlson_RC
+    output: y_elliprc
+    expression:
+      op: elliprc
+      args:
+        - { ref: p5 }
+        - { ref: p6 }
+
+  - id: test_erfcx
+    name: 缩放互补误差
+    output: y_erfcx
+    expression:
+      op: erfcx
+      args:
+        - { ref: p5 }
+
+  - id: test_agm
+    name: 算术几何平均
+    output: y_agm
+    expression:
+      op: agm
+      args:
+        - { ref: p5 }
+        - { ref: p6 }
+
+  - id: test_hurwitz
+    name: Hurwitz_Zeta
+    output: y_hurwitz
+    expression:
+      op: hurwitz_zeta
+      args:
+        - { ref: p8 }
+        - { ref: p9 }
+
+  - id: test_polylog
+    name: 多重对数
+    output: y_polylog
+    expression:
+      op: polylog
+      args:
+        - { ref: p4 }
+        - { ref: p1 }

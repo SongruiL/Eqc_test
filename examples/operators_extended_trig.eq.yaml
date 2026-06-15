@@ -1,0 +1,92 @@
+# 扩展三角/双曲函数测试
+meta:
+  id: OPERATORS_EXTENDED_TRIG
+  model: ExtendedTrigFunctions
+  name_cn: 扩展三角双曲函数测试
+  version: "1.0"
+  description: 测试sec, csc, cot及其反函数、双曲版本
+
+parameters:
+  p1:
+    name_cn: 角度输入
+    dtype: float
+    default: 0.5
+  p2:
+    name_cn: 反函数输入
+    dtype: float
+    default: 2.0
+
+variables:
+  y_sec:
+    name_cn: 正割
+    dtype: float
+    var_type: output
+  y_csc:
+    name_cn: 余割
+    dtype: float
+    var_type: output
+  y_cot:
+    name_cn: 余切
+    dtype: float
+    var_type: output
+  y_asec:
+    name_cn: 反正割
+    dtype: float
+    var_type: output
+  y_sech:
+    name_cn: 双曲正割
+    dtype: float
+    var_type: output
+  y_coth:
+    name_cn: 双曲余切
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_sec
+    name: 正割函数
+    output: y_sec
+    expression:
+      op: sec
+      args:
+        - { ref: p1 }
+
+  - id: test_csc
+    name: 余割函数
+    output: y_csc
+    expression:
+      op: csc
+      args:
+        - { ref: p1 }
+
+  - id: test_cot
+    name: 余切函数
+    output: y_cot
+    expression:
+      op: cot
+      args:
+        - { ref: p1 }
+
+  - id: test_asec
+    name: 反正割函数
+    output: y_asec
+    expression:
+      op: asec
+      args:
+        - { ref: p2 }
+
+  - id: test_sech
+    name: 双曲正割
+    output: y_sech
+    expression:
+      op: sech
+      args:
+        - { ref: p1 }
+
+  - id: test_coth
+    name: 双曲余切
+    output: y_coth
+    expression:
+      op: coth
+      args:
+        - { ref: p1 }

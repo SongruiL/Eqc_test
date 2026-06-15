@@ -1,0 +1,464 @@
+{
+  "edges": [
+    {
+      "from": "CASCADE.x",
+      "to": "CASCADE.y1",
+      "type": "DataFlow"
+    },
+    {
+      "from": "CASCADE.p1",
+      "to": "CASCADE.y1",
+      "type": "DataFlow"
+    },
+    {
+      "from": "CASCADE.y1",
+      "to": "CASCADE.y2",
+      "type": "DataFlow"
+    },
+    {
+      "from": "CASCADE.x",
+      "to": "CASCADE.y2",
+      "type": "DataFlow"
+    },
+    {
+      "from": "CASCADE.p2",
+      "to": "CASCADE.y2",
+      "type": "DataFlow"
+    },
+    {
+      "from": "CASCADE.y2",
+      "to": "CASCADE.y_final",
+      "type": "DataFlow"
+    },
+    {
+      "from": "MATH_DEMO.t",
+      "to": "MATH_DEMO.y_damped",
+      "type": "DataFlow"
+    },
+    {
+      "from": "MATH_DEMO.p1",
+      "to": "MATH_DEMO.y_damped",
+      "type": "DataFlow"
+    },
+    {
+      "from": "MATH_DEMO.p3",
+      "to": "MATH_DEMO.y_damped",
+      "type": "DataFlow"
+    },
+    {
+      "from": "MATH_DEMO.p2",
+      "to": "MATH_DEMO.y_damped",
+      "type": "DataFlow"
+    },
+    {
+      "from": "MATH_DEMO.x",
+      "to": "MATH_DEMO.y_tanh",
+      "type": "DataFlow"
+    },
+    {
+      "from": "MATH_DEMO.p1",
+      "to": "MATH_DEMO.y_tanh",
+      "type": "DataFlow"
+    },
+    {
+      "from": "MATH_DEMO.x",
+      "to": "MATH_DEMO.theta",
+      "type": "DataFlow"
+    },
+    {
+      "from": "MATH_DEMO.t",
+      "to": "MATH_DEMO.theta",
+      "type": "DataFlow"
+    },
+    {
+      "from": "MATH_DEMO.x",
+      "to": "MATH_DEMO.y_round",
+      "type": "DataFlow"
+    },
+    {
+      "from": "MATH_DEMO.t",
+      "to": "MATH_DEMO.y_round",
+      "type": "DataFlow"
+    },
+    {
+      "from": "MATH_DEMO.x",
+      "to": "MATH_DEMO.y_sign",
+      "type": "DataFlow"
+    },
+    {
+      "from": "MATH_DEMO.x",
+      "to": "MATH_DEMO.y_log",
+      "type": "DataFlow"
+    },
+    {
+      "from": "MATH_DEMO.t",
+      "to": "MATH_DEMO.y_log",
+      "type": "DataFlow"
+    },
+    {
+      "from": "MATH_DEMO.x",
+      "to": "MATH_DEMO.y_relu",
+      "type": "DataFlow"
+    },
+    {
+      "from": "MATH_DEMO.t",
+      "to": "MATH_DEMO.y_mod",
+      "type": "DataFlow"
+    },
+    {
+      "from": "MATH_DEMO.x",
+      "to": "MATH_DEMO.y_asin",
+      "type": "DataFlow"
+    },
+    {
+      "from": "MATH_DEMO.t",
+      "to": "MATH_DEMO.y_exp",
+      "type": "DataFlow"
+    },
+    {
+      "from": "MATH_DEMO.p3",
+      "to": "MATH_DEMO.y_exp",
+      "type": "DataFlow"
+    },
+    {
+      "from": "PHOTO.reserve_ratio",
+      "to": "PHOTO.Pmax_l",
+      "type": "DataFlow"
+    },
+    {
+      "from": "PHOTO.p1",
+      "to": "PHOTO.Pmax_l",
+      "type": "DataFlow"
+    },
+    {
+      "from": "PHOTO.p2",
+      "to": "PHOTO.Pmax_l",
+      "type": "DataFlow"
+    },
+    {
+      "from": "PHOTO.Pmax_l",
+      "to": "PHOTO.A_leaf",
+      "type": "DataFlow"
+    },
+    {
+      "from": "PHOTO.ppfd",
+      "to": "PHOTO.A_leaf",
+      "type": "DataFlow"
+    },
+    {
+      "from": "PHOTO.p3",
+      "to": "PHOTO.A_leaf",
+      "type": "DataFlow"
+    },
+    {
+      "from": "PHOTO.p4",
+      "to": "PHOTO.A_leaf",
+      "type": "DataFlow"
+    }
+  ],
+  "modules": [
+    "CASCADE",
+    "MATH_DEMO",
+    "PHOTO"
+  ],
+  "nodes": [
+    {
+      "id": "CASCADE.p1",
+      "metadata": {
+        "default": "0.5",
+        "name_cn": "一阶系数"
+      },
+      "module": "CASCADE",
+      "type": "Parameter"
+    },
+    {
+      "id": "CASCADE.p2",
+      "metadata": {
+        "default": "0.3",
+        "name_cn": "二阶系数"
+      },
+      "module": "CASCADE",
+      "type": "Parameter"
+    },
+    {
+      "id": "CASCADE.x",
+      "metadata": {
+        "description": "原始输入"
+      },
+      "module": "CASCADE",
+      "type": "Input"
+    },
+    {
+      "id": "CASCADE.y1",
+      "metadata": {
+        "equation_id": "stage1",
+        "name": "一阶变换"
+      },
+      "module": "CASCADE",
+      "type": "Intermediate"
+    },
+    {
+      "id": "CASCADE.y2",
+      "metadata": {
+        "equation_id": "stage2",
+        "name": "二阶变换"
+      },
+      "module": "CASCADE",
+      "type": "Intermediate"
+    },
+    {
+      "id": "CASCADE.y_final",
+      "metadata": {
+        "equation_id": "stage3",
+        "name": "最终输出"
+      },
+      "module": "CASCADE",
+      "type": "Intermediate"
+    },
+    {
+      "id": "MATH_DEMO.p1",
+      "metadata": {
+        "default": "2.5",
+        "name_cn": "振幅参数",
+        "unit": "无量纲"
+      },
+      "module": "MATH_DEMO",
+      "type": "Parameter"
+    },
+    {
+      "id": "MATH_DEMO.p2",
+      "metadata": {
+        "default": "1",
+        "name_cn": "频率参数",
+        "unit": "Hz"
+      },
+      "module": "MATH_DEMO",
+      "type": "Parameter"
+    },
+    {
+      "id": "MATH_DEMO.p3",
+      "metadata": {
+        "default": "0.1",
+        "name_cn": "阻尼系数",
+        "unit": "1/s"
+      },
+      "module": "MATH_DEMO",
+      "type": "Parameter"
+    },
+    {
+      "id": "MATH_DEMO.t",
+      "metadata": {
+        "description": "时间变量",
+        "unit": "s"
+      },
+      "module": "MATH_DEMO",
+      "type": "Input"
+    },
+    {
+      "id": "MATH_DEMO.x",
+      "metadata": {
+        "description": "空间位置",
+        "unit": "m"
+      },
+      "module": "MATH_DEMO",
+      "type": "Input"
+    },
+    {
+      "id": "MATH_DEMO.y_damped",
+      "metadata": {
+        "equation_id": "damped_oscillation",
+        "name": "阻尼振荡"
+      },
+      "module": "MATH_DEMO",
+      "type": "Intermediate"
+    },
+    {
+      "id": "MATH_DEMO.y_tanh",
+      "metadata": {
+        "equation_id": "tanh_activation",
+        "name": "双曲正切激活"
+      },
+      "module": "MATH_DEMO",
+      "type": "Intermediate"
+    },
+    {
+      "id": "MATH_DEMO.theta",
+      "metadata": {
+        "equation_id": "angle_calc",
+        "name": "角度计算"
+      },
+      "module": "MATH_DEMO",
+      "type": "Intermediate"
+    },
+    {
+      "id": "MATH_DEMO.y_round",
+      "metadata": {
+        "equation_id": "rounding_demo",
+        "name": "取整运算"
+      },
+      "module": "MATH_DEMO",
+      "type": "Intermediate"
+    },
+    {
+      "id": "MATH_DEMO.y_sign",
+      "metadata": {
+        "equation_id": "sign_abs_demo",
+        "name": "符号与绝对值"
+      },
+      "module": "MATH_DEMO",
+      "type": "Intermediate"
+    },
+    {
+      "id": "MATH_DEMO.y_log",
+      "metadata": {
+        "equation_id": "root_log_demo",
+        "name": "立方根与对数"
+      },
+      "module": "MATH_DEMO",
+      "type": "Intermediate"
+    },
+    {
+      "id": "MATH_DEMO.y_relu",
+      "metadata": {
+        "equation_id": "relu_activation",
+        "name": "ReLU激活"
+      },
+      "module": "MATH_DEMO",
+      "type": "Intermediate"
+    },
+    {
+      "id": "MATH_DEMO.y_mod",
+      "metadata": {
+        "equation_id": "modulo_demo",
+        "name": "取余运算"
+      },
+      "module": "MATH_DEMO",
+      "type": "Intermediate"
+    },
+    {
+      "id": "MATH_DEMO.y_asin",
+      "metadata": {
+        "equation_id": "inverse_trig",
+        "name": "反三角函数"
+      },
+      "module": "MATH_DEMO",
+      "type": "Intermediate"
+    },
+    {
+      "id": "MATH_DEMO.y_exp",
+      "metadata": {
+        "equation_id": "exp_growth",
+        "name": "指数增长"
+      },
+      "module": "MATH_DEMO",
+      "type": "Intermediate"
+    },
+    {
+      "id": "PHOTO.p4",
+      "metadata": {
+        "default": "0.044",
+        "name_cn": "量子效率",
+        "unit": "μmol CO₂/μmol photon"
+      },
+      "module": "PHOTO",
+      "type": "Parameter"
+    },
+    {
+      "id": "PHOTO.p2",
+      "metadata": {
+        "default": "-66.95",
+        "name_cn": "储备反馈系数",
+        "unit": "μmol CO₂/m²/s"
+      },
+      "module": "PHOTO",
+      "type": "Parameter"
+    },
+    {
+      "id": "PHOTO.p1",
+      "metadata": {
+        "default": "20.14",
+        "name_cn": "基础光饱和光合",
+        "unit": "μmol CO₂/m²/s"
+      },
+      "module": "PHOTO",
+      "type": "Parameter"
+    },
+    {
+      "id": "PHOTO.p3",
+      "metadata": {
+        "default": "0.72",
+        "name_cn": "暗呼吸速率",
+        "unit": "μmol CO₂/m²/s"
+      },
+      "module": "PHOTO",
+      "type": "Parameter"
+    },
+    {
+      "id": "PHOTO.reserve_ratio",
+      "metadata": {
+        "description": "储备/生物量比",
+        "unit": "dimensionless"
+      },
+      "module": "PHOTO",
+      "type": "Input"
+    },
+    {
+      "id": "PHOTO.A_leaf",
+      "metadata": {
+        "description": "叶片光合速率",
+        "unit": "μmol CO₂/m²/s"
+      },
+      "module": "PHOTO",
+      "type": "Output"
+    },
+    {
+      "id": "PHOTO.Pmax_l",
+      "metadata": {
+        "description": "动态光饱和光合速率",
+        "unit": "μmol CO₂/m²/s"
+      },
+      "module": "PHOTO",
+      "type": "Intermediate"
+    },
+    {
+      "id": "PHOTO.ppfd",
+      "metadata": {
+        "description": "光合有效辐射",
+        "unit": "μmol/m²/s"
+      },
+      "module": "PHOTO",
+      "type": "Input"
+    }
+  ],
+  "topological_order": [
+    "PHOTO.ppfd",
+    "PHOTO.reserve_ratio",
+    "PHOTO.p3",
+    "PHOTO.p1",
+    "PHOTO.p2",
+    "PHOTO.Pmax_l",
+    "PHOTO.p4",
+    "PHOTO.A_leaf",
+    "MATH_DEMO.x",
+    "MATH_DEMO.y_asin",
+    "MATH_DEMO.y_relu",
+    "MATH_DEMO.y_sign",
+    "MATH_DEMO.t",
+    "MATH_DEMO.y_mod",
+    "MATH_DEMO.y_log",
+    "MATH_DEMO.y_round",
+    "MATH_DEMO.theta",
+    "MATH_DEMO.p3",
+    "MATH_DEMO.y_exp",
+    "MATH_DEMO.p2",
+    "MATH_DEMO.p1",
+    "MATH_DEMO.y_tanh",
+    "MATH_DEMO.y_damped",
+    "CASCADE.x",
+    "CASCADE.p2",
+    "CASCADE.p1",
+    "CASCADE.y1",
+    "CASCADE.y2",
+    "CASCADE.y_final"
+  ]
+}

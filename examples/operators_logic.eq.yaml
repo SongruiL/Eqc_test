@@ -1,0 +1,267 @@
+# 逻辑关系运算测试
+meta:
+  id: OPERATORS_LOGIC
+  model: LogicOperators
+  name_cn: 逻辑关系运算测试
+  version: "1.0"
+  description: 测试逻辑和关系运算符
+
+parameters:
+  p1:
+    name_cn: 值a
+    dtype: float
+    default: 5.0
+  p2:
+    name_cn: 值b
+    dtype: float
+    default: 3.0
+  p3:
+    name_cn: 布尔值c
+    dtype: float
+    default: 1.0
+
+variables:
+  y_eq:
+    name_cn: 等于
+    dtype: float
+    var_type: output
+  y_ne:
+    name_cn: 不等于
+    dtype: float
+    var_type: output
+  y_neq:
+    name_cn: 不等于别名
+    dtype: float
+    var_type: output
+  y_lt:
+    name_cn: 小于
+    dtype: float
+    var_type: output
+  y_le:
+    name_cn: 小于等于
+    dtype: float
+    var_type: output
+  y_leq:
+    name_cn: 小于等于别名
+    dtype: float
+    var_type: output
+  y_gt:
+    name_cn: 大于
+    dtype: float
+    var_type: output
+  y_ge:
+    name_cn: 大于等于
+    dtype: float
+    var_type: output
+  y_geq:
+    name_cn: 大于等于别名
+    dtype: float
+    var_type: output
+  y_and:
+    name_cn: 逻辑与
+    dtype: float
+    var_type: output
+  y_or:
+    name_cn: 逻辑或
+    dtype: float
+    var_type: output
+  y_not:
+    name_cn: 逻辑非
+    dtype: float
+    var_type: output
+  y_max:
+    name_cn: 最大值
+    dtype: float
+    var_type: output
+  y_min:
+    name_cn: 最小值
+    dtype: float
+    var_type: output
+  y_copysign:
+    name_cn: 复制符号
+    dtype: float
+    var_type: output
+  y_round:
+    name_cn: 四舍五入
+    dtype: float
+    var_type: output
+  y_trunc:
+    name_cn: 截断
+    dtype: float
+    var_type: output
+  y_rem:
+    name_cn: 余数
+    dtype: float
+    var_type: output
+  y_signum:
+    name_cn: 符号函数
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_eq
+    name: 等于判断
+    output: y_eq
+    expression:
+      op: eq
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_ne
+    name: 不等于判断
+    output: y_ne
+    expression:
+      op: ne
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_neq
+    name: 不等于别名
+    output: y_neq
+    expression:
+      op: neq
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_lt
+    name: 小于判断
+    output: y_lt
+    expression:
+      op: lt
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_le
+    name: 小于等于判断
+    output: y_le
+    expression:
+      op: le
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_leq
+    name: 小于等于别名
+    output: y_leq
+    expression:
+      op: leq
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_gt
+    name: 大于判断
+    output: y_gt
+    expression:
+      op: gt
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_ge
+    name: 大于等于判断
+    output: y_ge
+    expression:
+      op: ge
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_geq
+    name: 大于等于别名
+    output: y_geq
+    expression:
+      op: geq
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_and
+    name: 逻辑与
+    output: y_and
+    expression:
+      op: and
+      args:
+        - { op: gt, args: [{ ref: p1 }, { ref: p2 }] }
+        - { op: lt, args: [{ ref: p1 }, { ref: p3 }] }
+
+  - id: test_or
+    name: 逻辑或
+    output: y_or
+    expression:
+      op: or
+      args:
+        - { op: gt, args: [{ ref: p1 }, { ref: p2 }] }
+        - { op: eq, args: [{ ref: p1 }, { ref: p3 }] }
+
+  - id: test_not
+    name: 逻辑非
+    output: y_not
+    expression:
+      op: not
+      args:
+        - { op: gt, args: [{ ref: p1 }, { ref: p2 }] }
+
+  - id: test_max
+    name: 最大值
+    output: y_max
+    expression:
+      op: max
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_min
+    name: 最小值
+    output: y_min
+    expression:
+      op: min
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_copysign
+    name: 复制符号
+    output: y_copysign
+    expression:
+      op: copysign
+      args:
+        - { ref: p1 }
+        - { op: neg, args: [{ ref: p2 }] }
+
+  - id: test_round
+    name: 四舍五入
+    output: y_round
+    expression:
+      op: round
+      args:
+        - { op: div, args: [{ ref: p1 }, { ref: p2 }] }
+
+  - id: test_trunc
+    name: 截断
+    output: y_trunc
+    expression:
+      op: trunc
+      args:
+        - { op: div, args: [{ ref: p1 }, { ref: p2 }] }
+
+  - id: test_rem
+    name: 余数
+    output: y_rem
+    expression:
+      op: rem
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_signum
+    name: 符号函数
+    output: y_signum
+    expression:
+      op: signum
+      args:
+        - { op: neg, args: [{ ref: p1 }] }

@@ -1,0 +1,185 @@
+# 向量矩阵运算测试
+meta:
+  id: OPERATORS_VECTOR_MATRIX
+  model: VectorMatrixOperators
+  name_cn: 向量矩阵运算测试
+  version: "1.0"
+  description: 测试向量和矩阵运算
+
+parameters:
+  p1:
+    name_cn: 分量x
+    dtype: float
+    default: 1.0
+  p2:
+    name_cn: 分量y
+    dtype: float
+    default: 2.0
+  p3:
+    name_cn: 分量z
+    dtype: float
+    default: 3.0
+
+variables:
+  y_vector:
+    name_cn: 向量
+    dtype: float
+    var_type: output
+  y_dot:
+    name_cn: 点积
+    dtype: float
+    var_type: output
+  y_cross:
+    name_cn: 叉积
+    dtype: float
+    var_type: output
+  y_vec_norm:
+    name_cn: 向量范数
+    dtype: float
+    var_type: output
+  y_normalize:
+    name_cn: 归一化
+    dtype: float
+    var_type: output
+  y_vec_normalize:
+    name_cn: 归一化别名
+    dtype: float
+    var_type: output
+  y_det:
+    name_cn: 行列式
+    dtype: float
+    var_type: output
+  y_trace:
+    name_cn: 迹
+    dtype: float
+    var_type: output
+  y_transpose:
+    name_cn: 转置
+    dtype: float
+    var_type: output
+  y_inv:
+    name_cn: 逆矩阵
+    dtype: float
+    var_type: output
+  y_matmul:
+    name_cn: 矩阵乘法
+    dtype: float
+    var_type: output
+  y_mat_norm:
+    name_cn: 矩阵范数
+    dtype: float
+    var_type: output
+  y_eigenvalues:
+    name_cn: 特征值
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_vector
+    name: 向量构造
+    output: y_vector
+    expression:
+      op: vector
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_dot
+    name: 点积
+    output: y_dot
+    expression:
+      op: dot
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_cross
+    name: 叉积
+    output: y_cross
+    expression:
+      op: cross
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_vec_norm
+    name: 向量范数
+    output: y_vec_norm
+    expression:
+      op: vec_norm
+      args:
+        - { ref: p1 }
+
+  - id: test_normalize
+    name: 归一化
+    output: y_normalize
+    expression:
+      op: normalize
+      args:
+        - { ref: p1 }
+
+  - id: test_vec_normalize
+    name: 归一化别名
+    output: y_vec_normalize
+    expression:
+      op: vec_normalize
+      args:
+        - { ref: p1 }
+
+  - id: test_det
+    name: 行列式
+    output: y_det
+    expression:
+      op: det
+      args:
+        - { ref: p1 }
+
+  - id: test_trace
+    name: 迹
+    output: y_trace
+    expression:
+      op: trace
+      args:
+        - { ref: p1 }
+
+  - id: test_transpose
+    name: 转置
+    output: y_transpose
+    expression:
+      op: transpose
+      args:
+        - { ref: p1 }
+
+  - id: test_inv
+    name: 逆矩阵
+    output: y_inv
+    expression:
+      op: inv
+      args:
+        - { ref: p1 }
+
+  - id: test_matmul
+    name: 矩阵乘法
+    output: y_matmul
+    expression:
+      op: matmul
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_mat_norm
+    name: 矩阵范数
+    output: y_mat_norm
+    expression:
+      op: mat_norm
+      args:
+        - { ref: p1 }
+
+  - id: test_eigenvalues
+    name: 特征值
+    output: y_eigenvalues
+    expression:
+      op: eigenvalues
+      args:
+        - { ref: p1 }

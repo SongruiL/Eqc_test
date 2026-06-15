@@ -1,0 +1,112 @@
+{
+  "definition": {
+    "edges": [
+      {
+        "from": {
+          "node": "node_0",
+          "port": "y1"
+        },
+        "to": {
+          "node": "node_1",
+          "port": "y1"
+        }
+      },
+      {
+        "from": {
+          "node": "node_1",
+          "port": "y2"
+        },
+        "to": {
+          "node": "node_2",
+          "port": "y2"
+        }
+      }
+    ],
+    "inputs": [
+      {
+        "bind_to": {
+          "node": "node_0",
+          "port": "x"
+        },
+        "name": "x"
+      },
+      {
+        "bind_to": {
+          "node": "node_0",
+          "port": "p1"
+        },
+        "name": "p1"
+      },
+      {
+        "bind_to": {
+          "node": "node_1",
+          "port": "y1"
+        },
+        "name": "y1"
+      },
+      {
+        "bind_to": {
+          "node": "node_1",
+          "port": "x"
+        },
+        "name": "x"
+      },
+      {
+        "bind_to": {
+          "node": "node_1",
+          "port": "p2"
+        },
+        "name": "p2"
+      },
+      {
+        "bind_to": {
+          "node": "node_2",
+          "port": "y2"
+        },
+        "name": "y2"
+      }
+    ],
+    "nodes": [
+      {
+        "config": {},
+        "id": "node_0",
+        "operator_id": "cascade.stage1"
+      },
+      {
+        "config": {},
+        "id": "node_1",
+        "operator_id": "cascade.stage2"
+      },
+      {
+        "config": {},
+        "id": "node_2",
+        "operator_id": "cascade.stage3"
+      }
+    ],
+    "outputs": [
+      {
+        "bind_from": {
+          "node": "node_0",
+          "port": "y1"
+        },
+        "name": "y1"
+      },
+      {
+        "bind_from": {
+          "node": "node_1",
+          "port": "y2"
+        },
+        "name": "y2"
+      },
+      {
+        "bind_from": {
+          "node": "node_2",
+          "port": "y_final"
+        },
+        "name": "y_final"
+      }
+    ]
+  },
+  "description": "展示方程之间的 DAG 依赖关系",
+  "name": "CASCADE - 级联计算演示"
+}

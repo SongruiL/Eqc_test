@@ -1,0 +1,278 @@
+# 数论/组合函数测试
+meta:
+  id: OPERATORS_COMBINATORICS
+  model: CombinatoricsOperators
+  name_cn: 数论/组合函数测试
+  version: "1.0"
+  description: 测试数论和组合函数
+
+parameters:
+  p1:
+    name_cn: 整数n
+    dtype: float
+    default: 5.0
+  p2:
+    name_cn: 整数k
+    dtype: float
+    default: 2.0
+  p3:
+    name_cn: 整数m
+    dtype: float
+    default: 3.0
+
+variables:
+  y_factorial:
+    name_cn: 阶乘
+    dtype: float
+    var_type: output
+  y_fact:
+    name_cn: 阶乘别名
+    dtype: float
+    var_type: output
+  y_factorial2:
+    name_cn: 双阶乘
+    dtype: float
+    var_type: output
+  y_double_factorial:
+    name_cn: 双阶乘别名
+    dtype: float
+    var_type: output
+  y_factorialk:
+    name_cn: k阶乘
+    dtype: float
+    var_type: output
+  y_combination:
+    name_cn: 组合数
+    dtype: float
+    var_type: output
+  y_comb:
+    name_cn: 组合数别名
+    dtype: float
+    var_type: output
+  y_choose:
+    name_cn: 组合choose
+    dtype: float
+    var_type: output
+  y_permutation:
+    name_cn: 排列数
+    dtype: float
+    var_type: output
+  y_perm:
+    name_cn: 排列数别名
+    dtype: float
+    var_type: output
+  y_gcd:
+    name_cn: 最大公约数
+    dtype: float
+    var_type: output
+  y_lcm:
+    name_cn: 最小公倍数
+    dtype: float
+    var_type: output
+  y_bernoulli:
+    name_cn: Bernoulli数
+    dtype: float
+    var_type: output
+  y_euler:
+    name_cn: Euler数
+    dtype: float
+    var_type: output
+  y_stirling2:
+    name_cn: 第二类Stirling数
+    dtype: float
+    var_type: output
+  y_poch:
+    name_cn: Pochhammer符号
+    dtype: float
+    var_type: output
+  y_pochhammer:
+    name_cn: Pochhammer别名
+    dtype: float
+    var_type: output
+  y_binom:
+    name_cn: 二项式系数
+    dtype: float
+    var_type: output
+  y_pi:
+    name_cn: 圆周率
+    dtype: float
+    var_type: output
+  y_e:
+    name_cn: 自然常数
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_factorial
+    name: 阶乘
+    output: y_factorial
+    expression:
+      op: factorial
+      args:
+        - { ref: p1 }
+
+  - id: test_fact
+    name: 阶乘别名
+    output: y_fact
+    expression:
+      op: fact
+      args:
+        - { ref: p1 }
+
+  - id: test_factorial2
+    name: 双阶乘
+    output: y_factorial2
+    expression:
+      op: factorial2
+      args:
+        - { ref: p1 }
+
+  - id: test_double_factorial
+    name: 双阶乘别名
+    output: y_double_factorial
+    expression:
+      op: double_factorial
+      args:
+        - { ref: p1 }
+
+  - id: test_factorialk
+    name: k阶乘
+    output: y_factorialk
+    expression:
+      op: factorialk
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_combination
+    name: 组合数
+    output: y_combination
+    expression:
+      op: combination
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_comb
+    name: 组合数别名
+    output: y_comb
+    expression:
+      op: comb
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_choose
+    name: 组合choose
+    output: y_choose
+    expression:
+      op: choose
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_permutation
+    name: 排列数
+    output: y_permutation
+    expression:
+      op: permutation
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_perm
+    name: 排列数别名
+    output: y_perm
+    expression:
+      op: perm
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_gcd
+    name: 最大公约数
+    output: y_gcd
+    expression:
+      op: gcd
+      args:
+        - { op: mul, args: [{ ref: p1 }, { ref: p2 }] }
+        - { op: mul, args: [{ ref: p2 }, { ref: p3 }] }
+
+  - id: test_lcm
+    name: 最小公倍数
+    output: y_lcm
+    expression:
+      op: lcm
+      args:
+        - { ref: p1 }
+        - { ref: p3 }
+
+  - id: test_bernoulli
+    name: Bernoulli数
+    output: y_bernoulli
+    expression:
+      op: bernoulli
+      args:
+        - { ref: p2 }
+
+  - id: test_euler
+    name: Euler数
+    output: y_euler
+    expression:
+      op: euler
+      args:
+        - { ref: p2 }
+
+  - id: test_stirling2
+    name: 第二类Stirling数
+    output: y_stirling2
+    expression:
+      op: stirling2
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_poch
+    name: Pochhammer符号
+    output: y_poch
+    expression:
+      op: poch
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_pochhammer
+    name: Pochhammer别名
+    output: y_pochhammer
+    expression:
+      op: pochhammer
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_binom
+    name: 二项式系数
+    output: y_binom
+    expression:
+      op: binom
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_pi
+    name: 圆周率
+    output: y_pi
+    expression:
+      op: mul
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_e
+    name: 自然常数
+    output: y_e
+    expression:
+      op: add
+      args:
+        - { ref: p1 }
+        - { ref: p2 }

@@ -1,0 +1,155 @@
+# 特殊函数扩展测试
+meta:
+  id: OPERATORS_SPECIAL_EXTENDED
+  model: SpecialExtendedOperators
+  name_cn: 特殊函数扩展测试
+  version: "1.0"
+  description: 测试特殊函数的别名和扩展
+
+parameters:
+  p1:
+    name_cn: 输入x
+    dtype: float
+    default: 1.0
+  p2:
+    name_cn: 参数a
+    dtype: float
+    default: 2.0
+  p3:
+    name_cn: 参数b
+    dtype: float
+    default: 3.0
+
+variables:
+  y_betainccinv:
+    name_cn: Beta补逆
+    dtype: float
+    var_type: output
+  y_gammaincc:
+    name_cn: Gamma补
+    dtype: float
+    var_type: output
+  y_regularized_betainc:
+    name_cn: 正则化Beta
+    dtype: float
+    var_type: output
+  y_logbeta:
+    name_cn: 对数Beta别名
+    dtype: float
+    var_type: output
+  y_psi_n:
+    name_cn: 多重Gamma
+    dtype: float
+    var_type: output
+  y_exp_cdf:
+    name_cn: 指数CDF
+    dtype: float
+    var_type: output
+  y_expint:
+    name_cn: 指数积分别名
+    dtype: float
+    var_type: output
+  y_logint:
+    name_cn: 对数积分别名
+    dtype: float
+    var_type: output
+  y_log_base:
+    name_cn: 任意底对数别名
+    dtype: float
+    var_type: output
+  y_mul_add:
+    name_cn: 乘加运算
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_betainccinv
+    name: Beta补逆
+    output: y_betainccinv
+    expression:
+      op: betainccinv
+      args:
+        - { ref: p2 }
+        - { ref: p3 }
+        - { op: div, args: [{ ref: p1 }, { ref: p3 }] }
+
+  - id: test_gammaincc
+    name: Gamma补
+    output: y_gammaincc
+    expression:
+      op: gammaincc
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_regularized_betainc
+    name: 正则化Beta
+    output: y_regularized_betainc
+    expression:
+      op: regularized_betainc
+      args:
+        - { ref: p2 }
+        - { ref: p3 }
+        - { op: div, args: [{ ref: p1 }, { ref: p3 }] }
+
+  - id: test_logbeta
+    name: 对数Beta别名
+    output: y_logbeta
+    expression:
+      op: logbeta
+      args:
+        - { ref: p2 }
+        - { ref: p3 }
+
+  - id: test_psi_n
+    name: 多重Gamma
+    output: y_psi_n
+    expression:
+      op: psi_n
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_exp_cdf
+    name: 指数CDF
+    output: y_exp_cdf
+    expression:
+      op: exp_cdf
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_expint
+    name: 指数积分别名
+    output: y_expint
+    expression:
+      op: expint
+      args:
+        - { ref: p1 }
+
+  - id: test_logint
+    name: 对数积分别名
+    output: y_logint
+    expression:
+      op: logint
+      args:
+        - { ref: p1 }
+
+  - id: test_log_base
+    name: 任意底对数别名
+    output: y_log_base
+    expression:
+      op: log_base
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_mul_add
+    name: 乘加运算
+    output: y_mul_add
+    expression:
+      op: mul_add
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+        - { ref: p3 }

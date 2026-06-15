@@ -1,0 +1,89 @@
+; 特殊函数测试
+
+; 超越函数
+(exp x)
+(ln x)
+(log x)      ; 别名
+(log10 x)
+(log2 x)
+(sqrt x)
+(cbrt x)
+(expm1 x)
+(log1p x)
+
+; Gamma函数族
+(gamma x)
+(lgamma x)
+(gammaln x)  ; 别名
+(digamma x)
+(psi x)      ; 别名
+(factorial 10)
+(fact 5)     ; 别名
+
+; Beta函数族
+(beta a b)
+(lbeta a b)
+(betaln a b) ; 别名
+
+; 误差函数
+(erf x)
+(erfc x)
+(erfinv x)
+
+; 组合数学
+(combination 10 3)
+(comb 10 3)  ; 别名
+(choose 10 3) ; 别名
+(permutation 10 3)
+(perm 10 3)  ; 别名
+
+; Zeta函数
+(zeta s)
+(riemann_zeta s) ; 别名
+
+; 贝塞尔函数
+(bessel_j0 x)
+(bessel_j1 x)
+(bessel_jn 2 x)
+(bessel_y0 x)
+(bessel_y1 x)
+(bessel_yn 2 x)
+(bessel_i0 x)
+(bessel_i1 x)
+(bessel_in 2 x)
+(bessel_k0 x)
+(bessel_k1 x)
+(bessel_kn 2 x)
+
+; 使用别名
+(j0 x)
+(j1 x)
+(jn 2 x)
+(y0 x)
+(y1 x)
+(yn 2 x)
+(i0 x)
+(i1 x)
+(k0 x)
+(k1 x)
+
+; Airy函数
+(airy_ai x)
+(airy_bi x)
+(ai x)       ; 别名
+(bi x)       ; 别名
+
+; Fresnel积分
+(fresnel_s x)
+(fresnel_c x)
+
+; 椭圆积分
+(ellipk m)
+(ellipe m)
+
+; 其他特殊函数
+(dawson x)
+(expint x)
+(sinint x)
+(cosint x)
+(lambertw x)

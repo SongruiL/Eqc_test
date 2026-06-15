@@ -1,0 +1,170 @@
+# Theta 和 Mathieu 函数测试
+meta:
+  id: OPERATORS_THETA_MATHIEU
+  model: ThetaMathieuOperators
+  name_cn: Theta和Mathieu函数测试
+  version: "1.0"
+  description: 测试Theta和Mathieu函数
+
+parameters:
+  p1:
+    name_cn: 输入z
+    dtype: float
+    default: 0.5
+  p2:
+    name_cn: 参数q
+    dtype: float
+    default: 0.3
+  p3:
+    name_cn: 阶数n
+    dtype: float
+    default: 1.0
+
+variables:
+  y_theta2:
+    name_cn: Theta2
+    dtype: float
+    var_type: output
+  y_theta3:
+    name_cn: Theta3
+    dtype: float
+    var_type: output
+  y_theta4:
+    name_cn: Theta4
+    dtype: float
+    var_type: output
+  y_jtheta1:
+    name_cn: Jacobi_Theta1
+    dtype: float
+    var_type: output
+  y_jtheta2:
+    name_cn: Jacobi_Theta2
+    dtype: float
+    var_type: output
+  y_jtheta3:
+    name_cn: Jacobi_Theta3
+    dtype: float
+    var_type: output
+  y_jtheta4:
+    name_cn: Jacobi_Theta4
+    dtype: float
+    var_type: output
+  y_mathieu_b:
+    name_cn: Mathieu_b
+    dtype: float
+    var_type: output
+  y_mathieu_se:
+    name_cn: Mathieu_se
+    dtype: float
+    var_type: output
+  y_mathieu_cem:
+    name_cn: Mathieu_cem
+    dtype: float
+    var_type: output
+  y_mathieu_sem:
+    name_cn: Mathieu_sem
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_theta2
+    name: Theta2函数
+    output: y_theta2
+    expression:
+      op: theta2
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_theta3
+    name: Theta3函数
+    output: y_theta3
+    expression:
+      op: theta3
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_theta4
+    name: Theta4函数
+    output: y_theta4
+    expression:
+      op: theta4
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_jtheta1
+    name: Jacobi_Theta1
+    output: y_jtheta1
+    expression:
+      op: jtheta1
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_jtheta2
+    name: Jacobi_Theta2
+    output: y_jtheta2
+    expression:
+      op: jtheta2
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_jtheta3
+    name: Jacobi_Theta3
+    output: y_jtheta3
+    expression:
+      op: jtheta3
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_jtheta4
+    name: Jacobi_Theta4
+    output: y_jtheta4
+    expression:
+      op: jtheta4
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_mathieu_b
+    name: Mathieu_b
+    output: y_mathieu_b
+    expression:
+      op: mathieu_b
+      args:
+        - { ref: p3 }
+        - { ref: p2 }
+
+  - id: test_mathieu_se
+    name: Mathieu_se
+    output: y_mathieu_se
+    expression:
+      op: mathieu_se
+      args:
+        - { ref: p3 }
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_mathieu_cem
+    name: Mathieu_cem
+    output: y_mathieu_cem
+    expression:
+      op: mathieu_cem
+      args:
+        - { ref: p3 }
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_mathieu_sem
+    name: Mathieu_sem
+    output: y_mathieu_sem
+    expression:
+      op: mathieu_sem
+      args:
+        - { ref: p3 }
+        - { ref: p2 }
+        - { ref: p1 }

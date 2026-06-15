@@ -1,0 +1,59 @@
+# 级联计算示例 - 展示方程间的数据流依赖
+meta:
+  id: CASCADE
+  model: CascadeDemo
+  name_cn: 级联计算演示
+  version: "1.0"
+  description: "展示方程之间的 DAG 依赖关系"
+
+parameters:
+  p1:
+    name_cn: 一阶系数
+    dtype: float
+    default: 0.5
+
+  p2:
+    name_cn: 二阶系数
+    dtype: float
+    default: 0.3
+
+variables:
+  x:
+    dtype: float
+    type: input
+    description: "原始输入"
+
+equations:
+  # 第一层：基础计算
+  - id: stage1
+    name: 一阶变换
+    output: y1
+    expression:
+      op: mul
+      args:
+        - { ref: p1 }
+        - { ref: x }
+
+  # 第二层：组合（依赖 y1）
+  - id: stage2
+    name: 二阶变换
+    output: y2
+    expression:
+      op: add
+      args:
+        - { ref: y1 }
+        - op: mul
+          args:
+            - { ref: p2 }
+            - { ref: x }
+
+  # 第三层：最终输出
+  - id: stage3
+    name: 最终输出
+    output: y_final
+    expression:
+      op: sqrt
+      args:
+        - op: abs
+          args:
+            - { ref: y2 }

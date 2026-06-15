@@ -1,0 +1,88 @@
+# 向量和矩阵运算测试
+meta:
+  id: OPERATORS_MATRIX
+  model: MatrixTest
+  name_cn: 向量矩阵测试
+  version: "1.0"
+  description: 测试向量和矩阵相关运算
+
+parameters:
+  p1:
+    name_cn: 向量x分量
+    dtype: float
+    default: 1.0
+  p2:
+    name_cn: 向量y分量
+    dtype: float
+    default: 2.0
+  p3:
+    name_cn: 向量z分量
+    dtype: float
+    default: 3.0
+  p4:
+    name_cn: 第二向量x
+    dtype: float
+    default: 4.0
+  p5:
+    name_cn: 第二向量y
+    dtype: float
+    default: 5.0
+  p6:
+    name_cn: 第二向量z
+    dtype: float
+    default: 6.0
+
+variables:
+  y_mag:
+    name_cn: 向量模
+    dtype: float
+    var_type: output
+  y_dot:
+    name_cn: 点积
+    dtype: float
+    var_type: output
+
+equations:
+  - id: vec_magnitude
+    name: 向量模
+    output: y_mag
+    expression:
+      op: sqrt
+      args:
+        - op: add
+          args:
+            - op: add
+              args:
+                - op: pow
+                  args:
+                    - { ref: p1 }
+                    - { const: 2 }
+                - op: pow
+                  args:
+                    - { ref: p2 }
+                    - { const: 2 }
+            - op: pow
+              args:
+                - { ref: p3 }
+                - { const: 2 }
+
+  - id: dot_product
+    name: 点积
+    output: y_dot
+    expression:
+      op: add
+      args:
+        - op: add
+          args:
+            - op: mul
+              args:
+                - { ref: p1 }
+                - { ref: p4 }
+            - op: mul
+              args:
+                - { ref: p2 }
+                - { ref: p5 }
+        - op: mul
+          args:
+            - { ref: p3 }
+            - { ref: p6 }

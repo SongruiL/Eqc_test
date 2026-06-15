@@ -1,0 +1,272 @@
+# Bessel 函数完整测试
+meta:
+  id: OPERATORS_BESSEL_FULL
+  model: BesselFullOperators
+  name_cn: Bessel函数完整测试
+  version: "1.0"
+  description: 测试所有Bessel函数及其变体
+
+parameters:
+  p1:
+    name_cn: 输入x
+    dtype: float
+    default: 2.0
+  p2:
+    name_cn: 阶数n
+    dtype: float
+    default: 1.0
+
+variables:
+  y_j0:
+    name_cn: J0
+    dtype: float
+    var_type: output
+  y_j1:
+    name_cn: J1
+    dtype: float
+    var_type: output
+  y_jn:
+    name_cn: Jn
+    dtype: float
+    var_type: output
+  y_jv:
+    name_cn: Jv
+    dtype: float
+    var_type: output
+  y_y0:
+    name_cn: Y0
+    dtype: float
+    var_type: output
+  y_y1:
+    name_cn: Y1
+    dtype: float
+    var_type: output
+  y_yn:
+    name_cn: Yn
+    dtype: float
+    var_type: output
+  y_yv:
+    name_cn: Yv
+    dtype: float
+    var_type: output
+  y_i0:
+    name_cn: I0
+    dtype: float
+    var_type: output
+  y_i1:
+    name_cn: I1
+    dtype: float
+    var_type: output
+  y_in:
+    name_cn: In
+    dtype: float
+    var_type: output
+  y_iv:
+    name_cn: Iv
+    dtype: float
+    var_type: output
+  y_k0:
+    name_cn: K0
+    dtype: float
+    var_type: output
+  y_k1:
+    name_cn: K1
+    dtype: float
+    var_type: output
+  y_kn:
+    name_cn: Kn
+    dtype: float
+    var_type: output
+  y_kv:
+    name_cn: Kv
+    dtype: float
+    var_type: output
+  y_sph_jn:
+    name_cn: 球Bessel_j
+    dtype: float
+    var_type: output
+  y_sph_yn:
+    name_cn: 球Bessel_y
+    dtype: float
+    var_type: output
+  y_sph_in:
+    name_cn: 球Bessel_i
+    dtype: float
+    var_type: output
+  y_sph_kn:
+    name_cn: 球Bessel_k
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_j0
+    name: J0函数
+    output: y_j0
+    expression:
+      op: j0
+      args:
+        - { ref: p1 }
+
+  - id: test_j1
+    name: J1函数
+    output: y_j1
+    expression:
+      op: j1
+      args:
+        - { ref: p1 }
+
+  - id: test_jn
+    name: Jn函数
+    output: y_jn
+    expression:
+      op: jn
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_jv
+    name: Jv函数
+    output: y_jv
+    expression:
+      op: jv
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_y0
+    name: Y0函数
+    output: y_y0
+    expression:
+      op: y0
+      args:
+        - { ref: p1 }
+
+  - id: test_y1
+    name: Y1函数
+    output: y_y1
+    expression:
+      op: y1
+      args:
+        - { ref: p1 }
+
+  - id: test_yn
+    name: Yn函数
+    output: y_yn
+    expression:
+      op: yn
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_yv
+    name: Yv函数
+    output: y_yv
+    expression:
+      op: yv
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_i0
+    name: I0函数
+    output: y_i0
+    expression:
+      op: i0
+      args:
+        - { ref: p1 }
+
+  - id: test_i1
+    name: I1函数
+    output: y_i1
+    expression:
+      op: i1
+      args:
+        - { ref: p1 }
+
+  - id: test_in
+    name: In函数
+    output: y_in
+    expression:
+      op: in
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_iv
+    name: Iv函数
+    output: y_iv
+    expression:
+      op: iv
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_k0
+    name: K0函数
+    output: y_k0
+    expression:
+      op: k0
+      args:
+        - { ref: p1 }
+
+  - id: test_k1
+    name: K1函数
+    output: y_k1
+    expression:
+      op: k1
+      args:
+        - { ref: p1 }
+
+  - id: test_kn
+    name: Kn函数
+    output: y_kn
+    expression:
+      op: kn
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_kv
+    name: Kv函数
+    output: y_kv
+    expression:
+      op: kv
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_sph_jn
+    name: 球Bessel_j
+    output: y_sph_jn
+    expression:
+      op: spherical_jn
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_sph_yn
+    name: 球Bessel_y
+    output: y_sph_yn
+    expression:
+      op: spherical_yn
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_sph_in
+    name: 球Bessel_i
+    output: y_sph_in
+    expression:
+      op: spherical_in
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_sph_kn
+    name: 球Bessel_k
+    output: y_sph_kn
+    expression:
+      op: spherical_kn
+      args:
+        - { ref: p2 }
+        - { ref: p1 }

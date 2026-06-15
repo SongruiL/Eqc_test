@@ -1,0 +1,182 @@
+# 正交多项式完整测试
+meta:
+  id: OPERATORS_POLYNOMIALS_FULL
+  model: PolynomialsFullOperators
+  name_cn: 正交多项式完整测试
+  version: "1.0"
+  description: 测试正交多项式函数
+
+parameters:
+  p1:
+    name_cn: 输入x
+    dtype: float
+    default: 0.5
+  p2:
+    name_cn: 阶数n
+    dtype: float
+    default: 3.0
+  p3:
+    name_cn: 参数m
+    dtype: float
+    default: 1.0
+  p4:
+    name_cn: 参数alpha
+    dtype: float
+    default: 0.5
+  p5:
+    name_cn: 参数beta
+    dtype: float
+    default: 0.5
+
+variables:
+  y_legendre:
+    name_cn: Legendre
+    dtype: float
+    var_type: output
+  y_legendre_assoc:
+    name_cn: 关联Legendre
+    dtype: float
+    var_type: output
+  y_lpmv:
+    name_cn: 关联Legendre别名
+    dtype: float
+    var_type: output
+  y_hermite:
+    name_cn: Hermite
+    dtype: float
+    var_type: output
+  y_laguerre:
+    name_cn: Laguerre
+    dtype: float
+    var_type: output
+  y_laguerre_assoc:
+    name_cn: 关联Laguerre
+    dtype: float
+    var_type: output
+  y_chebyshev_t:
+    name_cn: Chebyshev_T
+    dtype: float
+    var_type: output
+  y_chebyshev_u:
+    name_cn: Chebyshev_U
+    dtype: float
+    var_type: output
+  y_gegenbauer:
+    name_cn: Gegenbauer
+    dtype: float
+    var_type: output
+  y_ultraspherical:
+    name_cn: 超球多项式
+    dtype: float
+    var_type: output
+  y_jacobi_p:
+    name_cn: Jacobi多项式
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_legendre
+    name: Legendre多项式
+    output: y_legendre
+    expression:
+      op: legendre
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_legendre_assoc
+    name: 关联Legendre
+    output: y_legendre_assoc
+    expression:
+      op: legendre_assoc
+      args:
+        - { ref: p2 }
+        - { ref: p3 }
+        - { ref: p1 }
+
+  - id: test_lpmv
+    name: 关联Legendre别名
+    output: y_lpmv
+    expression:
+      op: lpmv
+      args:
+        - { ref: p3 }
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_hermite
+    name: Hermite多项式
+    output: y_hermite
+    expression:
+      op: hermite
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_laguerre
+    name: Laguerre多项式
+    output: y_laguerre
+    expression:
+      op: laguerre
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_laguerre_assoc
+    name: 关联Laguerre
+    output: y_laguerre_assoc
+    expression:
+      op: laguerre_assoc
+      args:
+        - { ref: p2 }
+        - { ref: p4 }
+        - { ref: p1 }
+
+  - id: test_chebyshev_t
+    name: Chebyshev_T
+    output: y_chebyshev_t
+    expression:
+      op: chebyshev_t
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_chebyshev_u
+    name: Chebyshev_U
+    output: y_chebyshev_u
+    expression:
+      op: chebyshev_u
+      args:
+        - { ref: p2 }
+        - { ref: p1 }
+
+  - id: test_gegenbauer
+    name: Gegenbauer多项式
+    output: y_gegenbauer
+    expression:
+      op: gegenbauer
+      args:
+        - { ref: p2 }
+        - { ref: p4 }
+        - { ref: p1 }
+
+  - id: test_ultraspherical
+    name: 超球多项式
+    output: y_ultraspherical
+    expression:
+      op: ultraspherical
+      args:
+        - { ref: p2 }
+        - { ref: p4 }
+        - { ref: p1 }
+
+  - id: test_jacobi_p
+    name: Jacobi多项式
+    output: y_jacobi_p
+    expression:
+      op: jacobi_p
+      args:
+        - { ref: p2 }
+        - { ref: p4 }
+        - { ref: p5 }
+        - { ref: p1 }

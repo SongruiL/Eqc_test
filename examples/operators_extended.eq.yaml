@@ -1,0 +1,92 @@
+# 扩展运算符测试 - 分位数、数论函数
+meta:
+  id: OPERATORS_EXTENDED
+  model: OperatorTest
+  name_cn: 扩展运算符测试
+  version: "1.0"
+  description: 测试分位数函数、数论函数
+
+parameters:
+  p1:
+    name_cn: 概率值
+    dtype: float
+    default: 0.5
+  p2:
+    name_cn: Alpha参数
+    dtype: float
+    default: 2.0
+  p3:
+    name_cn: Beta参数
+    dtype: float
+    default: 1.0
+  p4:
+    name_cn: 整数a
+    dtype: float
+    default: 12.0
+  p5:
+    name_cn: 整数b
+    dtype: float
+    default: 8.0
+  p6:
+    name_cn: n值
+    dtype: float
+    default: 5.0
+  p7:
+    name_cn: k值
+    dtype: float
+    default: 2.0
+
+variables:
+  y_exp_ppf:
+    name_cn: 指数分布分位数
+    dtype: float
+    var_type: output
+  y_gcd:
+    name_cn: 最大公约数
+    dtype: float
+    var_type: output
+  y_lcm:
+    name_cn: 最小公倍数
+    dtype: float
+    var_type: output
+  y_perm:
+    name_cn: 排列数
+    dtype: float
+    var_type: output
+
+equations:
+  - id: test_exp_ppf
+    name: 指数分布分位数
+    output: y_exp_ppf
+    expression:
+      op: exp_ppf
+      args:
+        - { ref: p1 }
+        - { ref: p2 }
+
+  - id: test_gcd
+    name: 最大公约数
+    output: y_gcd
+    expression:
+      op: gcd
+      args:
+        - { ref: p4 }
+        - { ref: p5 }
+
+  - id: test_lcm
+    name: 最小公倍数
+    output: y_lcm
+    expression:
+      op: lcm
+      args:
+        - { ref: p4 }
+        - { ref: p5 }
+
+  - id: test_permutation
+    name: 排列数
+    output: y_perm
+    expression:
+      op: permutation
+      args:
+        - { ref: p6 }
+        - { ref: p7 }
