@@ -4073,6 +4073,15 @@ enum RefType {
 impl Expr {
     /// 转换为 Python 代码
     pub fn to_python(&self, params_prefix: &str) -> String {
+        // 注册表快路径：已迁移算子从 ops 注册表生成（单一真相源）。
+        // 下方 match 中这些算子的分支已不可达，仅为保持 match 穷尽性而保留，待后续清理。
+        if let Some((name, args)) = crate::ops::as_operator(self) {
+            if let Some(s) = crate::ops::spec(name) {
+                let codes: Vec<String> =
+                    args.iter().map(|a| a.to_python(params_prefix)).collect();
+                return (s.python)(&codes);
+            }
+        }
         match self {
             Expr::Const(value) => format!("{}", value),
             Expr::Var(name) => name.clone(),
@@ -4698,6 +4707,14 @@ impl Expr {
 
     /// 转换为 Rust 代码
     pub fn to_rust(&self) -> String {
+        // 注册表快路径：已迁移算子从 ops 注册表生成（单一真相源）。
+        // 下方 match 中这些算子的分支已不可达，仅为保持 match 穷尽性而保留，待后续清理。
+        if let Some((name, args)) = crate::ops::as_operator(self) {
+            if let Some(s) = crate::ops::spec(name) {
+                let codes: Vec<String> = args.iter().map(|a| a.to_rust()).collect();
+                return (s.rust)(&codes);
+            }
+        }
         match self {
             Expr::Const(value) => format!("{}_f64", value),
             Expr::Var(name) => name.clone(),
@@ -5331,6 +5348,14 @@ impl Expr {
 
     /// 转换为 LaTeX 代码
     pub fn to_latex(&self) -> String {
+        // 注册表快路径：已迁移算子从 ops 注册表生成（单一真相源）。
+        // 下方 match 中这些算子的分支已不可达，仅为保持 match 穷尽性而保留，待后续清理。
+        if let Some((name, args)) = crate::ops::as_operator(self) {
+            if let Some(s) = crate::ops::spec(name) {
+                let codes: Vec<String> = args.iter().map(|a| a.to_latex()).collect();
+                return (s.latex)(&codes);
+            }
+        }
         match self {
             Expr::Const(value) => format!("{}", value),
             Expr::Var(name) => Self::name_to_latex(name),

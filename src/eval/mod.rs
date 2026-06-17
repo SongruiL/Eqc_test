@@ -149,6 +149,17 @@ fn ev(expr: &Expr, env: &mut Env, mode: EvalMode) -> Result<f64, EvalError> {
         };
     }
 
+    // 注册表快路径：已迁移到 `ops` 注册表的算子从这里求值（语义单一真相源）。
+    if let Some((name, args)) = crate::ops::as_operator(expr) {
+        if let Some(s) = crate::ops::spec(name) {
+            let mut vals = Vec::with_capacity(args.len());
+            for a in args {
+                vals.push(ev(a, env, mode)?);
+            }
+            return chk(name, (s.eval)(&vals), mode);
+        }
+    }
+
     match expr {
         // === 叶子 ===
         Expr::Const(c) => Ok(*c),
@@ -156,32 +167,18 @@ fn ev(expr: &Expr, env: &mut Env, mode: EvalMode) -> Result<f64, EvalError> {
         Expr::E => Ok(std::f64::consts::E),
         Expr::Var(n) | Expr::Param(n) => env.get(n).ok_or_else(|| EvalError::UndefinedVar(n.clone())),
 
-        // === 算术 ===
-        Expr::Add(a, c) => b!("add", a, c),
-        Expr::Sub(a, c) => b!("sub", a, c),
-        Expr::Mul(a, c) => b!("mul", a, c),
-        Expr::Div(a, c) => b!("div", a, c),
-        Expr::Pow(a, c) => b!("pow", a, c),
-        Expr::Mod(a, c) => b!("mod", a, c),
-        Expr::Neg(a) => u!("neg", a),
-        Expr::Abs(a) => u!("abs", a),
+        // === 算术（add/sub/mul/div/pow/mod/neg/abs 已迁移至 ops 注册表）===
         Expr::Ceil(a) => u!("ceil", a),
         Expr::Floor(a) => u!("floor", a),
         Expr::Round(a) => u!("round", a),
         Expr::Trunc(a) => u!("trunc", a),
-        Expr::Sign(a) => u!("sign", a),
 
-        // === 超越函数 ===
-        Expr::Exp(a) => u!("exp", a),
-        Expr::Ln(a) => u!("ln", a),
+        // === 超越函数（exp/ln/sqrt 已迁移至 ops 注册表）===
         Expr::Log10(a) => u!("log10", a),
         Expr::Log2(a) => u!("log2", a),
-        Expr::Sqrt(a) => u!("sqrt", a),
         Expr::Cbrt(a) => u!("cbrt", a),
 
-        // === 三角函数 ===
-        Expr::Sin(a) => u!("sin", a),
-        Expr::Cos(a) => u!("cos", a),
+        // === 三角函数（sin/cos 已迁移至 ops 注册表）===
         Expr::Tan(a) => u!("tan", a),
         Expr::ASin(a) => u!("asin", a),
         Expr::ACos(a) => u!("acos", a),
@@ -299,43 +296,18 @@ fn fold_nary(
 /// 参数个数由调用方（`ev` 的 match 分支）保证，这里不再校验。
 fn apply_scalar(name: &str, a: &[f64]) -> Option<f64> {
     Some(match name {
-        // 算术
-        "add" => a[0] + a[1],
-        "sub" => a[0] - a[1],
-        "mul" => a[0] * a[1],
-        "div" => a[0] / a[1],
-        "pow" => a[0].powf(a[1]),
-        // 数学取模（floored）：结果符号随除数，区别于 Rust `%`（截断余数）
-        "mod" => a[0] - a[1] * (a[0] / a[1]).floor(),
-        "neg" => -a[0],
-        "abs" => a[0].abs(),
+        // 算术（add/sub/mul/div/pow/mod/neg/abs 已迁移至 ops 注册表）
         "ceil" => a[0].ceil(),
         "floor" => a[0].floor(),
         "round" => a[0].round(),
         "trunc" => a[0].trunc(),
-        // 数学符号函数：sgn(0) = 0
-        "sign" => {
-            let x = a[0];
-            if x > 0.0 {
-                1.0
-            } else if x < 0.0 {
-                -1.0
-            } else {
-                0.0
-            }
-        }
 
-        // 超越
-        "exp" => a[0].exp(),
-        "ln" => a[0].ln(),
+        // 超越（exp/ln/sqrt 已迁移至 ops 注册表）
         "log10" => a[0].log10(),
         "log2" => a[0].log2(),
-        "sqrt" => a[0].sqrt(),
         "cbrt" => a[0].cbrt(),
 
-        // 三角
-        "sin" => a[0].sin(),
-        "cos" => a[0].cos(),
+        // 三角（sin/cos 已迁移至 ops 注册表）
         "tan" => a[0].tan(),
         "asin" => a[0].asin(),
         "acos" => a[0].acos(),

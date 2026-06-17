@@ -13,6 +13,7 @@
 pub mod ast;
 pub mod error;
 pub mod eval;
+pub mod ops;
 pub mod sexpr;
 
 // 完整编译器模块（仅 CLI 工具需要）
@@ -37,6 +38,9 @@ pub use error::{CompileError, CompileResult};
 
 // 求值器
 pub use eval::{Env, EvalError, EvalMode};
+
+// 算子注册表（算子单一真相源）
+pub use ops::OperatorSpec;
 
 // S表达式解析器
 pub use sexpr::{parse as parse_sexpr, parse_to_expr, parse_to_yaml, SExpr, SExprError};
