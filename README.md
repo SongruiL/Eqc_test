@@ -57,6 +57,9 @@ eqc validate ./equations
 # 检查量纲一致性与跨模块耦合单位（科学正确性护栏）
 eqc check-dims ./equations          # --strict 时有错误返回非零退出码
 
+# 生成自包含 HTML 模型报告（DAG 图 + 二维公式，完全离线、浏览器直接打开）
+eqc report ./equations -o model.html
+
 # 输出 DAG 图
 eqc graph ./equations --format mermaid
 

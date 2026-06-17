@@ -25,6 +25,8 @@ pub mod generators;
 #[cfg(feature = "cli")]
 pub mod parser;
 #[cfg(feature = "cli")]
+pub mod report;
+#[cfg(feature = "cli")]
 pub mod schema;
 #[cfg(feature = "cli")]
 pub mod validator;

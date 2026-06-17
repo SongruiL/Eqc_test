@@ -140,6 +140,16 @@ enum Commands {
         #[arg(long)]
         strict: bool,
     },
+
+    /// 生成自包含 HTML 模型报告（DAG 图 + 二维公式，离线可看）
+    Report {
+        /// 输入目录（包含 .eq.yaml 文件）
+        input: PathBuf,
+
+        /// 输出 HTML 文件
+        #[arg(short, long, default_value = "report.html")]
+        output: PathBuf,
+    },
 }
 
 #[cfg(feature = "cli")]
@@ -161,6 +171,7 @@ fn main() {
         Commands::GraphL2 { inputs } => run_graph_l2(&inputs),
         Commands::SexprSpec => run_sexpr_spec(),
         Commands::CheckDims { input, strict } => run_check_dims(&input, strict),
+        Commands::Report { input, output } => run_report(&input, &output),
     };
 
     if let Err(e) = result {
@@ -217,6 +228,17 @@ fn run_validate(input: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     println!("   - 模块数: {}", compiler.files().len());
     println!("   - 方程数: {}", compiler.equation_ids().len());
 
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+fn run_report(input: &PathBuf, output: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let compiler = Compiler::new().load_directory(input)?.validate()?.build_dag()?;
+    let dag = compiler.dag().ok_or("DAG 未构建")?;
+    let html = equation_compiler::report::generate_report(compiler.files(), dag);
+    std::fs::write(output, html)?;
+    println!("✅ 报告已生成: {}", output.display());
+    println!("   用浏览器（Edge/Chrome/Firefox）打开即可查看 DAG 与二维公式。");
     Ok(())
 }
 

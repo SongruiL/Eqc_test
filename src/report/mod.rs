@@ -1,0 +1,411 @@
+//! 自包含 HTML 模型报告：DAG（EQC 自生成 SVG）+ 每个方程的二维公式（MathML，
+//! 浏览器原生渲染）。零第三方 JS、完全离线。
+//!
+//! 入口：[`generate_report`]。CLI 子命令 `eqc report`。
+
+use crate::ast::Expr;
+use crate::dag::Dag;
+use crate::schema::EquationFile;
+use std::collections::{BTreeMap, HashMap};
+
+/// XML/HTML 文本转义。
+fn xml(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// 数字格式化：整数不带小数点。
+fn fmt_num(v: f64) -> String {
+    if v.is_finite() && v.fract() == 0.0 && v.abs() < 1e15 {
+        format!("{}", v as i64)
+    } else {
+        format!("{v}")
+    }
+}
+
+// ============================================
+// MathML 生成
+// ============================================
+
+/// 变量/参数名 -> MathML 标识符（含 `_` 下标支持，如 `Pmax_l`）。
+fn ident(name: &str) -> String {
+    if let Some((base, sub)) = name.split_once('_') {
+        format!("<msub><mi>{}</mi><mi>{}</mi></msub>", xml(base), xml(sub))
+    } else {
+        format!("<mi>{}</mi>", xml(name))
+    }
+}
+
+/// 作为「因子」渲染：若是加减则加括号（避免歧义）。
+fn factor(e: &Expr) -> String {
+    let needs = matches!(crate::ops::as_operator(e), Some((n, _)) if matches!(n, "add" | "sub"));
+    if needs {
+        format!("<mrow><mo>(</mo>{}<mo>)</mo></mrow>", mml(e))
+    } else {
+        mml(e)
+    }
+}
+
+fn func1(name: &str, a: &Expr) -> String {
+    format!("<mrow><mi>{name}</mi><mo>(</mo>{}<mo>)</mo></mrow>", mml(a))
+}
+fn func2(name: &str, a: &Expr, b: &Expr) -> String {
+    format!("<mrow><mi>{name}</mi><mo>(</mo>{}<mo>,</mo>{}<mo>)</mo></mrow>", mml(a), mml(b))
+}
+fn funcn(name: &str, args: &[&Expr]) -> String {
+    let inner: Vec<String> = args.iter().map(|a| mml(a)).collect();
+    format!("<mrow><mi>{name}</mi><mo>(</mo>{}<mo>)</mo></mrow>", inner.join("<mo>,</mo>"))
+}
+
+/// 中缀二元运算。
+fn infix(args: &[&Expr], op: &str) -> String {
+    format!("<mrow>{}<mo>{op}</mo>{}</mrow>", mml(args[0]), mml(args[1]))
+}
+
+/// 注册表算子（52 个）的 MathML。
+fn op_mml(name: &str, args: &[&Expr]) -> String {
+    match name {
+        "add" => infix(args, "+"),
+        "sub" => infix(args, "&#8722;"),
+        "mul" => format!("<mrow>{}<mo>&#183;</mo>{}</mrow>", factor(args[0]), factor(args[1])),
+        "div" => format!("<mfrac><mrow>{}</mrow><mrow>{}</mrow></mfrac>", mml(args[0]), mml(args[1])),
+        "neg" => format!("<mrow><mo>&#8722;</mo>{}</mrow>", factor(args[0])),
+        "abs" => format!("<mrow><mo>|</mo>{}<mo>|</mo></mrow>", mml(args[0])),
+        "pow" => format!("<msup>{}<mrow>{}</mrow></msup>", factor(args[0]), mml(args[1])),
+        "sqrt" => format!("<msqrt>{}</msqrt>", mml(args[0])),
+        "mod" => format!("<mrow>{}<mo>&#8201;mod&#8201;</mo>{}</mrow>", mml(args[0]), mml(args[1])),
+        "eq" => infix(args, "="),
+        "lt" => infix(args, "&lt;"),
+        "gt" => infix(args, "&gt;"),
+        "leq" => infix(args, "&#8804;"),
+        "geq" => infix(args, "&#8805;"),
+        "neq" => infix(args, "&#8800;"),
+        "and" => infix(args, "&#8743;"),
+        "or" => infix(args, "&#8744;"),
+        "not" => format!("<mrow><mo>&#172;</mo>{}</mrow>", mml(args[0])),
+        // 其余（三角/双曲/exp/log…）-> 函数形式
+        _ => funcn(name, args),
+    }
+}
+
+/// 求和/连乘的 MathML（带上下限）。
+fn bigop(sym: &str, index: &str, lower: &Expr, upper: &Expr, body: &Expr) -> String {
+    format!(
+        "<mrow><munderover><mo>{sym}</mo><mrow><mi>{}</mi><mo>=</mo>{}</mrow><mrow>{}</mrow></munderover>{}</mrow>",
+        xml(index),
+        mml(lower),
+        mml(upper),
+        factor(body)
+    )
+}
+
+/// 分段函数 -> cases 表。
+fn piecewise_mml(pieces: &[(Expr, Expr)], otherwise: &Expr) -> String {
+    let mut rows = String::new();
+    for (cond, val) in pieces {
+        rows.push_str(&format!(
+            "<mtr><mtd>{}</mtd><mtd><mtext>&#8201;若&#8201;</mtext>{}</mtd></mtr>",
+            mml(val),
+            mml(cond)
+        ));
+    }
+    rows.push_str(&format!(
+        "<mtr><mtd>{}</mtd><mtd><mtext>&#8201;其他</mtext></mtd></mtr>",
+        mml(otherwise)
+    ));
+    format!("<mrow><mo>{{</mo><mtable columnalign=\"left\">{rows}</mtable></mrow>")
+}
+
+/// Expr -> MathML（不含外层 `<math>`）。
+fn mml(e: &Expr) -> String {
+    match e {
+        Expr::Const(v) => format!("<mn>{}</mn>", fmt_num(*v)),
+        Expr::Pi => "<mi>&#960;</mi>".to_string(),
+        Expr::E => "<mi>e</mi>".to_string(),
+        Expr::Var(n) | Expr::Param(n) => ident(n),
+
+        Expr::Sum { index, lower, upper, body } => bigop("&#8721;", index, lower, upper, body),
+        Expr::Product { index, lower, upper, body } => bigop("&#8719;", index, lower, upper, body),
+        Expr::Piecewise { pieces, otherwise } => piecewise_mml(pieces, otherwise),
+        Expr::IfThenElse { cond, then_branch, else_branch } => {
+            // 渲染成两分支的 cases
+            piecewise_mml(
+                std::slice::from_ref(&((**cond).clone(), (**then_branch).clone())),
+                else_branch,
+            )
+        }
+        Expr::Max(xs) => funcn("max", &xs.iter().collect::<Vec<_>>()),
+        Expr::Min(xs) => funcn("min", &xs.iter().collect::<Vec<_>>()),
+
+        // 常见特殊函数（二维传统记号）
+        Expr::Gamma(x) => func1("&#915;", x),         // Γ
+        Expr::Lgamma(x) => func1("ln&#915;", x),
+        Expr::Digamma(x) => func1("&#968;", x),       // ψ
+        Expr::Beta(a, b) => func2("B", a, b),
+        Expr::Lbeta(a, b) => func2("lnB", a, b),
+        Expr::Erf(x) => func1("erf", x),
+        Expr::Erfc(x) => func1("erfc", x),
+        Expr::Erfinv(x) => func1("erf&#8315;&#185;", x),
+        Expr::Factorial(n) => format!("<mrow>{}<mo>!</mo></mrow>", factor(n)),
+        Expr::Logit(x) => func1("logit", x),
+        Expr::Expit(x) => func1("&#963;", x),         // σ
+        Expr::NormPdf(x, m, s) => funcn("&#966;", &[x, m, s]), // φ
+        Expr::NormCdf(x, m, s) => funcn("&#934;", &[x, m, s]), // Φ
+        Expr::NormPpf(p, m, s) => funcn("&#934;&#8315;&#185;", &[p, m, s]),
+
+        other => {
+            if let Some((name, args)) = crate::ops::as_operator(other) {
+                op_mml(name, &args)
+            } else {
+                format!("<mtext>{}</mtext>", xml(&variant_name(other)))
+            }
+        }
+    }
+}
+
+/// 取变体名（用于未支持算子的占位）。
+fn variant_name(e: &Expr) -> String {
+    let dbg = format!("{e:?}");
+    dbg.split(|c| c == '(' || c == '{' || c == ' ')
+        .next()
+        .unwrap_or("?")
+        .to_string()
+}
+
+// ============================================
+// DAG -> SVG（分层布局）
+// ============================================
+
+fn dag_svg(dag: &Dag) -> String {
+    if dag.nodes.is_empty() {
+        return "<p class=\"empty\">（无节点）</p>".to_string();
+    }
+    // 1) 分层：按拓扑序，layer = max(前驱 layer)+1
+    let mut layer: HashMap<&str, usize> = HashMap::new();
+    for id in &dag.topological_order {
+        let l = dag
+            .edges
+            .iter()
+            .filter(|e| &e.to == id)
+            .filter_map(|e| layer.get(e.from.as_str()).copied())
+            .max()
+            .map(|m| m + 1)
+            .unwrap_or(0);
+        layer.insert(id.as_str(), l);
+    }
+    for n in &dag.nodes {
+        layer.entry(n.id.as_str()).or_insert(0);
+    }
+    // 2) 按层分组、定位
+    let (bw, bh, hgap, vgap) = (160.0_f64, 38.0_f64, 24.0_f64, 64.0_f64);
+    let mut by_layer: BTreeMap<usize, Vec<&str>> = BTreeMap::new();
+    for n in &dag.nodes {
+        by_layer.entry(layer[n.id.as_str()]).or_default().push(n.id.as_str());
+    }
+    let mut pos: HashMap<&str, (f64, f64)> = HashMap::new();
+    let mut width = 0.0_f64;
+    for (l, ids) in &by_layer {
+        let y = *l as f64 * (bh + vgap) + 20.0;
+        for (i, id) in ids.iter().enumerate() {
+            let x = i as f64 * (bw + hgap) + 20.0;
+            pos.insert(id, (x, y));
+            width = width.max(x + bw + 20.0);
+        }
+    }
+    let height = by_layer.keys().max().map(|m| (*m as f64 + 1.0) * (bh + vgap) + 20.0).unwrap_or(80.0);
+
+    let mut s = format!(
+        "<svg viewBox=\"0 0 {width:.0} {height:.0}\" class=\"dag-svg\" xmlns=\"http://www.w3.org/2000/svg\">\
+         <defs><marker id=\"arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"7\" markerHeight=\"7\" orient=\"auto-start-reverse\">\
+         <path d=\"M0,0 L10,5 L0,10 z\" fill=\"#888\"/></marker></defs>"
+    );
+    // 边
+    for e in &dag.edges {
+        if let (Some(&(x1, y1)), Some(&(x2, y2))) = (pos.get(e.from.as_str()), pos.get(e.to.as_str())) {
+            let (sx, sy) = (x1 + bw / 2.0, y1 + bh);
+            let (tx, ty) = (x2 + bw / 2.0, y2);
+            s.push_str(&format!(
+                "<path d=\"M{sx:.0},{sy:.0} C{sx:.0},{:.0} {tx:.0},{:.0} {tx:.0},{ty:.0}\" class=\"edge\" marker-end=\"url(#arrow)\"/>",
+                sy + 32.0,
+                ty - 32.0
+            ));
+        }
+    }
+    // 节点
+    for n in &dag.nodes {
+        let (x, y) = pos[n.id.as_str()];
+        let cls = format!("{:?}", n.node_type).to_lowercase();
+        let label = if n.id.chars().count() > 18 {
+            format!("{}…", n.id.chars().take(17).collect::<String>())
+        } else {
+            n.id.clone()
+        };
+        s.push_str(&format!(
+            "<g class=\"node {cls}\"><rect x=\"{x:.0}\" y=\"{y:.0}\" width=\"{bw:.0}\" height=\"{bh:.0}\" rx=\"7\"/>\
+             <text x=\"{:.0}\" y=\"{:.0}\">{}</text></g>",
+            x + bw / 2.0,
+            y + bh / 2.0 + 5.0,
+            xml(&label)
+        ));
+    }
+    s.push_str("</svg>");
+    s
+}
+
+// ============================================
+// HTML 报告
+// ============================================
+
+const CSS: &str = r#"
+:root { --bg:#fafbfc; --card:#fff; --ink:#1f2933; --sub:#6b7280; --line:#e5e7eb; --accent:#2563eb; }
+* { box-sizing: border-box; }
+body { margin:0; padding:0 0 60px; background:var(--bg); color:var(--ink);
+  font-family: -apple-system,"Segoe UI","Microsoft YaHei",sans-serif; line-height:1.5; }
+h1 { font-size:22px; padding:20px 28px; margin:0; border-bottom:1px solid var(--line); background:var(--card); }
+h2 { font-size:17px; margin:28px 28px 12px; }
+h2 .sub { color:var(--sub); font-weight:400; font-size:13px; margin-left:8px; }
+.wrap { max-width:1100px; margin:0 auto; padding:0 8px; }
+.dag { overflow-x:auto; background:var(--card); border:1px solid var(--line); border-radius:10px; margin:0 28px; padding:12px; }
+.dag-svg { min-width:100%; }
+.dag-svg .edge { fill:none; stroke:#aab; stroke-width:1.5; }
+.dag-svg .node rect { fill:#eef2ff; stroke:#c7d2fe; stroke-width:1.2; }
+.dag-svg .node.parameter rect { fill:#ecfdf5; stroke:#a7f3d0; }
+.dag-svg .node.variable rect { fill:#eff6ff; stroke:#bfdbfe; }
+.dag-svg .node.equation rect { fill:#fef3c7; stroke:#fde68a; }
+.dag-svg .node text { text-anchor:middle; font-size:12px; fill:#1f2933; }
+.eq { background:var(--card); border:1px solid var(--line); border-radius:10px; margin:10px 28px; padding:14px 18px; }
+.eqhead { font-weight:600; font-size:14px; }
+.eqhead .eqid { color:var(--sub); font-weight:400; font-size:12px; margin-left:8px; }
+.eq math { font-size:1.25em; margin:8px 0; }
+.meta { color:var(--sub); font-size:12px; margin-top:6px; }
+.legend { margin:8px 28px; font-size:12px; color:var(--sub); }
+.legend span { display:inline-block; padding:1px 8px; border-radius:4px; margin-right:8px; }
+.empty { color:var(--sub); padding:8px; }
+"#;
+
+/// 生成自包含 HTML 报告。
+pub fn generate_report(files: &[EquationFile], dag: &Dag) -> String {
+    let title = files
+        .first()
+        .map(|f| {
+            if f.meta.model.is_empty() {
+                f.meta.id.clone()
+            } else {
+                f.meta.model.clone()
+            }
+        })
+        .unwrap_or_else(|| "EQC 模型".to_string());
+
+    let mut body = String::from("<div class=\"wrap\">");
+    body.push_str("<h2>依赖关系图 (DAG)</h2>");
+    body.push_str("<div class=\"legend\">\
+        <span style=\"background:#ecfdf5\">参数</span>\
+        <span style=\"background:#eff6ff\">变量</span>\
+        <span style=\"background:#fef3c7\">方程</span></div>");
+    body.push_str(&format!("<div class=\"dag\">{}</div>", dag_svg(dag)));
+
+    for f in files {
+        body.push_str(&format!(
+            "<h2>模块：{}<span class=\"sub\">{}</span></h2>",
+            xml(&f.meta.name_cn),
+            xml(&f.meta.id)
+        ));
+        for eq in &f.equations {
+            let unit = f
+                .variables
+                .get(&eq.output)
+                .and_then(|v| v.unit.clone())
+                .unwrap_or_default();
+            let meta = if unit.is_empty() {
+                format!("输出：{}", xml(&eq.output))
+            } else {
+                format!("输出：{} · 单位 {}", xml(&eq.output), xml(&unit))
+            };
+            body.push_str(&format!(
+                "<div class=\"eq\"><div class=\"eqhead\">{}<span class=\"eqid\">{}</span></div>\
+                 <math display=\"block\"><mrow>{}<mo>=</mo>{}</mrow></math>\
+                 <div class=\"meta\">{}</div></div>",
+                xml(&eq.name),
+                xml(&eq.id),
+                ident(&eq.output),
+                mml(&eq.expression),
+                meta
+            ));
+        }
+    }
+    body.push_str("</div>");
+
+    format!(
+        "<!DOCTYPE html><html lang=\"zh\"><head><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+         <title>{t} · EQC 模型报告</title><style>{CSS}</style></head>\
+         <body><h1>{t} · EQC 模型报告</h1>{body}</body></html>",
+        t = xml(&title)
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mml_two_dimensional_forms() {
+        // (div (add a b) 2) -> 分式
+        let e = Expr::div(Expr::add(Expr::var("a"), Expr::var("b")), Expr::Const(2.0));
+        assert!(mml(&e).contains("<mfrac>"));
+        // (pow x 2) -> 上标
+        assert!(mml(&Expr::pow(Expr::var("x"), Expr::Const(2.0))).contains("<msup>"));
+        // (sqrt x) -> 根号
+        assert!(mml(&Expr::sqrt(Expr::var("x"))).contains("<msqrt>"));
+        // 下标变量名
+        assert!(ident("Pmax_l").contains("<msub>"));
+    }
+
+    #[test]
+    fn test_generate_report_smoke() {
+        use crate::schema::{DataType, Equation, EquationFile, Metadata, Variable, VariableType};
+
+        let mut variables = indexmap::IndexMap::new();
+        let var = |t: VariableType, u: &str| Variable {
+            var_type: t,
+            dtype: DataType::Float,
+            unit: Some(u.to_string()),
+            description: None,
+            source: None,
+        };
+        variables.insert("y".to_string(), var(VariableType::Output, "kPa"));
+        variables.insert("x".to_string(), var(VariableType::Input, "degC"));
+
+        let file = EquationFile {
+            meta: Metadata {
+                id: "M".into(),
+                model: "Demo".into(),
+                name_cn: "演示模块".into(),
+                name_en: None,
+                version: "1.0".into(),
+                description: None,
+                reference: None,
+                source_files: vec![],
+            },
+            parameters: Default::default(),
+            variables,
+            equations: vec![Equation {
+                id: "E1".into(),
+                name: "测试方程".into(),
+                output: "y".into(),
+                expression: Expr::mul(Expr::var("x"), Expr::Const(2.0)),
+                formula_display: None,
+                reference: None,
+            }],
+        };
+        let files = vec![file];
+        let dag = crate::dag::build_dag(&files).unwrap();
+        let html = generate_report(&files, &dag);
+
+        assert!(html.contains("<!DOCTYPE html>"));
+        assert!(html.contains("<math"), "应含 MathML 公式");
+        assert!(html.contains("<svg"), "应含 SVG DAG");
+        assert!(html.contains("演示模块"), "应含中文模块名");
+        // 完全离线、零第三方 JS
+        assert!(!html.contains("<script"), "报告不应含任何 JS");
+    }
+}
