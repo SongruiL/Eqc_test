@@ -167,19 +167,9 @@ fn ev(expr: &Expr, env: &mut Env, mode: EvalMode) -> Result<f64, EvalError> {
         Expr::E => Ok(std::f64::consts::E),
         Expr::Var(n) | Expr::Param(n) => env.get(n).ok_or_else(|| EvalError::UndefinedVar(n.clone())),
 
-        // === 算术（add/sub/mul/div/pow/mod/neg/abs 已迁移至 ops 注册表）===
-        Expr::Ceil(a) => u!("ceil", a),
-        Expr::Floor(a) => u!("floor", a),
-        Expr::Round(a) => u!("round", a),
-        Expr::Trunc(a) => u!("trunc", a),
+        // 算术/取整/对数/cbrt/tan 均已迁移至 ops 注册表
 
-        // === 超越函数（exp/ln/sqrt 已迁移至 ops 注册表）===
-        Expr::Log10(a) => u!("log10", a),
-        Expr::Log2(a) => u!("log2", a),
-        Expr::Cbrt(a) => u!("cbrt", a),
-
-        // === 三角函数（sin/cos 已迁移至 ops 注册表）===
-        Expr::Tan(a) => u!("tan", a),
+        // === 反三角 / 倒数三角 ===
         Expr::ASin(a) => u!("asin", a),
         Expr::ACos(a) => u!("acos", a),
         Expr::ATan(a) => u!("atan", a),
@@ -188,10 +178,7 @@ fn ev(expr: &Expr, env: &mut Env, mode: EvalMode) -> Result<f64, EvalError> {
         Expr::Csc(a) => u!("csc", a),
         Expr::Cot(a) => u!("cot", a),
 
-        // === 双曲函数 ===
-        Expr::Sinh(a) => u!("sinh", a),
-        Expr::Cosh(a) => u!("cosh", a),
-        Expr::Tanh(a) => u!("tanh", a),
+        // === 双曲函数（sinh/cosh/tanh 已迁移至 ops 注册表）===
         Expr::ASinh(a) => u!("asinh", a),
         Expr::ACosh(a) => u!("acosh", a),
         Expr::ATanh(a) => u!("atanh", a),
@@ -296,19 +283,9 @@ fn fold_nary(
 /// 参数个数由调用方（`ev` 的 match 分支）保证，这里不再校验。
 fn apply_scalar(name: &str, a: &[f64]) -> Option<f64> {
     Some(match name {
-        // 算术（add/sub/mul/div/pow/mod/neg/abs 已迁移至 ops 注册表）
-        "ceil" => a[0].ceil(),
-        "floor" => a[0].floor(),
-        "round" => a[0].round(),
-        "trunc" => a[0].trunc(),
+        // 取整/对数/cbrt/tan 均已迁移至 ops 注册表
 
-        // 超越（exp/ln/sqrt 已迁移至 ops 注册表）
-        "log10" => a[0].log10(),
-        "log2" => a[0].log2(),
-        "cbrt" => a[0].cbrt(),
-
-        // 三角（sin/cos 已迁移至 ops 注册表）
-        "tan" => a[0].tan(),
+        // 反三角 / 倒数三角
         "asin" => a[0].asin(),
         "acos" => a[0].acos(),
         "atan" => a[0].atan(),
@@ -317,10 +294,7 @@ fn apply_scalar(name: &str, a: &[f64]) -> Option<f64> {
         "csc" => 1.0 / a[0].sin(),
         "cot" => 1.0 / a[0].tan(),
 
-        // 双曲
-        "sinh" => a[0].sinh(),
-        "cosh" => a[0].cosh(),
-        "tanh" => a[0].tanh(),
+        // 双曲（sinh/cosh/tanh 已迁移至 ops 注册表）
         "asinh" => a[0].asinh(),
         "acosh" => a[0].acosh(),
         "atanh" => a[0].atanh(),
