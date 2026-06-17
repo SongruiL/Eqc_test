@@ -4949,9 +4949,9 @@ impl Expr {
             // 特殊函数
             Expr::Gamma(x) => format!("puruspe::gamma({})", x.to_rust()),
             Expr::Lgamma(x) => format!("({}).ln_gamma().0", x.to_rust()),
-            Expr::Digamma(x) => format!("puruspe::digamma({})", x.to_rust()),
+            Expr::Digamma(x) => format!("statrs::function::gamma::digamma({})", x.to_rust()),
             Expr::Beta(a, b) => format!("puruspe::beta({}, {})", a.to_rust(), b.to_rust()),
-            Expr::Lbeta(a, b) => format!("puruspe::ln_beta({}, {})", a.to_rust(), b.to_rust()),
+            Expr::Lbeta(a, b) => format!("statrs::function::beta::ln_beta({}, {})", a.to_rust(), b.to_rust()),
             Expr::Erf(x) => format!("puruspe::erf({})", x.to_rust()),
             Expr::Erfc(x) => format!("puruspe::erfc({})", x.to_rust()),
             Expr::Erfinv(x) => format!("statrs::function::erf::erf_inv({})", x.to_rust()),

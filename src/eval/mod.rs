@@ -18,6 +18,9 @@ use crate::ast::Expr;
 use std::collections::HashMap;
 use std::fmt;
 
+#[cfg(feature = "advanced_math")]
+use statrs::distribution::{Continuous, ContinuousCDF};
+
 /// 求值错误
 #[derive(Debug, Clone, PartialEq)]
 pub enum EvalError {
@@ -198,8 +201,87 @@ fn ev(expr: &Expr, env: &mut Env, mode: EvalMode) -> Result<f64, EvalError> {
             chk("product", acc, mode)
         }
 
-        // === 暂未实现的算子（特殊函数、向量/矩阵、积分/导数等）===
-        other => Err(EvalError::Unsupported(variant_tag(other))),
+        // === 特殊函数（部分需 advanced_math 特性）；其余 -> Unsupported ===
+        other => match eval_special(other, env, mode) {
+            Some(r) => r,
+            None => Err(EvalError::Unsupported(variant_tag(other))),
+        },
+    }
+}
+
+/// 特殊函数求值。返回 `None` 表示非本函数处理的算子（交由调用方报 Unsupported）；
+/// `Some(Ok/Err)` 表示已处理。部分函数需 `advanced_math` 特性（statrs/puruspe）。
+fn eval_special(expr: &Expr, env: &mut Env, mode: EvalMode) -> Option<Result<f64, EvalError>> {
+    macro_rules! e1 {
+        ($name:expr, $a:expr, $f:expr) => {
+            match ev($a, env, mode) {
+                Ok(x) => Some(chk($name, ($f)(x), mode)),
+                Err(e) => Some(Err(e)),
+            }
+        };
+    }
+    #[cfg(feature = "advanced_math")]
+    macro_rules! e2 {
+        ($name:expr, $a:expr, $b:expr, $f:expr) => {
+            match (ev($a, env, mode), ev($b, env, mode)) {
+                (Ok(x), Ok(y)) => Some(chk($name, ($f)(x, y), mode)),
+                (Err(e), _) | (_, Err(e)) => Some(Err(e)),
+            }
+        };
+    }
+    #[cfg(feature = "advanced_math")]
+    macro_rules! e3 {
+        ($name:expr, $a:expr, $b:expr, $c:expr, $f:expr) => {
+            match (ev($a, env, mode), ev($b, env, mode), ev($c, env, mode)) {
+                (Ok(x), Ok(y), Ok(z)) => Some(chk($name, ($f)(x, y, z), mode)),
+                (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => Some(Err(e)),
+            }
+        };
+    }
+
+    match expr {
+        // === 纯函数（无需 advanced_math）===
+        Expr::Factorial(n) => e1!("factorial", n, |x: f64| {
+            if x < 0.0 {
+                f64::NAN
+            } else {
+                (1..=(x as u64)).product::<u64>() as f64
+            }
+        }),
+        Expr::Logit(x) => e1!("logit", x, |v: f64| v.ln() - (1.0 - v).ln()),
+        Expr::Expit(x) => e1!("expit", x, |v: f64| 1.0 / (1.0 + (-v).exp())),
+
+        // === 需要 advanced_math 的特殊函数（与 to_rust 的库调用一致）===
+        #[cfg(feature = "advanced_math")]
+        Expr::Gamma(x) => e1!("gamma", x, |v: f64| puruspe::gamma(v)),
+        #[cfg(feature = "advanced_math")]
+        Expr::Lgamma(x) => e1!("lgamma", x, |v: f64| statrs::function::gamma::ln_gamma(v)),
+        #[cfg(feature = "advanced_math")]
+        Expr::Digamma(x) => e1!("digamma", x, |v: f64| statrs::function::gamma::digamma(v)),
+        #[cfg(feature = "advanced_math")]
+        Expr::Beta(a, b) => e2!("beta", a, b, |x: f64, y: f64| puruspe::beta(x, y)),
+        #[cfg(feature = "advanced_math")]
+        Expr::Lbeta(a, b) => e2!("lbeta", a, b, |x: f64, y: f64| statrs::function::beta::ln_beta(x, y)),
+        #[cfg(feature = "advanced_math")]
+        Expr::Erf(x) => e1!("erf", x, |v: f64| puruspe::erf(v)),
+        #[cfg(feature = "advanced_math")]
+        Expr::Erfc(x) => e1!("erfc", x, |v: f64| puruspe::erfc(v)),
+        #[cfg(feature = "advanced_math")]
+        Expr::Erfinv(x) => e1!("erfinv", x, |v: f64| statrs::function::erf::erf_inv(v)),
+        #[cfg(feature = "advanced_math")]
+        Expr::NormPdf(x, mu, sig) => e3!("norm_pdf", x, mu, sig, |xx: f64, m: f64, s: f64| {
+            statrs::distribution::Normal::new(m, s).map(|d| d.pdf(xx)).unwrap_or(f64::NAN)
+        }),
+        #[cfg(feature = "advanced_math")]
+        Expr::NormCdf(x, mu, sig) => e3!("norm_cdf", x, mu, sig, |xx: f64, m: f64, s: f64| {
+            statrs::distribution::Normal::new(m, s).map(|d| d.cdf(xx)).unwrap_or(f64::NAN)
+        }),
+        #[cfg(feature = "advanced_math")]
+        Expr::NormPpf(p, mu, sig) => e3!("norm_ppf", p, mu, sig, |pp: f64, m: f64, s: f64| {
+            statrs::distribution::Normal::new(m, s).map(|d| d.inverse_cdf(pp)).unwrap_or(f64::NAN)
+        }),
+
+        _ => None,
     }
 }
 
@@ -318,12 +400,54 @@ mod tests {
         assert!(v.is_infinite());
     }
 
+    // 未开启 advanced_math 时，gamma 等特殊函数未实现 -> Unsupported
+    #[cfg(not(feature = "advanced_math"))]
     #[test]
     fn test_unsupported_special_function() {
         let env = Env::from_pairs(&[("x", 5.0)]);
-        // gamma 尚未在求值器中实现 -> Unsupported
         let r = parse_to_expr("(gamma x)").unwrap().eval(&env);
         assert!(matches!(r, Err(EvalError::Unsupported(_))));
+    }
+
+    // 纯函数特殊算子（无需 advanced_math）
+    #[test]
+    fn test_pure_special_functions() {
+        let env = Env::new();
+        // 5! = 120
+        assert!((eval_str("(factorial 5)", &env).unwrap() - 120.0).abs() < EPS);
+        // expit(0) = 0.5
+        assert!((eval_str("(expit 0)", &env).unwrap() - 0.5).abs() < EPS);
+        // logit(0.5) = 0
+        assert!(eval_str("(logit 0.5)", &env).unwrap().abs() < EPS);
+        // logit(expit(x)) = x（往返）
+        let v = eval_str("(logit (expit 1.3))", &env).unwrap();
+        assert!((v - 1.3).abs() < 1e-9);
+    }
+
+    // 需要 advanced_math 的特殊函数
+    #[cfg(feature = "advanced_math")]
+    #[test]
+    fn test_advanced_special_functions() {
+        let env = Env::new();
+        // Γ(5) = 4! = 24
+        assert!((eval_str("(gamma 5)", &env).unwrap() - 24.0).abs() < 1e-6);
+        // lgamma(5) = ln(24)
+        assert!((eval_str("(lgamma 5)", &env).unwrap() - 24.0_f64.ln()).abs() < 1e-6);
+        // erf(0) = 0, erfc(0) = 1
+        assert!(eval_str("(erf 0)", &env).unwrap().abs() < 1e-9);
+        assert!((eval_str("(erfc 0)", &env).unwrap() - 1.0).abs() < 1e-9);
+        // erfinv(erf(0.4)) = 0.4（往返）
+        assert!((eval_str("(erfinv (erf 0.4))", &env).unwrap() - 0.4).abs() < 1e-6);
+        // 标准正态 CDF(0) = 0.5，PDF(0) = 1/sqrt(2π)
+        assert!((eval_str("(norm_cdf 0 0 1)", &env).unwrap() - 0.5).abs() < 1e-9);
+        assert!(
+            (eval_str("(norm_pdf 0 0 1)", &env).unwrap()
+                - 1.0 / (2.0 * std::f64::consts::PI).sqrt())
+            .abs()
+                < 1e-9
+        );
+        // PPF(0.5) = 0（中位数）
+        assert!(eval_str("(norm_ppf 0.5 0 1)", &env).unwrap().abs() < 1e-9);
     }
 
     #[test]
