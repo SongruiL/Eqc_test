@@ -132,24 +132,7 @@ impl Expr {
 
 /// 递归求值。
 fn ev(expr: &Expr, env: &mut Env, mode: EvalMode) -> Result<f64, EvalError> {
-    // 取一元/二元/三元子节点并查标量表的便捷宏（捕获外层 env/mode）。
-    macro_rules! u {
-        ($n:expr, $a:expr) => {
-            sc($n, &[ev($a, env, mode)?], mode)
-        };
-    }
-    macro_rules! b {
-        ($n:expr, $a:expr, $c:expr) => {
-            sc($n, &[ev($a, env, mode)?, ev($c, env, mode)?], mode)
-        };
-    }
-    macro_rules! t {
-        ($n:expr, $a:expr, $c:expr, $d:expr) => {
-            sc($n, &[ev($a, env, mode)?, ev($c, env, mode)?, ev($d, env, mode)?], mode)
-        };
-    }
-
-    // 注册表快路径：已迁移到 `ops` 注册表的算子从这里求值（语义单一真相源）。
+    // 注册表快路径：所有纯函数式标量算子从 `ops` 注册表求值（语义单一真相源）。
     if let Some((name, args)) = crate::ops::as_operator(expr) {
         if let Some(s) = crate::ops::spec(name) {
             let mut vals = Vec::with_capacity(args.len());
@@ -167,46 +150,10 @@ fn ev(expr: &Expr, env: &mut Env, mode: EvalMode) -> Result<f64, EvalError> {
         Expr::E => Ok(std::f64::consts::E),
         Expr::Var(n) | Expr::Param(n) => env.get(n).ok_or_else(|| EvalError::UndefinedVar(n.clone())),
 
-        // 算术/取整/对数/cbrt/tan 均已迁移至 ops 注册表
+        // 所有纯函数式标量算子（算术/三角/双曲/比较/逻辑/hypot/clamp/fma 等）已迁移至 ops 注册表，
+        // 由上方注册表快路径处理；此处仅保留叶子、聚合与特殊形式。
 
-        // === 反三角 / 倒数三角 ===
-        Expr::ASin(a) => u!("asin", a),
-        Expr::ACos(a) => u!("acos", a),
-        Expr::ATan(a) => u!("atan", a),
-        Expr::ATan2(a, c) => b!("atan2", a, c),
-        Expr::Sec(a) => u!("sec", a),
-        Expr::Csc(a) => u!("csc", a),
-        Expr::Cot(a) => u!("cot", a),
-
-        // === 双曲函数（sinh/cosh/tanh 已迁移至 ops 注册表）===
-        Expr::ASinh(a) => u!("asinh", a),
-        Expr::ACosh(a) => u!("acosh", a),
-        Expr::ATanh(a) => u!("atanh", a),
-        Expr::Sech(a) => u!("sech", a),
-        Expr::Csch(a) => u!("csch", a),
-        Expr::Coth(a) => u!("coth", a),
-
-        // === 其它数值 ===
-        Expr::Hypot(a, c) => b!("hypot", a, c),
-        Expr::Copysign(a, c) => b!("copysign", a, c),
-        Expr::Clamp(a, c, d) => t!("clamp", a, c, d),
-        Expr::Fma(a, c, d) => t!("fma", a, c, d),
-        Expr::Hypot3(a, c, d) => t!("hypot3", a, c, d),
-
-        // === 关系运算（返回 1.0 / 0.0）===
-        Expr::Eq(a, c) => b!("eq", a, c),
-        Expr::Lt(a, c) => b!("lt", a, c),
-        Expr::Gt(a, c) => b!("gt", a, c),
-        Expr::Leq(a, c) => b!("leq", a, c),
-        Expr::Geq(a, c) => b!("geq", a, c),
-        Expr::Neq(a, c) => b!("neq", a, c),
-
-        // === 逻辑运算（非零视为真）===
-        Expr::And(a, c) => b!("and", a, c),
-        Expr::Or(a, c) => b!("or", a, c),
-        Expr::Not(a) => u!("not", a),
-
-        // === 聚合（可变参数）===
+        // === 聚合（可变参数，非纯函数式）===
         Expr::Max(xs) => fold_nary("max", xs, f64::NEG_INFINITY, f64::max, env, mode),
         Expr::Min(xs) => fold_nary("min", xs, f64::INFINITY, f64::min, env, mode),
 
@@ -277,61 +224,6 @@ fn fold_nary(
         acc = f(acc, ev(x, env, mode)?);
     }
     chk(name, acc, mode)
-}
-
-/// 标量算子表：`名称 -> 计算`。这是算子语义的单一真相源。
-/// 参数个数由调用方（`ev` 的 match 分支）保证，这里不再校验。
-fn apply_scalar(name: &str, a: &[f64]) -> Option<f64> {
-    Some(match name {
-        // 取整/对数/cbrt/tan 均已迁移至 ops 注册表
-
-        // 反三角 / 倒数三角
-        "asin" => a[0].asin(),
-        "acos" => a[0].acos(),
-        "atan" => a[0].atan(),
-        "atan2" => a[0].atan2(a[1]),
-        "sec" => 1.0 / a[0].cos(),
-        "csc" => 1.0 / a[0].sin(),
-        "cot" => 1.0 / a[0].tan(),
-
-        // 双曲（sinh/cosh/tanh 已迁移至 ops 注册表）
-        "asinh" => a[0].asinh(),
-        "acosh" => a[0].acosh(),
-        "atanh" => a[0].atanh(),
-        "sech" => 1.0 / a[0].cosh(),
-        "csch" => 1.0 / a[0].sinh(),
-        "coth" => 1.0 / a[0].tanh(),
-
-        // 其它数值
-        "hypot" => a[0].hypot(a[1]),
-        "copysign" => a[0].copysign(a[1]),
-        "clamp" => a[0].max(a[1]).min(a[2]),
-        "fma" => a[0].mul_add(a[1], a[2]),
-        "hypot3" => (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt(),
-
-        // 关系（1.0 / 0.0）
-        "eq" => (a[0] == a[1]) as u8 as f64,
-        "lt" => (a[0] < a[1]) as u8 as f64,
-        "gt" => (a[0] > a[1]) as u8 as f64,
-        "leq" => (a[0] <= a[1]) as u8 as f64,
-        "geq" => (a[0] >= a[1]) as u8 as f64,
-        "neq" => (a[0] != a[1]) as u8 as f64,
-
-        // 逻辑（非零视为真）
-        "and" => ((a[0] != 0.0) && (a[1] != 0.0)) as u8 as f64,
-        "or" => ((a[0] != 0.0) || (a[1] != 0.0)) as u8 as f64,
-        "not" => (a[0] == 0.0) as u8 as f64,
-
-        _ => return None,
-    })
-}
-
-/// 查标量表并做严格模式下的有限性检查。
-fn sc(name: &str, args: &[f64], mode: EvalMode) -> Result<f64, EvalError> {
-    match apply_scalar(name, args) {
-        Some(v) => chk(name, v, mode),
-        None => Err(EvalError::Unsupported(name.to_string())),
-    }
 }
 
 /// 严格模式下：非有限结果报错。

@@ -79,7 +79,6 @@ mod tests {
     use super::*;
     use crate::ast::Expr;
     use crate::schema::{Equation, EquationFile, Metadata};
-    use std::collections::HashMap;
 
     fn create_test_file(equations: Vec<(&str, &str, Vec<&str>)>) -> EquationFile {
         let eqs = equations
