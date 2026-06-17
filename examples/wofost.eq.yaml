@@ -1,0 +1,113 @@
+meta:
+  id: WOFOST
+  model: WOFOST
+  name_cn: WOFOST作物生长模型（简化）
+  name_en: WOFOST (simplified daily)
+  description: 简化版 WOFOST 日步长作物生长：物候积温、光截获(Beer)、冠层光合、维持呼吸(Q10)、净生长与干物质分配、叶面积指数。
+
+# 参数现在可以用有意义的名字（不必再叫 p1/p2）。
+parameters:
+  Tbase: { name_cn: 基点温度, type: float, default: 3.0, unit: degC }
+  TSUM1: { name_cn: 出苗到开花积温, type: float, default: 1000.0, unit: degC*d }
+  k:     { name_cn: 消光系数, type: float, default: 0.6, unit: "-" }
+  AMAX:  { name_cn: 最大冠层同化速率, type: float, default: 40.0, unit: kg/ha/d }
+  Q10:   { name_cn: 呼吸温度系数, type: float, default: 2.0, unit: "-" }
+  RMR:   { name_cn: 根维持呼吸系数, type: float, default: 0.010, unit: 1/d }
+  RML:   { name_cn: 叶维持呼吸系数, type: float, default: 0.030, unit: 1/d }
+  RMS:   { name_cn: 茎维持呼吸系数, type: float, default: 0.015, unit: 1/d }
+  RMO:   { name_cn: 贮存器官维持呼吸系数, type: float, default: 0.010, unit: 1/d }
+  CVF:   { name_cn: 同化物转换效率, type: float, default: 0.70, unit: "-" }
+  SLA:   { name_cn: 比叶面积, type: float, default: 0.0020, unit: ha/kg }
+  FLV:   { name_cn: 分配给叶的比例, type: float, default: 0.35, unit: "-" }
+  FSO:   { name_cn: 分配给贮存器官的比例, type: float, default: 0.45, unit: "-" }
+
+variables:
+  # —— 气象驱动 ——
+  Tmax: { type: input, dtype: float, unit: degC, description: 日最高气温 }
+  Tmin: { type: input, dtype: float, unit: degC, description: 日最低气温 }
+  # —— 器官干重（状态量）——
+  WRT:  { type: input, dtype: float, unit: kg/ha, description: 根干重 }
+  WLV:  { type: input, dtype: float, unit: kg/ha, description: 叶干重 }
+  WST:  { type: input, dtype: float, unit: kg/ha, description: 茎干重 }
+  WSO:  { type: input, dtype: float, unit: kg/ha, description: 贮存器官干重 }
+  # —— 中间/输出量 ——
+  Tavg:   { type: intermediate, dtype: float, unit: degC, description: 日均温 }
+  dTeff:  { type: intermediate, dtype: float, unit: degC, description: 有效积温(单日) }
+  dDVS:   { type: intermediate, dtype: float, unit: 1/d, description: 发育速率 }
+  LAI:    { type: intermediate, dtype: float, unit: m2/m2, description: 叶面积指数 }
+  Fint:   { type: intermediate, dtype: float, unit: "-", description: 光截获比例 }
+  Pgross: { type: intermediate, dtype: float, unit: kg/ha/d, description: 冠层总同化 }
+  fTresp: { type: intermediate, dtype: float, unit: "-", description: 呼吸温度因子 }
+  Rmaint: { type: intermediate, dtype: float, unit: kg/ha/d, description: 维持呼吸 }
+  dWtot:  { type: output, dtype: float, unit: kg/ha/d, description: 总干物质增长速率 }
+  dWLV:   { type: output, dtype: float, unit: kg/ha/d, description: 叶增长速率 }
+  dWSO:   { type: output, dtype: float, unit: kg/ha/d, description: 贮存器官增长速率(产量形成) }
+
+equations:
+  - id: WOF-01
+    name: 日均温
+    output: Tavg
+    expression: { op: div, args: [ { op: add, args: [ { ref: Tmax }, { ref: Tmin } ] }, { const: 2 } ] }
+
+  - id: WOF-02
+    name: 有效积温
+    output: dTeff
+    expression: { op: max, args: [ { const: 0 }, { op: sub, args: [ { ref: Tavg }, { ref: Tbase } ] } ] }
+
+  - id: WOF-03
+    name: 发育速率
+    output: dDVS
+    expression: { op: div, args: [ { ref: dTeff }, { ref: TSUM1 } ] }
+
+  - id: WOF-04
+    name: 叶面积指数
+    output: LAI
+    expression: { op: mul, args: [ { ref: SLA }, { ref: WLV } ] }
+
+  - id: WOF-05
+    name: 光截获(Beer定律)
+    output: Fint
+    expression: { op: sub, args: [ { const: 1 }, { op: exp, args: [ { op: neg, args: [ { op: mul, args: [ { ref: k }, { ref: LAI } ] } ] } ] } ] }
+
+  - id: WOF-06
+    name: 冠层总同化
+    output: Pgross
+    expression: { op: mul, args: [ { ref: AMAX }, { ref: Fint } ] }
+
+  - id: WOF-07
+    name: 呼吸温度因子(Q10)
+    output: fTresp
+    expression: { op: pow, args: [ { ref: Q10 }, { op: div, args: [ { op: sub, args: [ { ref: Tavg }, { const: 25 } ] }, { const: 10 } ] } ] }
+
+  - id: WOF-08
+    name: 维持呼吸
+    output: Rmaint
+    expression:
+      op: mul
+      args:
+        - { ref: fTresp }
+        - op: add
+          args:
+            - op: add
+              args:
+                - op: add
+                  args:
+                    - { op: mul, args: [ { ref: RMR }, { ref: WRT } ] }
+                    - { op: mul, args: [ { ref: RML }, { ref: WLV } ] }
+                - { op: mul, args: [ { ref: RMS }, { ref: WST } ] }
+            - { op: mul, args: [ { ref: RMO }, { ref: WSO } ] }
+
+  - id: WOF-09
+    name: 总干物质增长
+    output: dWtot
+    expression: { op: mul, args: [ { ref: CVF }, { op: sub, args: [ { ref: Pgross }, { ref: Rmaint } ] } ] }
+
+  - id: WOF-10
+    name: 叶增长
+    output: dWLV
+    expression: { op: mul, args: [ { ref: FLV }, { ref: dWtot } ] }
+
+  - id: WOF-11
+    name: 贮存器官增长(产量)
+    output: dWSO
+    expression: { op: mul, args: [ { ref: FSO }, { ref: dWtot } ] }

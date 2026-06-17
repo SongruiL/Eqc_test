@@ -17,8 +17,11 @@ use crate::schema::EquationFile;
 pub fn parse_file(path: &Path) -> CompileResult<EquationFile> {
     let content = fs::read_to_string(path).map_err(|e| CompileError::io(path, e))?;
 
-    let file: EquationFile =
+    let mut file: EquationFile =
         serde_yaml::from_str(&content).map_err(|e| CompileError::yaml_parse(path, e.to_string()))?;
+
+    // 加载后把引用到参数名的 Var 重分类为 Param（让参数可用任意有意义的名字）。
+    file.reclassify_parameters();
 
     Ok(file)
 }
