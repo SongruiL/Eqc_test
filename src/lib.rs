@@ -44,7 +44,7 @@ pub use eval::{Env, EvalError, EvalMode};
 pub use ops::OperatorSpec;
 
 // 量纲系统（科学正确性护栏）
-pub use units::{check_expr, parse_dimension, DimError, Dimension};
+pub use units::{check_expr, convert, parse_dimension, parse_unit, DimError, Dimension, Unit};
 
 // S表达式解析器
 pub use sexpr::{parse as parse_sexpr, parse_to_expr, parse_to_yaml, SExpr, SExprError};

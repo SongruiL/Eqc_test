@@ -146,9 +146,42 @@ impl fmt::Display for Dimension {
 // 单位字符串 -> 量纲 解析
 // ============================================
 
-/// 基本/常见单位符号 -> 量纲（不含词头）。
-fn base_unit(sym: &str) -> Option<Dimension> {
-    use Dimension as D;
+/// 带比例与偏移的单位：`value_SI = scale * value + offset`。
+/// 量纲相同的单位之间可做仿射换算（如 °C↔K 的 +273.15 偏移、kPa↔Pa 的 ×1000 比例）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Unit {
+    pub dim: Dimension,
+    pub scale: f64,
+    pub offset: f64,
+}
+
+impl Unit {
+    pub fn dimensionless() -> Self {
+        Unit { dim: Dimension::DIMENSIONLESS, scale: 1.0, offset: 0.0 }
+    }
+
+    /// 从本单位换算到目标单位的仿射系数 `(factor, shift)`：`target = factor*x + shift`。
+    /// 量纲不同返回 `None`。
+    pub fn affine_to(&self, target: &Unit) -> Option<(f64, f64)> {
+        if self.dim != target.dim {
+            return None;
+        }
+        Some((
+            self.scale / target.scale,
+            (self.offset - target.offset) / target.scale,
+        ))
+    }
+}
+
+/// 把数值从 `from` 单位换算到 `to` 单位（量纲须相同，否则 `None`）。
+pub fn convert(value: f64, from: &Unit, to: &Unit) -> Option<f64> {
+    from.affine_to(to).map(|(f, s)| f * value + s)
+}
+
+/// 基本/常见单位 -> 单位（量纲 + 比例 + 偏移，不含词头）。比例以 SI 基本单位为基准
+/// （质量 kg、长度 m、时间 s、温度 K、物质量 mol）。
+fn base_unit(sym: &str) -> Option<Unit> {
+    let dl = Dimension::DIMENSIONLESS;
     let d = |mass, length, time, temperature, amount| Dimension {
         mass,
         length,
@@ -158,64 +191,88 @@ fn base_unit(sym: &str) -> Option<Dimension> {
         current: 0,
         luminous: 0,
     };
+    let u = |dim, scale, offset| Unit { dim, scale, offset };
     Some(match sym {
         // 无量纲
-        "1" | "-" | "rad" | "sr" | "%" | "percent" | "ratio" | "frac" | "count" => D::DIMENSIONLESS,
-        // SI 基本量
-        "g" => d(1, 0, 0, 0, 0),          // 质量（以克为基，词头另算；kg 也映射到 M）
-        "m" => d(0, 1, 0, 0, 0),          // 长度
-        "s" | "sec" => d(0, 0, 1, 0, 0),  // 时间
-        "K" | "degC" | "°C" | "C" => d(0, 0, 0, 1, 0), // 温度（量纲层面统一为 Θ）
-        "mol" => d(0, 0, 0, 0, 1),        // 物质的量
-        // 常见时间单位
-        "min" => d(0, 0, 1, 0, 0),
-        "h" | "hr" | "hour" => d(0, 0, 1, 0, 0),
-        "d" | "day" => d(0, 0, 1, 0, 0),
-        "yr" | "year" => d(0, 0, 1, 0, 0),
-        // 常见长度/面积/体积
-        "ha" => d(0, 2, 0, 0, 0),
-        "L" | "l" | "litre" | "liter" => d(0, 3, 0, 0, 0),
+        "1" | "-" | "rad" | "sr" | "ratio" | "frac" | "count" => u(dl, 1.0, 0.0),
+        "%" | "percent" => u(dl, 0.01, 0.0),
+        // 质量（SI 基准 kg；g = 1e-3 kg，故 kg 由词头 k + g 得到 scale 1）
+        "g" => u(d(1, 0, 0, 0, 0), 0.001, 0.0),
+        // 长度
+        "m" => u(d(0, 1, 0, 0, 0), 1.0, 0.0),
+        // 时间
+        "s" | "sec" => u(d(0, 0, 1, 0, 0), 1.0, 0.0),
+        "min" => u(d(0, 0, 1, 0, 0), 60.0, 0.0),
+        "h" | "hr" | "hour" => u(d(0, 0, 1, 0, 0), 3600.0, 0.0),
+        "d" | "day" => u(d(0, 0, 1, 0, 0), 86_400.0, 0.0),
+        "yr" | "year" => u(d(0, 0, 1, 0, 0), 31_557_600.0, 0.0),
+        // 温度（仿射：°C = K - 273.15）
+        "K" => u(d(0, 0, 0, 1, 0), 1.0, 0.0),
+        "degC" | "°C" | "C" => u(d(0, 0, 0, 1, 0), 1.0, 273.15),
+        // 物质的量
+        "mol" => u(d(0, 0, 0, 0, 1), 1.0, 0.0),
+        // 面积 / 体积
+        "ha" => u(d(0, 2, 0, 0, 0), 10_000.0, 0.0),
+        "L" | "l" | "litre" | "liter" => u(d(0, 3, 0, 0, 0), 0.001, 0.0),
         // 导出单位
-        "N" => d(1, 1, -2, 0, 0),  // 力
-        "Pa" => d(1, -1, -2, 0, 0), // 压强
-        "J" => d(1, 2, -2, 0, 0),  // 能量
-        "W" => d(1, 2, -3, 0, 0),  // 功率
-        "Hz" => d(0, 0, -1, 0, 0), // 频率
+        "N" => u(d(1, 1, -2, 0, 0), 1.0, 0.0),
+        "Pa" => u(d(1, -1, -2, 0, 0), 1.0, 0.0),
+        "J" => u(d(1, 2, -2, 0, 0), 1.0, 0.0),
+        "W" => u(d(1, 2, -3, 0, 0), 1.0, 0.0),
+        "Hz" => u(d(0, 0, -1, 0, 0), 1.0, 0.0),
         _ => return None,
     })
 }
 
-/// SI 词头 -> 不影响量纲（仅影响比例，量纲检查中忽略）。
-fn known_prefix(c: char) -> bool {
-    matches!(
-        c,
-        'Y' | 'Z' | 'E' | 'P' | 'T' | 'G' | 'M' | 'k' | 'h' | 'd' | 'c' | 'm' | 'u' | 'µ' | 'n'
-            | 'p' | 'f' | 'a'
-    )
+/// SI 词头 -> 比例因子（不影响量纲）。完整单位优先匹配，故 `h`(小时)/`d`(天) 不会被
+/// 误判为词头 hecto/deci；只有 `hPa`、`dm` 等才走词头路径。
+fn prefix_factor(c: char) -> Option<f64> {
+    Some(match c {
+        'Y' => 1e24,
+        'Z' => 1e21,
+        'E' => 1e18,
+        'P' => 1e15,
+        'T' => 1e12,
+        'G' => 1e9,
+        'M' => 1e6,
+        'k' => 1e3,
+        'h' => 1e2,
+        'c' => 1e-2,
+        'd' => 1e-1,
+        'm' => 1e-3,
+        'u' | 'µ' => 1e-6,
+        'n' => 1e-9,
+        'p' => 1e-12,
+        'f' => 1e-15,
+        'a' => 1e-18,
+        _ => return None,
+    })
 }
 
 /// 解析单个带词头与指数的单位记号，如 `kPa`、`umol`、`m2`、`s-1`。
-fn parse_token(tok: &str) -> Option<(Dimension, i8)> {
+fn parse_token(tok: &str) -> Option<(Unit, i8)> {
     let tok = tok.trim();
     if tok.is_empty() {
-        return Some((Dimension::DIMENSIONLESS, 1));
+        return Some((Unit::dimensionless(), 1));
     }
     // 分离尾部指数：支持 `m2`、`m^2`、`s-1`、`m^-2`
     let (sym_part, exp) = split_exponent(tok);
     // 先整体匹配；不行再尝试「词头 + 单位」
-    let dim = if let Some(d) = base_unit(sym_part) {
-        d
+    let unit = if let Some(u) = base_unit(sym_part) {
+        u
     } else {
         let mut chars = sym_part.chars();
         let first = chars.next()?;
         let rest: String = chars.collect();
-        if known_prefix(first) && !rest.is_empty() {
-            base_unit(&rest)?
-        } else {
+        let factor = prefix_factor(first)?;
+        if rest.is_empty() {
             return None;
         }
+        let base = base_unit(&rest)?;
+        // 带词头时偏移无意义（kPa 偏移本为 0；带偏移的温度不加词头）
+        Unit { dim: base.dim, scale: base.scale * factor, offset: 0.0 }
     };
-    Some((dim, exp))
+    Some((unit, exp))
 }
 
 /// 从记号尾部分离指数。返回 (符号部分, 指数)。默认指数 1。
@@ -246,14 +303,18 @@ fn split_exponent(tok: &str) -> (&str, i8) {
     (tok, 1)
 }
 
-/// 把单位字符串解析为量纲。支持复合：`/`（除）、`*` 或 `·`（乘）、尾部指数。
+/// 把单位字符串解析为完整单位（量纲 + 比例 + 偏移）。支持复合：`/`（除）、`*`/`·`（乘）、
+/// 尾部指数。偏移量仅对「单一基本单位记号」有效（如 `degC`）；复合/带指数单位偏移按 0 处理。
 /// 无法识别任一记号则返回 `None`（跳过、不误报）。
-pub fn parse_dimension(unit: &str) -> Option<Dimension> {
+pub fn parse_unit(unit: &str) -> Option<Unit> {
     let unit = unit.trim();
     if unit.is_empty() {
-        return Some(Dimension::DIMENSIONLESS);
+        return Some(Unit::dimensionless());
     }
-    let mut result = Dimension::DIMENSIONLESS;
+    let mut dim = Dimension::DIMENSIONLESS;
+    let mut scale = 1.0_f64;
+    let mut token_count = 0usize;
+    let mut lone_offset = 0.0_f64;
     // 以 '/' 切分：第一段为分子，其余为分母
     for (gi, group) in unit.split('/').enumerate() {
         let sign: i8 = if gi == 0 { 1 } else { -1 };
@@ -262,11 +323,22 @@ pub fn parse_dimension(unit: &str) -> Option<Dimension> {
             if tok.is_empty() {
                 continue;
             }
-            let (dim, exp) = parse_token(tok)?;
-            result = result.mul(&dim.powi(exp * sign));
+            let (u, exp) = parse_token(tok)?;
+            dim = dim.mul(&u.dim.powi(exp * sign));
+            scale *= u.scale.powi((exp * sign) as i32);
+            if token_count == 0 && exp == 1 && sign == 1 {
+                lone_offset = u.offset;
+            }
+            token_count += 1;
         }
     }
-    Some(result)
+    let offset = if token_count == 1 { lone_offset } else { 0.0 };
+    Some(Unit { dim, scale, offset })
+}
+
+/// 把单位字符串解析为量纲（仅取量纲部分）。
+pub fn parse_dimension(unit: &str) -> Option<Dimension> {
+    parse_unit(unit).map(|u| u.dim)
 }
 
 // ============================================
@@ -562,6 +634,99 @@ pub fn check_equation_file(file: &crate::schema::EquationFile) -> Vec<DimDiagnos
     out
 }
 
+/// 模块耦合接口的问题类型。
+#[cfg(feature = "cli")]
+#[derive(Debug, Clone, PartialEq)]
+pub enum CouplingIssue {
+    /// 源与目标量纲不同，无法耦合。
+    DimensionMismatch,
+    /// 量纲相同但单位不同，需按 `target = factor·x + shift` 换算。
+    ConversionNeeded { factor: f64, shift: f64 },
+    /// 引用的源变量未找到。
+    SourceNotFound,
+}
+
+/// 一条模块耦合诊断。
+#[cfg(feature = "cli")]
+#[derive(Debug, Clone)]
+pub struct CouplingDiagnostic {
+    pub from: String, // "模块.变量"
+    pub to: String,   // "模块.变量"
+    pub issue: CouplingIssue,
+    pub message: String,
+}
+
+/// 跨模块耦合检查：对每个带 `source` 的输入变量，比对其量纲/单位与源输出变量是否匹配。
+/// - 量纲不同 -> `DimensionMismatch`；
+/// - 量纲相同但单位不同 -> `ConversionNeeded`（给出换算系数）；
+/// - 单位相同或任一端单位无法解析 -> 不产生诊断。
+#[cfg(feature = "cli")]
+pub fn check_coupling(files: &[crate::schema::EquationFile]) -> Vec<CouplingDiagnostic> {
+    use crate::schema::VariableType;
+
+    // 索引 (模块ID, 变量名) -> 单位字符串
+    let mut index: HashMap<(String, String), Option<String>> = HashMap::new();
+    for f in files {
+        for (vn, v) in &f.variables {
+            index.insert((f.meta.id.clone(), vn.clone()), v.unit.clone());
+        }
+    }
+
+    let mut out = Vec::new();
+    for f in files {
+        for (vn, v) in &f.variables {
+            if v.var_type != VariableType::Input {
+                continue;
+            }
+            let Some((src_mod, src_var)) = v.parse_source() else {
+                continue;
+            };
+            let to_id = format!("{}.{}", f.meta.id, vn);
+            let from_id = format!("{src_mod}.{src_var}");
+
+            let src_unit = match index.get(&(src_mod.to_string(), src_var.to_string())) {
+                Some(u) => u.clone(),
+                None => {
+                    out.push(CouplingDiagnostic {
+                        from: from_id.clone(),
+                        to: to_id.clone(),
+                        issue: CouplingIssue::SourceNotFound,
+                        message: format!("耦合源 {from_id} 未找到"),
+                    });
+                    continue;
+                }
+            };
+
+            // 两端单位都能解析才比较
+            let (Some(su), Some(tu)) = (
+                src_unit.as_deref().and_then(parse_unit),
+                v.unit.as_deref().and_then(parse_unit),
+            ) else {
+                continue;
+            };
+
+            if su.dim != tu.dim {
+                out.push(CouplingDiagnostic {
+                    from: from_id,
+                    to: to_id,
+                    issue: CouplingIssue::DimensionMismatch,
+                    message: format!("量纲不兼容：源 {} vs 目标 {}", su.dim, tu.dim),
+                });
+            } else if let Some((factor, shift)) = su.affine_to(&tu) {
+                if (factor - 1.0).abs() > 1e-12 || shift.abs() > 1e-12 {
+                    out.push(CouplingDiagnostic {
+                        from: from_id,
+                        to: to_id,
+                        issue: CouplingIssue::ConversionNeeded { factor, shift },
+                        message: format!("需换算：目标 = {factor} × 源 + {shift}"),
+                    });
+                }
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -726,6 +891,111 @@ mod tests {
         assert!(
             diags.iter().any(|d| d.equation_id == "BAD_EXP" && d.message.contains("无量纲")),
             "应抓到超越函数带量纲: {diags:?}"
+        );
+    }
+
+    // ---- Phase 4b：单位换算 ----
+
+    #[test]
+    fn test_convert_scale() {
+        let km = parse_unit("km").unwrap();
+        let m = parse_unit("m").unwrap();
+        assert!((convert(1.0, &km, &m).unwrap() - 1000.0).abs() < 1e-9);
+        let hour = parse_unit("h").unwrap();
+        let s = parse_unit("s").unwrap();
+        assert!((convert(1.0, &hour, &s).unwrap() - 3600.0).abs() < 1e-6);
+        let kpa = parse_unit("kPa").unwrap();
+        let pa = parse_unit("Pa").unwrap();
+        assert!((convert(1.0, &kpa, &pa).unwrap() - 1000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_convert_temperature_affine() {
+        let degc = parse_unit("degC").unwrap();
+        let k = parse_unit("K").unwrap();
+        // 20°C = 293.15 K（仿射，含偏移）
+        assert!((convert(20.0, &degc, &k).unwrap() - 293.15).abs() < 1e-9);
+        // 0 K = -273.15 °C
+        assert!((convert(0.0, &k, &degc).unwrap() + 273.15).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_convert_dimension_mismatch() {
+        let m = parse_unit("m").unwrap();
+        let s = parse_unit("s").unwrap();
+        assert_eq!(convert(1.0, &m, &s), None);
+    }
+
+    // ---- Phase 4b：跨模块耦合检查 ----
+
+    #[cfg(feature = "cli")]
+    #[test]
+    fn test_check_coupling() {
+        use crate::schema::{DataType, EquationFile, Metadata, Variable, VariableType};
+
+        fn outvar(unit: &str) -> Variable {
+            Variable {
+                var_type: VariableType::Output,
+                dtype: DataType::Float,
+                unit: Some(unit.to_string()),
+                description: None,
+                source: None,
+            }
+        }
+        fn invar(unit: &str, src: &str) -> Variable {
+            Variable {
+                var_type: VariableType::Input,
+                dtype: DataType::Float,
+                unit: Some(unit.to_string()),
+                description: None,
+                source: Some(src.to_string()),
+            }
+        }
+        fn meta(id: &str) -> Metadata {
+            Metadata {
+                id: id.to_string(),
+                model: "M".into(),
+                name_cn: "".into(),
+                name_en: None,
+                version: "1.0".into(),
+                description: None,
+                reference: None,
+                source_files: vec![],
+            }
+        }
+
+        // 模块 A 输出时长 dur（单位：小时）
+        let mut a_vars = indexmap::IndexMap::new();
+        a_vars.insert("dur".to_string(), outvar("h"));
+        let file_a = EquationFile {
+            meta: meta("A"),
+            parameters: Default::default(),
+            variables: a_vars,
+            equations: vec![],
+        };
+
+        // 模块 B 输入 t（需要秒，来自 A.dur）与 bad（错误地声明为米）
+        let mut b_vars = indexmap::IndexMap::new();
+        b_vars.insert("t".to_string(), invar("s", "A.dur"));
+        b_vars.insert("bad".to_string(), invar("m", "A.dur"));
+        let file_b = EquationFile {
+            meta: meta("B"),
+            parameters: Default::default(),
+            variables: b_vars,
+            equations: vec![],
+        };
+
+        let diags = check_coupling(&[file_a, file_b]);
+        // A.dur(小时) -> B.t(秒)：需换算 ×3600
+        assert!(
+            diags.iter().any(|d| d.to == "B.t"
+                && matches!(d.issue, CouplingIssue::ConversionNeeded { factor, .. } if (factor - 3600.0).abs() < 1e-6)),
+            "应给出 3600 换算: {diags:?}"
+        );
+        // A.dur(时间) -> B.bad(长度)：量纲不兼容
+        assert!(
+            diags.iter().any(|d| d.to == "B.bad" && d.issue == CouplingIssue::DimensionMismatch),
+            "应报量纲不兼容: {diags:?}"
         );
     }
 }
