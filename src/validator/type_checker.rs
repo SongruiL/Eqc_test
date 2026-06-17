@@ -305,10 +305,10 @@ fn data_type_to_expr_type(dtype: &DataType) -> ExprType {
 mod tests {
     use super::*;
     use crate::schema::{Metadata, Parameter};
-    use std::collections::HashMap;
+    use indexmap::IndexMap;
 
     fn create_test_file() -> EquationFile {
-        let mut parameters = HashMap::new();
+        let mut parameters = IndexMap::new();
         parameters.insert(
             "p1".to_string(),
             Parameter {
@@ -335,7 +335,7 @@ mod tests {
                 source_files: vec![],
             },
             parameters,
-            variables: HashMap::new(),
+            variables: Default::default(),
             equations: vec![],
         }
     }

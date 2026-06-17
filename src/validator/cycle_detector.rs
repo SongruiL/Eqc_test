@@ -116,8 +116,8 @@ mod tests {
                 reference: None,
                 source_files: vec![],
             },
-            parameters: HashMap::new(),
-            variables: HashMap::new(),
+            parameters: Default::default(),
+            variables: Default::default(),
             equations: eqs,
         }
     }

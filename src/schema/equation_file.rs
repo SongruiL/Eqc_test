@@ -1,7 +1,7 @@
 //! 方程文件结构
 
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 use super::{Equation, Parameter, Variable};
 
@@ -11,13 +11,13 @@ pub struct EquationFile {
     /// 元数据
     pub meta: Metadata,
 
-    /// 参数定义
+    /// 参数定义（IndexMap：保留 YAML 声明顺序，保证输出可复现）
     #[serde(default)]
-    pub parameters: HashMap<String, Parameter>,
+    pub parameters: IndexMap<String, Parameter>,
 
-    /// 变量定义
+    /// 变量定义（IndexMap：保留 YAML 声明顺序，保证输出可复现）
     #[serde(default)]
-    pub variables: HashMap<String, Variable>,
+    pub variables: IndexMap<String, Variable>,
 
     /// 方程定义
     #[serde(default)]

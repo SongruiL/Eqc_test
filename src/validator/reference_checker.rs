@@ -147,6 +147,7 @@ pub fn check_cross_module_references(files: &[EquationFile]) -> Vec<ValidationEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use indexmap::IndexMap;
     use crate::ast::Expr;
     use crate::schema::{Equation, Metadata, Parameter, Variable};
 
@@ -165,7 +166,7 @@ mod tests {
 
     #[test]
     fn test_valid_references() {
-        let mut parameters = HashMap::new();
+        let mut parameters = IndexMap::new();
         parameters.insert(
             "p1".to_string(),
             Parameter {
@@ -180,7 +181,7 @@ mod tests {
             },
         );
 
-        let mut variables = HashMap::new();
+        let mut variables = IndexMap::new();
         variables.insert(
             "x".to_string(),
             Variable {
@@ -214,8 +215,8 @@ mod tests {
     fn test_undefined_parameter() {
         let file = EquationFile {
             meta: create_test_metadata(),
-            parameters: HashMap::new(), // 没有定义参数
-            variables: HashMap::new(),
+            parameters: Default::default(), // 没有定义参数
+            variables: Default::default(),
             equations: vec![Equation {
                 id: "E1".to_string(),
                 name: "测试方程".to_string(),
@@ -241,8 +242,8 @@ mod tests {
     fn test_undefined_variable() {
         let file = EquationFile {
             meta: create_test_metadata(),
-            parameters: HashMap::new(),
-            variables: HashMap::new(), // 没有定义变量
+            parameters: Default::default(),
+            variables: Default::default(), // 没有定义变量
             equations: vec![Equation {
                 id: "E1".to_string(),
                 name: "测试方程".to_string(),
@@ -269,8 +270,8 @@ mod tests {
         // 方程 E2 引用方程 E1 的输出作为中间变量
         let file = EquationFile {
             meta: create_test_metadata(),
-            parameters: HashMap::new(),
-            variables: HashMap::new(),
+            parameters: Default::default(),
+            variables: Default::default(),
             equations: vec![
                 Equation {
                     id: "E1".to_string(),
@@ -299,8 +300,8 @@ mod tests {
     fn test_duplicate_equation_id() {
         let file = EquationFile {
             meta: create_test_metadata(),
-            parameters: HashMap::new(),
-            variables: HashMap::new(),
+            parameters: Default::default(),
+            variables: Default::default(),
             equations: vec![
                 Equation {
                     id: "E1".to_string(),

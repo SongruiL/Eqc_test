@@ -2,6 +2,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use indexmap::IndexMap;
+
 use petgraph::algo::toposort;
 use petgraph::graph::{DiGraph, NodeIndex};
 
@@ -41,8 +43,8 @@ pub struct DagNode {
     pub node_type: NodeType,
     /// 所属模块
     pub module: String,
-    /// 元数据
-    pub metadata: HashMap<String, String>,
+    /// 元数据（IndexMap：保证 JSON 序列化键序确定、可复现）
+    pub metadata: IndexMap<String, String>,
 }
 
 /// DAG 边
@@ -119,7 +121,7 @@ pub fn build_dag(files: &[EquationFile]) -> CompileResult<Dag> {
         for (name, param) in &file.parameters {
             let id = format!("{}.{}", module, name);
             if node_ids.insert(id.clone()) {
-                let mut metadata = HashMap::new();
+                let mut metadata = IndexMap::new();
                 metadata.insert("name_cn".to_string(), param.name_cn.clone());
                 metadata.insert("default".to_string(), param.default.to_string());
                 if let Some(ref unit) = param.unit {
@@ -145,7 +147,7 @@ pub fn build_dag(files: &[EquationFile]) -> CompileResult<Dag> {
                     VariableType::Output => NodeType::Output,
                 };
 
-                let mut metadata = HashMap::new();
+                let mut metadata = IndexMap::new();
                 if let Some(ref desc) = var.description {
                     metadata.insert("description".to_string(), desc.clone());
                 }
@@ -166,7 +168,7 @@ pub fn build_dag(files: &[EquationFile]) -> CompileResult<Dag> {
         for eq in &file.equations {
             let id = format!("{}.{}", module, eq.output);
             if node_ids.insert(id.clone()) {
-                let mut metadata = HashMap::new();
+                let mut metadata = IndexMap::new();
                 metadata.insert("equation_id".to_string(), eq.id.clone());
                 metadata.insert("name".to_string(), eq.name.clone());
 
