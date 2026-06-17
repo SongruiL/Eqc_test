@@ -1,0 +1,54 @@
+;; @module: greenhouse.microclimate
+;; @name: 温室微气候-作物响应示例模型
+;; @description: 用于测试 EQC 的小型耦合模型：由温湿度与光照推算日均温、生长度日、饱和水汽压、水汽压亏缺与净光合速率。算子之间通过输出/输入变量名耦合，形成 DAG。
+
+;; @operator: greenhouse.tmean
+;; @name: 日均温
+;; @category: 气象
+;; @description: 日最高温与日最低温的平均
+;; @latex: $T_{mean} = \frac{T_{max} + T_{min}}{2}$
+;; @input: Tmax, Number, required, 日最高气温 (degC)
+;; @input: Tmin, Number, required, 日最低气温 (degC)
+;; @output: Tmean, Number, 日均气温 (degC)
+(div (add Tmax Tmin) 2)
+
+;; @operator: greenhouse.gdd
+;; @name: 生长度日
+;; @category: 物候
+;; @description: 单日有效积温；日均温低于基点温度时记为 0
+;; @latex: $GDD = \max(0,\; T_{mean} - T_{base})$
+;; @input: Tmean, Number, required, 日均气温 (degC)
+;; @input: Tbase, Number, optional, 基点温度 (degC), 10
+;; @output: GDD, Number, 生长度日 (degC*d)
+(max 0 (sub Tmean Tbase))
+
+;; @operator: greenhouse.es
+;; @name: 饱和水汽压
+;; @category: 气象
+;; @description: Magnus 公式，由气温计算饱和水汽压
+;; @latex: $e_s = 0.6108 \exp\!\left(\frac{17.27\, T_{mean}}{T_{mean} + 237.3}\right)$
+;; @input: Tmean, Number, required, 气温 (degC)
+;; @output: es, Number, 饱和水汽压 (kPa)
+(mul 0.6108 (exp (div (mul 17.27 Tmean) (add Tmean 237.3))))
+
+;; @operator: greenhouse.vpd
+;; @name: 水汽压亏缺
+;; @category: 气象
+;; @description: 饱和水汽压与实际水汽压之差 (VPD)
+;; @latex: $VPD = e_s \left(1 - \frac{RH}{100}\right)$
+;; @input: es, Number, required, 饱和水汽压 (kPa)
+;; @input: RH, Number, required, 相对湿度 (percent)
+;; @output: VPD, Number, 水汽压亏缺 (kPa)
+(mul es (sub 1 (div RH 100)))
+
+;; @operator: greenhouse.pn
+;; @name: 净光合速率
+;; @category: 生理
+;; @description: 直角双曲线光响应模型，减去暗呼吸速率
+;; @latex: $P_n = \frac{\alpha I\, P_{max}}{\alpha I + P_{max}} - R_d$
+;; @input: I, Number, required, 光合有效辐射 (umol/m2/s)
+;; @input: alpha, Number, optional, 表观量子效率 (mol/mol), 0.05
+;; @input: Pmax, Number, optional, 最大总光合速率 (umol/m2/s), 25
+;; @input: Rd, Number, optional, 暗呼吸速率 (umol/m2/s), 1.5
+;; @output: Pn, Number, 净光合速率 (umol/m2/s)
+(sub (div (mul (mul alpha I) Pmax) (add (mul alpha I) Pmax)) Rd)
