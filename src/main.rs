@@ -130,6 +130,16 @@ enum Commands {
 
     /// 输出S表达式书写规范
     SexprSpec,
+
+    /// 检查量纲一致性与跨模块耦合单位
+    CheckDims {
+        /// 输入目录（包含 .eq.yaml 文件）
+        input: PathBuf,
+
+        /// 有错误时返回非零退出码
+        #[arg(long)]
+        strict: bool,
+    },
 }
 
 #[cfg(feature = "cli")]
@@ -150,6 +160,7 @@ fn main() {
         Commands::ValidateSexpr { input, verbose, warn_only } => run_validate_sexpr(&input, verbose, warn_only),
         Commands::GraphL2 { inputs } => run_graph_l2(&inputs),
         Commands::SexprSpec => run_sexpr_spec(),
+        Commands::CheckDims { input, strict } => run_check_dims(&input, strict),
     };
 
     if let Err(e) = result {
@@ -206,6 +217,65 @@ fn run_validate(input: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     println!("   - 模块数: {}", compiler.files().len());
     println!("   - 方程数: {}", compiler.equation_ids().len());
 
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+fn run_check_dims(input: &PathBuf, strict: bool) -> Result<(), Box<dyn std::error::Error>> {
+    use equation_compiler::units::{self, CouplingIssue};
+
+    println!("🔬 量纲检查: {}", input.display());
+    let compiler = Compiler::new().load_directory(input)?;
+    let files = compiler.files();
+
+    let mut errors = 0usize;
+    let mut infos = 0usize;
+
+    // 1) 每个模块内部的量纲一致性
+    for file in files {
+        let diags = units::check_equation_file(file);
+        if !diags.is_empty() {
+            println!("\n📄 模块 {}", file.meta.id);
+            for d in &diags {
+                println!("   ⚠️  [{}] {}", d.equation_id, d.message);
+                errors += 1;
+            }
+        }
+    }
+
+    // 2) 跨模块耦合接口
+    let couplings = units::check_coupling(files);
+    if !couplings.is_empty() {
+        println!("\n🔗 跨模块耦合");
+        for c in &couplings {
+            match &c.issue {
+                // 量纲相同、仅单位不同：可自动换算，属提示而非错误
+                CouplingIssue::ConversionNeeded { .. } => {
+                    println!("   ℹ️  {} → {}: {}", c.from, c.to, c.message);
+                    infos += 1;
+                }
+                _ => {
+                    println!("   ❌ {} → {}: {}", c.from, c.to, c.message);
+                    errors += 1;
+                }
+            }
+        }
+    }
+
+    println!("\n────────────────────────────────────────");
+    println!(
+        "📊 模块数: {}，错误: {}，需换算提示: {}",
+        files.len(),
+        errors,
+        infos
+    );
+    if errors == 0 {
+        println!("✅ 未发现量纲错误");
+    }
+
+    if strict && errors > 0 {
+        return Err(format!("量纲检查发现 {errors} 处错误").into());
+    }
     Ok(())
 }
 

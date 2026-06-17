@@ -54,6 +54,9 @@ eqc build --input ./equations --output ./generated --format all
 # 仅验证
 eqc validate ./equations
 
+# 检查量纲一致性与跨模块耦合单位（科学正确性护栏）
+eqc check-dims ./equations          # --strict 时有错误返回非零退出码
+
 # 输出 DAG 图
 eqc graph ./equations --format mermaid
 
