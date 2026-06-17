@@ -15,6 +15,7 @@ pub mod error;
 pub mod eval;
 pub mod ops;
 pub mod sexpr;
+pub mod units;
 
 // 完整编译器模块（仅 CLI 工具需要）
 #[cfg(feature = "cli")]
@@ -41,6 +42,9 @@ pub use eval::{Env, EvalError, EvalMode};
 
 // 算子注册表（算子单一真相源）
 pub use ops::OperatorSpec;
+
+// 量纲系统（科学正确性护栏）
+pub use units::{check_expr, parse_dimension, DimError, Dimension};
 
 // S表达式解析器
 pub use sexpr::{parse as parse_sexpr, parse_to_expr, parse_to_yaml, SExpr, SExprError};
