@@ -43,6 +43,17 @@
   .vars .grp { width:100%; font-size:11px; color:var(--sub); font-weight:600; margin-top:4px; }
   .err { color:#dc2626; font-size:13px; }
   .hint { color:var(--sub); font-size:12px; margin-top:8px; }
+  /* 节点悬停注释 */
+  #nodeTip { position:fixed; z-index:1000; display:none; pointer-events:none; max-width:380px;
+    background:var(--card); border:1px solid var(--line); border-radius:8px;
+    box-shadow:0 8px 28px rgba(0,0,0,.14); padding:10px 12px; font-size:13px; color:var(--ink); }
+  #nodeTip .t-name { font-weight:700; font-size:14px; }
+  #nodeTip .t-sub { color:var(--sub); font-size:12px; margin-top:2px; }
+  #nodeTip .t-desc { margin-top:6px; line-height:1.45; }
+  #nodeTip .t-eq { margin-top:8px; overflow-x:auto; }
+  #nodeTip .t-eq math { font-size:1.15em; }
+  #nodeTip .t-cite { margin-top:6px; font-size:12px; color:#1d4ed8; }
+  #nodeTip .t-cite.t-none { color:var(--sub); }
 </style>
 </head>
 <body>
@@ -117,11 +128,12 @@ function buildVarList(vars){
       const id = 'v_'+v.name;
       const lab = document.createElement('label');
       lab.innerHTML = `<input type="checkbox" id="${id}" value="${v.name}" ${def?'checked':''}><span>${v.name}</span><span class="cls">${v.unit||''}</span>`;
-      lab.querySelector('input').addEventListener('change', updateChart);
+      lab.querySelector('input').addEventListener('change', (e)=>{ setHl(v.name, e.target.checked); updateChart(); });
       box.appendChild(lab);
     });
   });
   updateChart();
+  syncAllHl();   // 默认勾选的变量（如 Y）节点也高亮
 }
 
 function updateChart(){
@@ -189,8 +201,104 @@ document.querySelectorAll('#zoomSeg button').forEach(b=>{
     else setZoom(1); // 适应
   });
 });
-// iframe 每次加载（含切布局）后重新适配；窗口尺寸变化亦然。
-document.getElementById('report').addEventListener('load', applyZoom);
+// 点节点联动：悬停弹注释（方程+备注），点击高亮+画轨迹。iframe 同源，Studio 伸进去挂事件（报告本身零 JS）。
+const CLS_CN = {state:'存量',rate:'速率',driving:'驱动',auxiliary:'辅助',parameter:'参数',control:'控制',semi_state:'半状态',boundary:'边界'};
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function findVar(name){
+  if(!MODEL) return null;
+  for(const m of (MODEL.modules||[])){
+    const v = (m.variables||[]).find(x=>x.name===name); if(v) return {kind:'var', v};
+    const p = (m.parameters||[]).find(x=>x.name===name); if(p) return {kind:'param', p};
+  }
+  return null;
+}
+function findEq(name){
+  if(!MODEL) return null;
+  for(const m of (MODEL.modules||[])){
+    const e = (m.equations||[]).find(x=>x.output===name); if(e) return e;
+  }
+  return null;
+}
+// 注释内容：全部取自已加载的 /api/model 契约（含方程 mathml）
+function tipHtml(name){
+  const info = findVar(name), eq = findEq(name);
+  let h = '<div class="t-name">' + esc(name) + '</div>';
+  if(info && info.kind==='var'){
+    const v = info.v, cls = CLS_CN[v.class] || v.class;
+    h += '<div class="t-sub">' + esc(cls) + (v.unit ? ' · ' + esc(v.unit) : '') + '</div>';
+    if(v.description) h += '<div class="t-desc">' + esc(v.description) + '</div>';
+  } else if(info && info.kind==='param'){
+    const p = info.p;
+    h += '<div class="t-sub">参数' + (p.unit ? ' · ' + esc(p.unit) : '') + '</div>';
+    if(p.name_cn) h += '<div class="t-desc">' + esc(p.name_cn) + '</div>';
+    h += '<div class="t-desc">默认值 = ' + p.default + '</div>';
+  }
+  if(eq){
+    h += '<div class="t-eq">' + eq.mathml + '</div>';      // mathml 来自契约，浏览器原生渲染
+    if(eq.reference) h += '<div class="t-cite">📖 ' + esc(eq.reference) + '</div>';
+  } else if(info && info.kind!=='param'){
+    h += '<div class="t-cite t-none">（无方程：输入/驱动量）</div>';
+  }
+  return h;
+}
+let TIP = null;
+function showTip(name, x, y){
+  if(!TIP){ TIP = document.createElement('div'); TIP.id = 'nodeTip'; document.body.appendChild(TIP); }
+  TIP.innerHTML = tipHtml(name);
+  TIP.style.display = 'block';
+  const tw = TIP.offsetWidth, th = TIP.offsetHeight;
+  let px = x + 14, py = y + 14;
+  if(px + tw > window.innerWidth - 8) px = x - tw - 14;
+  if(py + th > window.innerHeight - 8) py = window.innerHeight - th - 8;
+  TIP.style.left = Math.max(8, px) + 'px';
+  TIP.style.top = Math.max(8, py) + 'px';
+}
+function hideTip(){ if(TIP) TIP.style.display = 'none'; }
+
+// 点击：切换选中（多选累加）。高亮节点+公式；可绘制变量同步勾选→曲线累加/取消。不滚动（注释已悬停可见）。
+function reportDoc(){ const f = document.getElementById('report'); try { return f.contentDocument; } catch(e){ return null; } }
+// 把某变量的高亮设为 on/off（Forrester + 角色DAG 同名节点 + 对应公式）
+function setHl(name, on){
+  const doc = reportDoc(); if(!doc) return;
+  const q = String(name).replace(/"/g,'');
+  doc.querySelectorAll('[data-var="'+q+'"]').forEach(e=> e.classList.toggle('hl', on));
+  const eq = doc.querySelector('.eq[data-output="'+q+'"]');
+  if(eq) eq.classList.toggle('hl', on);
+}
+// 把所有节点高亮同步到当前复选框状态（加载/切布局/手动改复选框后调用）
+function syncAllHl(){ document.querySelectorAll('#vars input').forEach(cb=> setHl(cb.value, cb.checked)); }
+function selectVar(name){
+  if(!name) return;
+  const cb = document.querySelector('#vars input[value="'+String(name).replace(/"/g,'')+'"]');
+  if(cb){                                    // 可绘制变量：切换勾选 → 高亮 + 曲线累加/取消
+    cb.checked = !cb.checked;
+    setHl(name, cb.checked);
+    updateChart();
+  } else {                                   // 参数/驱动（无复选框）：仅切换高亮
+    const doc = reportDoc();
+    const on = !(doc && doc.querySelector('[data-var="'+String(name).replace(/"/g,'')+'"].hl'));
+    setHl(name, on);
+  }
+}
+function wireNodeClicks(){
+  const f = document.getElementById('report');
+  let doc; try { doc = f.contentDocument; } catch(e){ return; }
+  if(!doc) return;
+  doc.querySelectorAll('[data-var]').forEach(g=>{
+    if(g._wired) return; g._wired = true;
+    const name = g.getAttribute('data-var');
+    g.addEventListener('mouseenter', ()=>{
+      const fr = f.getBoundingClientRect(), nr = g.getBoundingClientRect();  // nr 含 iframe 内滚动/缩放
+      showTip(name, fr.left + nr.right, fr.top + nr.top);
+    });
+    g.addEventListener('mouseleave', hideTip);
+    g.addEventListener('click', ()=> selectVar(name));
+  });
+}
+
+// iframe 每次加载（含切布局）后：重新适配 + 重新挂点击 + 同步高亮 + 收起注释；窗口尺寸变化时重新适配。
+function onReportLoad(){ hideTip(); applyZoom(); wireNodeClicks(); syncAllHl(); }
+document.getElementById('report').addEventListener('load', onReportLoad);
 window.addEventListener('resize', applyZoom);
 
 // 专注：全屏只看结构图，再点恢复双栏。

@@ -254,17 +254,19 @@ fn dag_svg(dag: &Dag, kind: LayoutKind) -> String {
     for n in &dag.nodes {
         let (x, y) = pos[n.id.as_str()];
         let cls = format!("{:?}", n.node_type).to_lowercase();
+        let short = n.id.rsplit('.').next().unwrap_or(&n.id);
         let label = if n.id.chars().count() > 18 {
             format!("{}…", n.id.chars().take(17).collect::<String>())
         } else {
             n.id.clone()
         };
         s.push_str(&format!(
-            "<g class=\"node {cls}\"><rect x=\"{x:.0}\" y=\"{y:.0}\" width=\"{bw:.0}\" height=\"{bh:.0}\" rx=\"7\"/>\
-             <text x=\"{:.0}\" y=\"{:.0}\">{}</text></g>",
-            x + bw / 2.0,
-            y + bh / 2.0 + 5.0,
-            xml(&label)
+            "<g class=\"node {cls}\" data-var=\"{dv}\"><rect x=\"{x:.0}\" y=\"{y:.0}\" width=\"{bw:.0}\" height=\"{bh:.0}\" rx=\"7\"/>\
+             <text x=\"{tx:.0}\" y=\"{ty:.0}\">{lbl}</text></g>",
+            dv = xml(short),
+            tx = x + bw / 2.0,
+            ty = y + bh / 2.0 + 5.0,
+            lbl = xml(&label),
         ));
     }
     s.push_str("</svg>");
@@ -432,7 +434,7 @@ fn forrester_svg(files: &[EquationFile], dag: &Dag, kind: LayoutKind) -> String 
         } else {
             short.to_string()
         };
-        s.push_str(&format!("<g class=\"fnode {}\">", fclass_css(c)));
+        s.push_str(&format!("<g class=\"fnode {}\" data-var=\"{}\">", fclass_css(c), xml(short)));
         s.push_str(&fnode_shape(c, x, y, bw, bh));
         // 分类代号角标
         s.push_str(&format!(
@@ -502,6 +504,12 @@ h2 .sub { color:var(--sub); font-weight:400; font-size:13px; margin-left:8px; }
 .dag-svg.forr .fsh.auxiliary  { fill:#f8fafc; stroke:#cbd5e1; }
 .dag-svg.forr .fsh.control    { fill:#fae8ff; stroke:#d946ef; }
 .dag-svg.forr .fsh.boundary   { fill:#ffffff; stroke:#94a3b8; stroke-dasharray:4 3; }
+/* —— 点节点联动：可点 + 选中高亮（事件由 Studio 注入，报告本身零 JS） —— */
+.dag-svg .fnode, .dag-svg .node { cursor:pointer; }
+.dag-svg.forr .fnode.hl .fsh { stroke:#1d4ed8 !important; stroke-width:3.4 !important; }
+.dag-svg .node.hl rect { stroke:#1d4ed8 !important; stroke-width:3 !important; fill:#dbeafe; }
+.dag-svg .fnode.hl text, .dag-svg .node.hl text { font-weight:700; }
+.eq.hl { outline:2px solid #2563eb; outline-offset:2px; background:#eff6ff; }
 .dag-svg.forr .fedge { fill:none; }
 .dag-svg.forr .fedge.material { stroke:#f97316; stroke-width:3; }
 .dag-svg.forr .fedge.info     { stroke:#94a3b8; stroke-width:1.2; stroke-dasharray:4 3; }
@@ -590,13 +598,14 @@ pub fn generate_report_with(files: &[EquationFile], dag: &Dag, layout: LayoutKin
                 None => "<div class=\"cite nocite\">⚠ 未标注来源</div>".to_string(),
             };
             body.push_str(&format!(
-                "<div class=\"eq\"><div class=\"eqhead\">{}<span class=\"eqid\">{}</span></div>\
+                "<div class=\"eq\" data-output=\"{out}\"><div class=\"eqhead\">{}<span class=\"eqid\">{}</span></div>\
                  <math display=\"block\"><mrow>{}<mo>=</mo>{}</mrow></math>\
                  {fdisp}<div class=\"meta\">{meta}</div>{cite}</div>",
                 xml(&eq.name),
                 xml(&eq.id),
                 ident(&eq.output),
                 mml(&eq.expression),
+                out = xml(&eq.output),
             ));
         }
     }
@@ -681,7 +690,10 @@ mod tests {
         assert!(html.contains("Forrester"), "应含 Forrester 图标题");
         assert!(html.contains("class=\"dag-svg forr\""), "应含 Forrester SVG");
         assert!(html.contains("fsh driving"), "输入 x 应分类为驱动");
-        // 完全离线、零第三方 JS
+        // 点节点联动用的数据标记：节点带 data-var、公式块带 data-output（事件由 Studio 注入）
+        assert!(html.contains("data-var="), "节点应带 data-var");
+        assert!(html.contains("data-output=\"y\""), "公式块应带 data-output");
+        // 完全离线、零第三方 JS（联动靠数据属性 + CSS，不在报告里加脚本）
         assert!(!html.contains("<script"), "报告不应含任何 JS");
     }
 

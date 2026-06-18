@@ -356,9 +356,9 @@ pub fn compute_forrester<'a>(
     let bb_w = (bb.len() as f64 - 1.0) * spacing;
     let center_x = bb_w / 2.0;
 
-    // 初始化卫星：x≈相连主干节点的均值；上下交替分到两侧
     let base_off = g.bh * 2.6;
-    let mut side = 1.0_f64;
+
+    // (1) 卫星 target-x = 相连主干节点横坐标均值（无主干邻居则居中）
     for &id in nodes {
         let i = idx[id];
         if pinned[i] {
@@ -372,9 +372,66 @@ pub fn compute_forrester<'a>(
             }
         }
         px[i] = if cnt > 0.0 { sx / cnt } else { center_x };
-        side_of[i] = side;
-        py[i] = side * base_off;
-        side = -side;
+    }
+
+    // (2) 选边（上/下）：先按 target-x 交替起步，再用局部搜索最小化"交叉+密度"代价。
+    //     代价 = 直连卫星在对侧（线要穿主干）的罚 + 同侧且 x 相近（拥挤）的罚。
+    //     效果：直连卫星趋同侧、两侧按 x 均衡、少穿主干。确定性（无随机数、定序处理）。
+    let sats: Vec<usize> = (0..n).filter(|&i| !pinned[i]).collect();
+    let mut sat_sorted = sats.clone();
+    sat_sorted.sort_by(|&a, &b| {
+        px[a].partial_cmp(&px[b]).unwrap_or(std::cmp::Ordering::Equal).then(a.cmp(&b))
+    });
+    {
+        let mut s = 1.0_f64;
+        for &i in &sat_sorted {
+            side_of[i] = s;
+            s = -s;
+        }
+    }
+    let window = g.bw * 1.6; // 判定"x 相近"的横向窗口（约一个半节点宽）
+    for _ in 0..6 {
+        let mut changed = false;
+        for &i in &sat_sorted {
+            let (mut c_top, mut c_bot) = (0.0_f64, 0.0_f64);
+            // 直连的其它卫星在对侧 → 罚（鼓励同侧、连线不穿主干）
+            for &j in &adj[i] {
+                if pinned[j] || j == i {
+                    continue;
+                }
+                if side_of[j] != 1.0 {
+                    c_top += 3.0;
+                }
+                if side_of[j] != -1.0 {
+                    c_bot += 3.0;
+                }
+            }
+            // 同侧且 x 相近 → 密度罚（鼓励两侧均衡、不挤一处）
+            for &j in &sats {
+                if j == i || (px[j] - px[i]).abs() >= window {
+                    continue;
+                }
+                if side_of[j] == 1.0 {
+                    c_top += 1.0;
+                }
+                if side_of[j] == -1.0 {
+                    c_bot += 1.0;
+                }
+            }
+            let best = if c_top <= c_bot { 1.0 } else { -1.0 };
+            if side_of[i] != best {
+                side_of[i] = best;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    // (3) 落实初始 py（之后力松弛只在各自一侧内微调）
+    for &i in &sats {
+        py[i] = side_of[i] * base_off;
     }
 
     // 力松弛（只动卫星，主干钉死）

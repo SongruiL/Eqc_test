@@ -331,6 +331,9 @@ mod tests {
         assert!(STUDIO_HTML.contains("/api/report?layout="));
         assert!(STUDIO_HTML.contains("zoomSeg"));
         assert!(STUDIO_HTML.contains("focusBtn"));
+        // 节点悬停注释 + 点击联动
+        assert!(STUDIO_HTML.contains("nodeTip"));
+        assert!(STUDIO_HTML.contains("wireNodeClicks"));
     }
 
     #[test]
