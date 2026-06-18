@@ -13,10 +13,20 @@ const COLORS: &[&str] = &[
 
 /// 把选定变量画成折线图 SVG。`vars` 里不存在的变量被跳过。
 pub fn line_chart_svg(out: &SimOutput, vars: &[&str], width: f64, height: f64) -> String {
-    let series: Vec<(&str, &[f64])> = vars
-        .iter()
-        .filter_map(|v| out.series(v).map(|s| (*v, s)))
-        .collect();
+    // 收集要画的序列：标量变量直接取；向量变量（轨迹里展平成 name[1]/name[2]…）展开成多条分量线。
+    let mut series: Vec<(String, &[f64])> = Vec::new();
+    for v in vars {
+        if let Some(d) = out.series(v) {
+            series.push((v.to_string(), d));
+        } else {
+            let prefix = format!("{v}[");
+            for (k, d) in &out.trajectories {
+                if k.starts_with(&prefix) {
+                    series.push((k.clone(), d.as_slice()));
+                }
+            }
+        }
+    }
     let n = out.steps;
 
     if series.is_empty() || n == 0 {

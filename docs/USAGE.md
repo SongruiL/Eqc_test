@@ -70,6 +70,27 @@ equations:
 
 > **模型结构 vs 情景数据分离**：模型文件只写结构与方程；逐日天气走 `--drivers` CSV、按个体常数（如实测开花日）走 `--params` JSON。换一季只换情景数据，不动模型。
 
+### 3.3 向量化 cohort（推荐）—— 一个变量装一组
+
+cohort 还可以直接写成**向量变量**（不用宏展开），更贴近数学、图上一个节点。做法：用**向量参数**当「种子」（`values: [...]`），其余靠广播自动传开，聚合用 `vsum`：
+
+```yaml
+parameters:
+  anthesis: { name_cn: 各果序开花日, values: [40, 80, 120] }   # 向量参数（长度=果序数）
+variables:
+  active: { class: auxiliary }                          # 自动成向量
+  TF:     { class: state, init: 0.0, rate: rateTF }     # 向量状态量（init 标量广播）
+  GS:     { class: auxiliary }                          # 标量（vsum 归约）
+equations:
+  - { output: active, expression: { op: geq,  args: [ {ref: DAT}, {ref: anthesis} ] } }   # 逐元素 → 向量
+  - { output: GS,     expression: { op: vsum, args: [ {ref: gs} ] } }                      # Σ over 向量
+```
+
+- 求值/仿真按 `Value{标量|向量|矩阵}` 运行；**52 个标量算子自动逐元素**（广播：标量↔任意形状、同形状逐元素）。
+- 向量算子：`vsum/vprod/vmean/vmin/vmax`（归约）、`dot/cross/vec_norm/vec_normalize`。
+- 仿真输出把向量变量**展平**成 `DF[1]/DF[2]/…`（CSV/图表各画一条分量线；Studio 里勾选 `DF` 即画全部分量）。
+- 完整对照：`../strawberry_model/strawberry_v1_vector.eq.yaml`（向量版 **28 变量**）与标量宏展开版 `strawberry_v1.eq.yaml`（**92 变量**）**产量 Y 逐位一致**。设计见 `docs/spec-vector-matrix.md`。矩阵 eval（matmul/det…）尚未实现（后置）。
+
 ## 4. CLI 命令速查
 
 ```bash

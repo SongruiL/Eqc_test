@@ -277,6 +277,19 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
                 }
             }
         }
+        // 4d-2. 首步：把延迟寄存器的标量 init 广播到其来源的形状（此时来源已算出），
+        // 保证向量延迟寄存器的输出形状跨步一致（如 RFG_prev 在第0步也是向量，而非标量）。
+        // 不影响数值：本步下游已用标量 init（广播）算过；这里只修正记录形状。
+        if n == 0 {
+            for (name, src, init) in &delays {
+                if let Some(src_val) = env.get(src) {
+                    let shaped = value_binop(&Value::Scalar(*init), &src_val, |a, _| a)
+                        .map_err(|err| SimError::Eval { var: (*name).to_string(), err })?;
+                    env.set(*name, shaped);
+                }
+            }
+        }
+
         // 4e. 记录本步：快照到 prev（供下一步）+ 展平到输出轨迹
         let mut cur: HashMap<String, Value> = HashMap::new();
         for name in file.variables.keys() {
@@ -451,6 +464,35 @@ equations:
         assert_eq!(out.series("Stot").unwrap(), &[6.0, 12.0, 18.0]);
         // 向量变量本身不作为单一键（已展平）
         assert!(out.series("S").is_none());
+    }
+
+    /// V3 回归：向量延迟寄存器——首步标量 init 广播到来源形状，输出形状跨步一致。
+    #[test]
+    fn test_vector_delay_register() {
+        let yaml = r#"
+meta: { id: VD, model: VD, name_cn: 向量延迟 }
+parameters:
+  base: { name_cn: 速率, values: [1.0, 2.0] }
+variables:
+  T:        { type: input, class: driving }
+  acc:      { type: output, class: state, init: 0.0, rate: base }
+  acc_prev: { type: intermediate, class: semi_state, init: 0.0, prev: acc }
+  delta:    { type: output }
+equations:
+  - { id: E1, name: 增量和, output: delta,
+      expression: { op: vsum, args: [ { op: sub, args: [ { ref: acc }, { ref: acc_prev } ] } ] } }
+"#;
+        let (_d, file) = write_model(yaml);
+        let input = SimInput::new(3).driver("T", vec![0.0, 0.0, 0.0]);
+        let out = simulate(&file, &input).unwrap();
+        // acc 逐元素积分 base=[1,2]：[1,2]→[2,4]→[3,6]
+        assert_eq!(out.series("acc[1]").unwrap(), &[1.0, 2.0, 3.0]);
+        assert_eq!(out.series("acc[2]").unwrap(), &[2.0, 4.0, 6.0]);
+        // acc_prev 首步广播 init=0 到向量 [0,0]，之后取上一步 acc → 形状跨步一致（长度=3）
+        assert_eq!(out.series("acc_prev[1]").unwrap(), &[0.0, 1.0, 2.0]);
+        assert_eq!(out.series("acc_prev[2]").unwrap(), &[0.0, 2.0, 4.0]);
+        // delta = Σ(acc - acc_prev) = Σ base = 3 每步
+        assert_eq!(out.series("delta").unwrap(), &[3.0, 3.0, 3.0]);
     }
 
     /// 缺驱动量应报错。
