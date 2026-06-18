@@ -1,12 +1,16 @@
 //! 自包含 HTML 模型报告：DAG（EQC 自生成 SVG）+ 每个方程的二维公式（MathML，
 //! 浏览器原生渲染）。零第三方 JS、完全离线。
 //!
-//! 入口：[`generate_report`]。CLI 子命令 `eqc report`。
+//! 入口：[`generate_report`] / [`generate_report_with`]。CLI 子命令 `eqc report`。
+
+mod layout;
+pub use layout::LayoutKind;
+use layout::{compute as compute_layout, Geom};
 
 use crate::ast::Expr;
 use crate::dag::Dag;
 use crate::schema::{EquationFile, VarClass};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 /// XML/HTML 文本转义。
 fn xml(s: &str) -> String {
@@ -180,59 +184,70 @@ fn variant_name(e: &Expr) -> String {
 // DAG -> SVG（分层布局）
 // ============================================
 
-fn dag_svg(dag: &Dag) -> String {
+/// 一条边的 SVG path `d`：分层布局用上下贝塞尔（流向朝下）；自由布局（力导向/Forrester）
+/// 用「框边到框边」的微弯曲线，端点裁剪到各自节点框的边界（箭头正好落在框上，不被遮）。
+fn edge_path(x1: f64, y1: f64, x2: f64, y2: f64, bw: f64, bh: f64, kind: LayoutKind) -> String {
+    if !kind.free_edges() {
+        // 分层：从 from 底边到 to 顶边
+        let (sx, sy) = (x1 + bw / 2.0, y1 + bh);
+        let (tx, ty) = (x2 + bw / 2.0, y2);
+        return format!(
+            "M{sx:.0},{sy:.0} C{sx:.0},{:.0} {tx:.0},{:.0} {tx:.0},{ty:.0}",
+            sy + 32.0,
+            ty - 32.0
+        );
+    }
+    // 自由方向：中心到中心，端点裁到框边，中点沿法向外凸做微弯
+    let (hw, hh) = (bw / 2.0, bh / 2.0);
+    let (c1x, c1y) = (x1 + hw, y1 + hh);
+    let (c2x, c2y) = (x2 + hw, y2 + hh);
+    let (sx, sy) = box_exit(c1x, c1y, hw, hh, c2x, c2y);
+    let (tx, ty) = box_exit(c2x, c2y, hw, hh, c1x, c1y);
+    let (ex, ey) = (tx - sx, ty - sy);
+    let len = (ex * ex + ey * ey).sqrt().max(1.0);
+    let (nx, ny) = (-ey / len, ex / len);
+    let bow = (len * 0.12).min(26.0);
+    let (mx, my) = ((sx + tx) / 2.0 + nx * bow, (sy + ty) / 2.0 + ny * bow);
+    format!("M{sx:.0},{sy:.0} Q{mx:.0},{my:.0} {tx:.0},{ty:.0}")
+}
+
+/// 从框中心 `(cx,cy)` 朝 `(tx,ty)` 方向，求射线与框（半宽 `hw`、半高 `hh`）边界的交点。
+fn box_exit(cx: f64, cy: f64, hw: f64, hh: f64, tx: f64, ty: f64) -> (f64, f64) {
+    let dx = tx - cx;
+    let dy = ty - cy;
+    if dx.abs() < 1e-6 && dy.abs() < 1e-6 {
+        return (cx, cy);
+    }
+    let sx = if dx.abs() < 1e-6 { f64::INFINITY } else { hw / dx.abs() };
+    let sy = if dy.abs() < 1e-6 { f64::INFINITY } else { hh / dy.abs() };
+    let t = sx.min(sy);
+    (cx + dx * t, cy + dy * t)
+}
+
+fn dag_svg(dag: &Dag, kind: LayoutKind) -> String {
     if dag.nodes.is_empty() {
         return "<p class=\"empty\">（无节点）</p>".to_string();
     }
-    // 1) 分层：按拓扑序，layer = max(前驱 layer)+1
-    let mut layer: HashMap<&str, usize> = HashMap::new();
-    for id in &dag.topological_order {
-        let l = dag
-            .edges
-            .iter()
-            .filter(|e| &e.to == id)
-            .filter_map(|e| layer.get(e.from.as_str()).copied())
-            .max()
-            .map(|m| m + 1)
-            .unwrap_or(0);
-        layer.insert(id.as_str(), l);
-    }
-    for n in &dag.nodes {
-        layer.entry(n.id.as_str()).or_insert(0);
-    }
-    // 2) 按层分组、定位
-    let (bw, bh, hgap, vgap) = (160.0_f64, 38.0_f64, 24.0_f64, 64.0_f64);
-    let mut by_layer: BTreeMap<usize, Vec<&str>> = BTreeMap::new();
-    for n in &dag.nodes {
-        by_layer.entry(layer[n.id.as_str()]).or_default().push(n.id.as_str());
-    }
-    let mut pos: HashMap<&str, (f64, f64)> = HashMap::new();
-    let mut width = 0.0_f64;
-    for (l, ids) in &by_layer {
-        let y = *l as f64 * (bh + vgap) + 20.0;
-        for (i, id) in ids.iter().enumerate() {
-            let x = i as f64 * (bw + hgap) + 20.0;
-            pos.insert(id, (x, y));
-            width = width.max(x + bw + 20.0);
-        }
-    }
-    let height = by_layer.keys().max().map(|m| (*m as f64 + 1.0) * (bh + vgap) + 20.0).unwrap_or(80.0);
+    let g = Geom { bw: 160.0, bh: 38.0, hgap: 24.0, vgap: 64.0 };
+    let (bw, bh) = (g.bw, g.bh);
+    let nodes: Vec<&str> = dag.nodes.iter().map(|n| n.id.as_str()).collect();
+    let edges: Vec<(&str, &str)> =
+        dag.edges.iter().map(|e| (e.from.as_str(), e.to.as_str())).collect();
+    let lay = compute_layout(&nodes, &edges, kind, g);
+    let pos = &lay.pos;
 
     let mut s = format!(
         "<svg viewBox=\"0 0 {width:.0} {height:.0}\" class=\"dag-svg\" xmlns=\"http://www.w3.org/2000/svg\">\
          <defs><marker id=\"arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"7\" markerHeight=\"7\" orient=\"auto-start-reverse\">\
-         <path d=\"M0,0 L10,5 L0,10 z\" fill=\"#888\"/></marker></defs>"
+         <path d=\"M0,0 L10,5 L0,10 z\" fill=\"#888\"/></marker></defs>",
+        width = lay.width,
+        height = lay.height,
     );
     // 边
     for e in &dag.edges {
         if let (Some(&(x1, y1)), Some(&(x2, y2))) = (pos.get(e.from.as_str()), pos.get(e.to.as_str())) {
-            let (sx, sy) = (x1 + bw / 2.0, y1 + bh);
-            let (tx, ty) = (x2 + bw / 2.0, y2);
-            s.push_str(&format!(
-                "<path d=\"M{sx:.0},{sy:.0} C{sx:.0},{:.0} {tx:.0},{:.0} {tx:.0},{ty:.0}\" class=\"edge\" marker-end=\"url(#arrow)\"/>",
-                sy + 32.0,
-                ty - 32.0
-            ));
+            let d = edge_path(x1, y1, x2, y2, bw, bh, kind);
+            s.push_str(&format!("<path d=\"{d}\" class=\"edge\" marker-end=\"url(#arrow)\"/>"));
         }
     }
     // 节点
@@ -340,7 +355,7 @@ fn fnode_shape(c: VarClass, x: f64, y: f64, bw: f64, bh: f64) -> String {
     }
 }
 
-fn forrester_svg(files: &[EquationFile], dag: &Dag) -> String {
+fn forrester_svg(files: &[EquationFile], dag: &Dag, kind: LayoutKind) -> String {
     if dag.nodes.is_empty() {
         return "<p class=\"empty\">（无节点）</p>".to_string();
     }
@@ -368,58 +383,31 @@ fn forrester_svg(files: &[EquationFile], dag: &Dag) -> String {
     }
     edges.retain(|(a, b, _)| idset.contains(a.as_str()) && idset.contains(b.as_str()));
 
-    // 分层：含全部边的最长路径松弛（对 DAG 精确，遇环有界终止）
-    let mut layer: HashMap<&str, usize> = dag.nodes.iter().map(|n| (n.id.as_str(), 0usize)).collect();
-    for _ in 0..dag.nodes.len() {
-        let mut changed = false;
-        for (a, b, _) in &edges {
-            let la = layer[a.as_str()];
-            let lb = layer[b.as_str()];
-            if lb < la + 1 {
-                layer.insert(b.as_str(), la + 1);
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-
-    // 按层定位
-    let (bw, bh, hgap, vgap) = (150.0_f64, 40.0_f64, 26.0_f64, 70.0_f64);
-    let mut by_layer: BTreeMap<usize, Vec<&str>> = BTreeMap::new();
-    for n in &dag.nodes {
-        by_layer.entry(layer[n.id.as_str()]).or_default().push(n.id.as_str());
-    }
-    let mut pos: HashMap<&str, (f64, f64)> = HashMap::new();
-    let mut width = 0.0_f64;
-    for (l, ids) in &by_layer {
-        let y = *l as f64 * (bh + vgap) + 24.0;
-        for (i, id) in ids.iter().enumerate() {
-            let x = i as f64 * (bw + hgap) + 24.0;
-            pos.insert(id, (x, y));
-            width = width.max(x + bw + 24.0);
-        }
-    }
-    let height = by_layer.keys().max().map(|m| (*m as f64 + 1.0) * (bh + vgap) + 24.0).unwrap_or(80.0);
+    // 布局：复用 layout 模块（含速率→存量的积分边、延迟边一起参与排布）。
+    let g = Geom { bw: 150.0, bh: 40.0, hgap: 26.0, vgap: 70.0 };
+    let (bw, bh) = (g.bw, g.bh);
+    let nodes: Vec<&str> = dag.nodes.iter().map(|n| n.id.as_str()).collect();
+    let layout_edges: Vec<(&str, &str)> =
+        edges.iter().map(|(a, b, _)| (a.as_str(), b.as_str())).collect();
+    let lay = compute_layout(&nodes, &layout_edges, kind, g);
+    let pos = &lay.pos;
 
     let mut s = format!(
         "<svg viewBox=\"0 0 {width:.0} {height:.0}\" class=\"dag-svg forr\" xmlns=\"http://www.w3.org/2000/svg\">\
          <defs>\
          <marker id=\"farrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"7\" markerHeight=\"7\" orient=\"auto-start-reverse\"><path d=\"M0,0 L10,5 L0,10 z\" fill=\"#94a3b8\"/></marker>\
          <marker id=\"fmat\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto-start-reverse\"><path d=\"M0,0 L10,5 L0,10 z\" fill=\"#f97316\"/></marker>\
-         </defs>"
+         </defs>",
+        width = lay.width,
+        height = lay.height,
     );
     // 边
     for (a, b, mat) in &edges {
         if let (Some(&(x1, y1)), Some(&(x2, y2))) = (pos.get(a.as_str()), pos.get(b.as_str())) {
-            let (sx, sy) = (x1 + bw / 2.0, y1 + bh);
-            let (tx, ty) = (x2 + bw / 2.0, y2);
+            let d = edge_path(x1, y1, x2, y2, bw, bh, kind);
             let (cls, mk) = if *mat { ("material", "fmat") } else { ("info", "farrow") };
             s.push_str(&format!(
-                "<path d=\"M{sx:.0},{sy:.0} C{sx:.0},{:.0} {tx:.0},{:.0} {tx:.0},{ty:.0}\" class=\"fedge {cls}\" marker-end=\"url(#{mk})\"/>",
-                sy + 34.0,
-                ty - 34.0
+                "<path d=\"{d}\" class=\"fedge {cls}\" marker-end=\"url(#{mk})\"/>"
             ));
         }
     }
@@ -489,9 +477,9 @@ h2 .sub { color:var(--sub); font-weight:400; font-size:13px; margin-left:8px; }
 .dag-svg .node.parameter rect { fill:#ecfdf5; stroke:#a7f3d0; }
 .dag-svg .node.variable rect { fill:#eff6ff; stroke:#bfdbfe; }
 .dag-svg .node.equation rect { fill:#fef3c7; stroke:#fde68a; }
-.dag-svg .node text { text-anchor:middle; font-size:12px; fill:#1f2933; }
+.dag-svg .node text { text-anchor:middle; font-size:14px; fill:#1f2933; }
 /* —— Forrester 库存-流量图 —— */
-.dag-svg.forr .fnode text { text-anchor:middle; font-size:12px; fill:#1f2933; }
+.dag-svg.forr .fnode text { text-anchor:middle; font-size:14px; fill:#1f2933; }
 .dag-svg.forr .fcode { text-anchor:start; font-size:9px; fill:#64748b; font-weight:700; }
 .dag-svg.forr .fsh { stroke-width:1.4; }
 .dag-svg.forr .fsh.state      { fill:#dbeafe; stroke:#3b82f6; stroke-width:2.2; }
@@ -525,8 +513,13 @@ h2 .sub { color:var(--sub); font-weight:400; font-size:13px; margin-left:8px; }
 .empty { color:var(--sub); padding:8px; }
 "#;
 
-/// 生成自包含 HTML 报告。
+/// 生成自包含 HTML 报告（默认分层布局，向后兼容）。
 pub fn generate_report(files: &[EquationFile], dag: &Dag) -> String {
+    generate_report_with(files, dag, LayoutKind::Layered)
+}
+
+/// 生成自包含 HTML 报告，指定结构图布局（Studio `?layout=` / `eqc report --layout` 用）。
+pub fn generate_report_with(files: &[EquationFile], dag: &Dag, layout: LayoutKind) -> String {
     let title = files
         .first()
         .map(|f| {
@@ -543,7 +536,7 @@ pub fn generate_report(files: &[EquationFile], dag: &Dag) -> String {
     // Forrester 库存-流量图（动态结构：存量/速率/驱动/物质流）
     body.push_str("<h2>Forrester 库存-流量图<span class=\"sub\">动态结构：存量·速率·驱动·物质流</span></h2>");
     body.push_str(&forrester_legend());
-    body.push_str(&format!("<div class=\"dag\">{}</div>", forrester_svg(files, dag)));
+    body.push_str(&format!("<div class=\"dag\">{}</div>", forrester_svg(files, dag, layout)));
 
     // 依赖关系图（按角色分色的拓扑 DAG）
     body.push_str("<h2>依赖关系图 (DAG)<span class=\"sub\">按角色分色</span></h2>");
@@ -551,7 +544,7 @@ pub fn generate_report(files: &[EquationFile], dag: &Dag) -> String {
         <span style=\"background:#ecfdf5\">参数</span>\
         <span style=\"background:#eff6ff\">变量</span>\
         <span style=\"background:#fef3c7\">方程</span></div>");
-    body.push_str(&format!("<div class=\"dag\">{}</div>", dag_svg(dag)));
+    body.push_str(&format!("<div class=\"dag\">{}</div>", dag_svg(dag, layout)));
 
     for f in files {
         body.push_str(&format!(

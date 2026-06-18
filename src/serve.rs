@@ -25,7 +25,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::dag::build_dag;
 use crate::parser::{parse_directory, parse_file};
-use crate::report::generate_report;
+use crate::report::{generate_report_with, LayoutKind};
 use crate::schema::EquationFile;
 use crate::sim::{simulate, SimInput, SimOutput};
 
@@ -136,7 +136,7 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
             Ok(files) => ("200 OK", "application/json; charset=utf-8", crate::export::to_json_string(&files)),
             Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
         },
-        "/api/report" => match render_report(&ctx.path) {
+        "/api/report" => match render_report(&ctx.path, parse_layout(query)) {
             Ok(h) => ("200 OK", "text/html; charset=utf-8", h),
             Err(e) => ("200 OK", "text/html; charset=utf-8", error_html(&e)),
         },
@@ -220,10 +220,20 @@ fn load_files(path: &Path) -> Result<Vec<EquationFile>, String> {
     Ok(files)
 }
 
-fn render_report(path: &Path) -> Result<String, String> {
+fn render_report(path: &Path, layout: LayoutKind) -> Result<String, String> {
     let files = load_files(path)?;
     let dag = build_dag(&files).map_err(|e| e.to_string())?;
-    Ok(generate_report(&files, &dag))
+    Ok(generate_report_with(&files, &dag, layout))
+}
+
+/// `?layout=force` → 对应布局（未提供/未知 → 分层）。
+fn parse_layout(query: &str) -> LayoutKind {
+    for kv in query.split('&') {
+        if let Some(v) = kv.strip_prefix("layout=") {
+            return LayoutKind::parse(&url_decode(v));
+        }
+    }
+    LayoutKind::Layered
 }
 
 /// 用预加载的驱动量/参数跑一次仿真（单模型，取第一个模块）。
@@ -316,5 +326,17 @@ mod tests {
     fn test_studio_html_bundled() {
         assert!(STUDIO_HTML.contains("EQC Studio"));
         assert!(STUDIO_HTML.contains("/api/model"));
+        // 布局切换条已打包
+        assert!(STUDIO_HTML.contains("layoutSeg"));
+        assert!(STUDIO_HTML.contains("/api/report?layout="));
+    }
+
+    #[test]
+    fn test_parse_layout() {
+        assert_eq!(parse_layout("layout=force&_=1"), LayoutKind::Force);
+        assert_eq!(parse_layout("layout=forrester"), LayoutKind::Forrester);
+        assert_eq!(parse_layout("layout=layered"), LayoutKind::Layered);
+        assert_eq!(parse_layout(""), LayoutKind::Layered); // 缺省回退
+        assert_eq!(parse_layout("vars=Y"), LayoutKind::Layered);
     }
 }

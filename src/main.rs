@@ -149,6 +149,10 @@ enum Commands {
         /// 输出 HTML 文件
         #[arg(short, long, default_value = "report.html")]
         output: PathBuf,
+
+        /// 结构图布局：layered（分层，默认）, force（力导向）, forrester（学术风，暂回退分层）
+        #[arg(short, long, default_value = "layered")]
+        layout: String,
     },
 
     /// 逐日仿真一个动态模型：按驱动量时间序列做显式 Euler 时间步进，输出轨迹 CSV
@@ -221,7 +225,7 @@ fn main() {
         Commands::GraphL2 { inputs } => run_graph_l2(&inputs),
         Commands::SexprSpec => run_sexpr_spec(),
         Commands::CheckDims { input, strict } => run_check_dims(&input, strict),
-        Commands::Report { input, output } => run_report(&input, &output),
+        Commands::Report { input, output, layout } => run_report(&input, &output, &layout),
         Commands::Simulate { input, drivers, params, steps, output } => {
             run_simulate(&input, &drivers, params.as_ref(), steps, &output)
         }
@@ -289,12 +293,17 @@ fn run_validate(input: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[cfg(feature = "cli")]
-fn run_report(input: &PathBuf, output: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+fn run_report(
+    input: &PathBuf,
+    output: &PathBuf,
+    layout: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let compiler = Compiler::new().load_directory(input)?.validate()?.build_dag()?;
     let dag = compiler.dag().ok_or("DAG 未构建")?;
-    let html = equation_compiler::report::generate_report(compiler.files(), dag);
+    let kind = equation_compiler::report::LayoutKind::parse(layout);
+    let html = equation_compiler::report::generate_report_with(compiler.files(), dag, kind);
     std::fs::write(output, html)?;
-    println!("✅ 报告已生成: {}", output.display());
+    println!("✅ 报告已生成: {}（布局：{}）", output.display(), kind.as_str());
     println!("   用浏览器（Edge/Chrome/Firefox）打开即可查看 DAG 与二维公式。");
     Ok(())
 }

@@ -17,7 +17,13 @@
   .grid { display:grid; grid-template-columns: 1fr 1fr; gap:14px; padding:14px; align-items:start; }
   @media (max-width: 980px){ .grid { grid-template-columns:1fr; } }
   .panel { background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
-  .panel h2 { font-size:14px; margin:0; padding:10px 14px; border-bottom:1px solid var(--line); background:#f8fafc; }
+  .panel h2 { font-size:14px; margin:0; padding:10px 14px; border-bottom:1px solid var(--line); background:#f8fafc;
+    display:flex; align-items:center; gap:8px; }
+  .seg { margin-left:auto; display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
+  .seg button { border:0; background:#fff; color:var(--sub); font-size:12px; padding:3px 11px; cursor:pointer; line-height:1.6; }
+  .seg button + button { border-left:1px solid var(--line); }
+  .seg button.active { background:var(--accent); color:#fff; }
+  .seg button:hover:not(.active) { background:#eef2ff; }
   .panel .body { padding:12px 14px; }
   iframe { width:100%; height:560px; border:0; }
   .chart-wrap { width:100%; overflow-x:auto; }
@@ -40,7 +46,12 @@
 
 <div class="grid">
   <section class="panel">
-    <h2>模型结构（Forrester 图 + 二维公式）</h2>
+    <h2>模型结构（Forrester 图 + 二维公式）
+      <span class="seg" id="layoutSeg" title="切换结构图布局">
+        <button data-layout="layered">分层</button>
+        <button data-layout="force">力导向</button>
+      </span>
+    </h2>
     <iframe id="report" src="/api/report"></iframe>
   </section>
 
@@ -115,6 +126,21 @@ setInterval(async ()=>{
     else if(t!==_ver){ location.reload(); }
   } catch(e){}
 }, 1000);
+
+// 结构图布局切换：分层 / 力导向。选择存 localStorage，自动刷新后保留。
+function applyLayout(kind){
+  try { localStorage.setItem('eqc_layout', kind); } catch(e){}
+  document.querySelectorAll('#layoutSeg button').forEach(b=>{
+    b.classList.toggle('active', b.dataset.layout===kind);
+  });
+  document.getElementById('report').src = '/api/report?layout=' + encodeURIComponent(kind);
+}
+document.querySelectorAll('#layoutSeg button').forEach(b=>{
+  b.addEventListener('click', ()=>applyLayout(b.dataset.layout));
+});
+let _savedLayout = 'layered';
+try { _savedLayout = localStorage.getItem('eqc_layout') || 'layered'; } catch(e){}
+applyLayout(_savedLayout);
 
 loadModel();
 </script>
