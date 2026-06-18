@@ -40,6 +40,36 @@ equations:
 
 表达式用 **`{op, args}` / `{ref: 名}` / `{const: 数}`** 的 map 形式（等价于 S 表达式 `(div (add Tmax Tmin) 2)` 的树）。完整可用示例见 `examples/wofost.eq.yaml`、`examples/photo.eq.yaml`。
 
+### 3.1 动态过程模型（状态量 + 逐日仿真）
+
+WOFOST/Sugiyama 这类**机理模型**是日步长动态系统：有随时间积分的状态量、累积量。EQC 用变量上的元数据表达它们，由 `eqc simulate` 做**显式 Euler 逐日积分**：
+
+- `class: <Forrester 分类>`——`state`(状态量) / `rate`(速率) / `driving`(驱动) / `auxiliary`(辅助) / `parameter` / `semi_state`(半状态) / `boundary`(边界)。可省略，缺省按结构推断。
+- **积分状态量**：`{ class: state, init: <初值>, rate: <速率变量名> }`——仿真器每步 `X[n]=X[n-1]+rate[n]`，状态量**本身不在 `equations:` 里写表达式**。
+- **延迟寄存器（半状态量）**：`{ class: semi_state, init: <初值>, prev: <来源变量名> }`——`X[n]=src[n-1]`，用于差分（如 `ΔX=X−X_prev`）。
+- **内置变量 `DAT`**：第几天（1 起），无需声明即可在方程里引用（物候/开花门控）。
+- 求值为严格模式：除零/NaN/Inf 报错（早失败）。
+
+### 3.2 同期群 cohort（一组同类个体）
+
+果序、叶片这种「很多个同类个体各自成长、再汇总」的结构，用 **cohort** 模板写一次、自动展开成标量（加载期 YAML 宏，引擎不感知）：
+
+```yaml
+cohorts:
+  fruit: { size: 3, index: q }          # q = 1..3
+parameters:
+  anthesis: { cohort: fruit, name_cn: 开花日, values: [40, 80, 120] }   # 每个个体一个值
+variables:
+  TF: { cohort: fruit, class: state, init: 0.0, rate: rateTF }          # 每个个体一个状态量
+equations:
+  - { output: GS, expression: { op: mul, args: [ {const: 0.24},
+      { op: sum_over, over: fruit, body: { ref: DRFG, at: q } } ] } }     # Σ over fruit
+```
+
+语法：`cohort: <家族>`（变量/参数/方程模板）、`{ref: X, at: q}`（取第 q 个）、`{idx: q}`（下标当数字）、`{op: sum_over, over: <家族>, body: …}`（求和，`prod_over` 求积）。展开后是 `TF__1/2/3` 等纯标量。完整示例：草莓 v1（Sugiyama 2025 骨架）在**独立工作目录** `strawberry_model/strawberry_v1.eq.yaml`（与本仓库平级、不随仓库提交，含文献综述与 OA PDF）。
+
+> **模型结构 vs 情景数据分离**：模型文件只写结构与方程；逐日天气走 `--drivers` CSV、按个体常数（如实测开花日）走 `--params` JSON。换一季只换情景数据，不动模型。
+
 ## 4. CLI 命令速查
 
 ```bash
@@ -50,7 +80,8 @@ eqc list <目录>                                          # 列出方程
 eqc convert "(add x (mul y 2))" -o out.eq.yaml           # 单个 S 表达式 -> YAML
 eqc workflow <注解sexpr> -o <目录> --operators           # 注解 sexpr -> workflow/算子
 eqc check-dims <目录> [--strict]                         # 量纲一致性 + 跨模块耦合单位检查
-eqc report <小目录> -o model.html                        # 自包含 HTML 报告（DAG + 二维公式）
+eqc report <小目录> -o model.html                        # 自包含 HTML 报告（Forrester 库存-流量图 + DAG + 二维公式）
+eqc simulate <模型.eq.yaml> --drivers w.csv [--params s.json] -o out.csv  # 逐日仿真动态模型，输出轨迹 CSV
 ```
 
 > `report`/`check-dims` 的"目录"是装 `.eq.yaml` 的文件夹（与 build/validate 同）。`report` 会把目录内所有文件合成一张 DAG，**指向一两个相关模块的小目录**，别指整个 `examples/`（52 模块图会过大）。
@@ -62,11 +93,12 @@ eqc report <小目录> -o model.html                        # 自包含 HTML 报
 | `ast/` | **强类型 AST**：`Expr` 枚举（360+ 算子变体）+ 代码生成 | `Expr`；`to_python/to_rust/to_latex`（各一个穷尽 match）；`from_yaml_value`（map 格式反序列化，已手写 `Deserialize`）；`substitute`/`visitor` |
 | `ops/` | **算子注册表（单一真相源）** | `OperatorSpec{name,arity,eval,rust,python,latex}`；`as_operator(&Expr)->(名,参数)`；52 个标量算子在此定义一次，求值器与 codegen 共用 |
 | `eval/` | **树遍历求值器** | `Expr::eval(&Env)`；`Env`/`EvalMode`（默认严格，非有限即报错）；`eval_special`（gamma/erf/正态等，部分需 `advanced_math`）|
+| `sim/` | **逐日仿真引擎** | `simulate(file,&SimInput)->SimOutput`；显式 Euler 日步进，积分状态量(`rate`)+延迟寄存器(`prev`)，步内拓扑序，内置 `DAT`；环/缺驱动校验 |
 | `units/` | **量纲系统（科学护栏）** | `Dimension`（7 SI 指数）；`Unit{dim,scale,offset}`；`parse_unit`/`convert`；`check_expr`/`check_equation_file`/`check_coupling` |
-| `report/` | **HTML 报告** | `generate_report`：MathML 二维公式（浏览器原生）+ EQC 自生成 SVG DAG，零第三方、离线 |
+| `report/` | **HTML 报告** | `generate_report`：MathML 二维公式 + **Forrester 库存-流量图**（存量矩形/速率阀门/驱动椭圆/物质流粗线 vs 信息流虚线）+ 角色分色 DAG，零第三方、离线 |
 | `sexpr/` | **S 表达式流水线 B** | lexer/parser/converter（sexpr→Expr）；`workflow`（注解 sexpr→ModuleDef）；`operator_gen`（→ AST JSON / SQL）；`to_yaml` |
-| `parser/` | **YAML 方程文件解析** | `parse_file`/`parse_directory`；加载后调用 `reclassify_parameters`（把引用到参数名的 Var 改成 Param）|
-| `schema/` | **数据结构** | `EquationFile`/`Metadata`/`Parameter`/`Variable`/`Equation`/`DataType`；map 用 `IndexMap`（输出可复现）|
+| `parser/` | **YAML 方程文件解析** | `parse_file`/`parse_directory`；加载后调用 `expand_cohorts`（cohort 模板宏展开）+ `reclassify_parameters`（把引用到参数名的 Var 改成 Param）|
+| `schema/` | **数据结构** | `EquationFile`/`Metadata`/`Parameter`/`Variable`/`Equation`/`DataType`/`VarClass`(8 类 Forrester)；`Variable` 含 `class`/`init`/`rate`/`prev`；map 用 `IndexMap`（输出可复现）|
 | `validator/` | **验证器** | `type_checker`（Numeric/Boolean）、`reference_checker`（引用是否定义）、`cycle_detector`（环）|
 | `dag/` | **DAG 构建** | 由 parameters/variables/equations 建节点、由引用建边，petgraph 拓扑排序；`DagNode.metadata` 用 IndexMap |
 | `generators/` | 各格式生成器 | `python`/`rust_operator`/`latex`/`markdown`/`workflow_json` |
@@ -91,4 +123,5 @@ eqc report <小目录> -o model.html                        # 自包含 HTML 报
 ## 8. 路线图（已完成 / 下一步）
 
 已完成：求值器、算子注册表（52 算子）、特殊函数（advanced_math）、量纲检查+单位换算+耦合、`eqc check-dims`、`eqc report` 可视化、生成器确定性、参数命名修复。
-下一步备选：**GP 约束进化层**（核心愿景，需先讨论 fitness 数据/可进化节点/约束）、报告增强、codegen 死分支宏重构、耦合的时间尺度聚合。
+**动态建模 arc（route B，2026-06）**：状态量元数据（`class`/`init`/`rate`/`prev`）、逐日仿真引擎 `src/sim` + `eqc simulate`、cohort 同期群宏展开、Forrester 库存-流量图渲染。首个动态示例 `../strawberry_model/strawberry_v1.eq.yaml`（草莓 Sugiyama 骨架，可跑）。
+下一步备选：**GP 约束进化层**（核心愿景，fitness=跑仿真 vs 实测，需先讨论可进化节点/约束）、codegen 生成积分循环（目前 build 不生成状态量更新）、cohort 在图上分组显示、报告增强、耦合的时间尺度聚合。

@@ -41,13 +41,32 @@
 - 新增 `EquationFile::reclassify_parameters`，在 `parse_file` 加载后把引用到参数名的 `Var` 重分类为 `Param`。现在参数可用**任意有意义的名字**。
 - 新增真实示例 `examples/wofost.eq.yaml`（简化 WOFOST 作物生长模型，11 方程，含命名参数与单位）。
 
+### 动态过程建模 arc（route B）
+由「建草莓机理模型」驱动，让 EQC 能**运行**时间步进模型并画成 Forrester 图。
+
+- **状态量元数据（B1）**：`Variable` 新增 `class`（8 类 Forrester `VarClass`，提到 `schema` 作单一真相源，`sexpr::workflow` 重导出）、`init`、`rate`（积分状态量 `X[n]=X[n-1]+rate[n]`）、`prev`（延迟寄存器 `X[n]=src[n-1]`）。`effective_class()` 自动推断。
+- **逐日仿真引擎（B2）**：`src/sim`——`simulate(file,&SimInput)->SimOutput`，显式 Euler（dt=1 天），步内拓扑序求值，积分/延迟跨步，内置 `DAT`（天数），环/缺驱动校验，严格求值。CLI `eqc simulate --drivers w.csv [--params s.json] -o out.csv`。
+- **同期群 cohort 宏展开**：`src/parser/cohort_expand.rs`——`cohorts:`/`cohort:`/`{ref:X,at:q}`/`{idx:q}`/`sum_over`，加载期对 `serde_yaml::Value` 展开成纯标量，引擎/AST/标量管线零改动。
+- **Forrester 库存-流量图（B3）**：`report` 新增视图——存量(矩形)/速率(六边阀门)/驱动(椭圆)/参数(胶囊)/半状态(虚框)/边界(梯形)，物质流(速率→存量,橙粗线) vs 信息流(灰虚线)；复用 DAG 节点并补积分边。
+- **验证器适配**：`DAT` 列为保留内置变量；跨步状态量（无方程）豁免「输出须有方程」检查。
+- **首个动态模型**：`../strawberry_model/strawberry_v1.eq.yaml`——Sugiyama 2025 温室草莓源-库骨架（18 方程，cohort 果序×3/叶×12），合成天气下 `eqc simulate` 跑通一季，产量曲线单调、各果序按开花日激活。结构忠实、量级为合成演示（未对照论文验证）。
+
 ## 工程基线
-- 测试：100+ 个，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
+- 测试：135 lib + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
 - 远程：github.com/SongruiL/Eqc_test，SSH 推送。
 - 文档：见 `docs/USAGE.md`（架构与模块地图）、`docs/spec-*.md`（设计规格）。
 
-## 下一步（未做）
-- **GP 约束进化层**：核心愿景，动手前需讨论 fitness 数据来源、可进化 vs 冻结节点、约束方式。
-- 报告增强（按模块分图、点节点高亮、显示单位/出处）。
-- codegen 三个穷尽 match 里已迁移算子的不可达死分支——用宏重构彻底删除（同时保留穷尽性检查）。
-- 耦合的"时间尺度聚合"（逐时 vs 日均，非单纯单位换算）。
+## 下一步（未做）/ 当前不足
+
+**EQC 工具层**
+- **前端/可视化平台**：目前看模型要手动 `eqc report` 生成 HTML 再用浏览器打开，不够直观、不能交互。计划做一个能加载 S 表达式/YAML 模型、直接可视化（Forrester 图 + 公式 + 跑仿真画轨迹）的前端（app/网站），讨论中。
+- **codegen 不生成积分循环**：`eqc build` 仍按静态网络生成代码，状态量（`state`）没有逐步更新代码——动态模型目前只能用 `eqc simulate`（树遍历）跑，不能导出独立可运行的 Python/Rust 仿真器。
+- cohort 在图上显示为展开的标量（`DF__1/2/3`），未按家族分组显示。
+- **GP 约束进化层**：核心愿景，但需要**完善的仿真模型 + 田间反馈数据**才有意义（fitness=跑仿真 vs 实测），属较远目标；动手前讨论可进化 vs 冻结节点、约束方式。
+- 报告增强（按模块分图、点节点高亮、显示单位/出处）；codegen 死分支宏重构；耦合的时间尺度聚合（逐时 vs 日均）。
+
+**草莓模型层**（详见 `../strawberry_model/strawberry_v1.eq.yaml` 顶部「模型短板」注释）
+- 物候/发育周期、LAI 是**外部输入而非计算**（下一步接 BBCH 物候 + 叶面积子模型）。
+- **无采摘/移除模拟**（果实留株、累积果重≡产量；缺采后库重释放与再分配反馈）。
+- LUE 常数（不响应 CO₂/光强/发育）；缺基点温度；单品种；果实品质/糖度无机理；连续开花未按离散花序批次建模。
+- 当前合成天气演示，量级未对照论文验证（需真实 'Benihoppe' 数据）。

@@ -10,4 +10,4 @@ mod variable;
 pub use equation::Equation;
 pub use equation_file::{EquationFile, Metadata};
 pub use parameter::Parameter;
-pub use variable::{DataType, Variable, VariableType};
+pub use variable::{DataType, VarClass, Variable, VariableType};

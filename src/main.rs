@@ -150,6 +150,28 @@ enum Commands {
         #[arg(short, long, default_value = "report.html")]
         output: PathBuf,
     },
+
+    /// 逐日仿真一个动态模型：按驱动量时间序列做显式 Euler 时间步进，输出轨迹 CSV
+    Simulate {
+        /// 模型文件（单个 .eq.yaml）
+        input: PathBuf,
+
+        /// 驱动量 CSV（首行为变量名，每行一天；列名须匹配模型里的驱动量）
+        #[arg(short, long)]
+        drivers: PathBuf,
+
+        /// 参数覆盖 JSON（如各 cohort 开花日 {"anthesis__1": 55, ...}），可选
+        #[arg(short, long)]
+        params: Option<PathBuf>,
+
+        /// 步数（默认取驱动量 CSV 的行数）
+        #[arg(short, long)]
+        steps: Option<usize>,
+
+        /// 输出轨迹 CSV
+        #[arg(short, long, default_value = "sim_output.csv")]
+        output: PathBuf,
+    },
 }
 
 #[cfg(feature = "cli")]
@@ -172,6 +194,9 @@ fn main() {
         Commands::SexprSpec => run_sexpr_spec(),
         Commands::CheckDims { input, strict } => run_check_dims(&input, strict),
         Commands::Report { input, output } => run_report(&input, &output),
+        Commands::Simulate { input, drivers, params, steps, output } => {
+            run_simulate(&input, &drivers, params.as_ref(), steps, &output)
+        }
     };
 
     if let Err(e) = result {
@@ -240,6 +265,109 @@ fn run_report(input: &PathBuf, output: &PathBuf) -> Result<(), Box<dyn std::erro
     println!("✅ 报告已生成: {}", output.display());
     println!("   用浏览器（Edge/Chrome/Firefox）打开即可查看 DAG 与二维公式。");
     Ok(())
+}
+
+#[cfg(feature = "cli")]
+fn run_simulate(
+    input: &PathBuf,
+    drivers: &PathBuf,
+    params: Option<&PathBuf>,
+    steps: Option<usize>,
+    output: &PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use equation_compiler::{parse_file, simulate, SimInput};
+
+    println!("🌱 仿真模型: {}", input.display());
+    let file = parse_file(input)?;
+
+    // 读驱动量 CSV
+    let (rows, driver_map) = read_drivers_csv(drivers)?;
+    let steps = steps.unwrap_or(rows);
+
+    let mut sim_in = SimInput::new(steps);
+    sim_in.drivers = driver_map;
+
+    // 读参数覆盖 JSON（可选）
+    if let Some(pjson) = params {
+        sim_in.param_overrides = read_params_json(pjson)?;
+    }
+
+    let out = simulate(&file, &sim_in).map_err(|e| format!("仿真失败: {e}"))?;
+
+    // 写轨迹 CSV（首列 DAT）
+    let mut csv = String::from("DAT");
+    for name in out.trajectories.keys() {
+        csv.push(',');
+        csv.push_str(name);
+    }
+    csv.push('\n');
+    for n in 0..out.steps {
+        csv.push_str(&(n + 1).to_string());
+        for series in out.trajectories.values() {
+            csv.push(',');
+            csv.push_str(&format!("{}", series[n]));
+        }
+        csv.push('\n');
+    }
+    std::fs::write(output, csv)?;
+
+    println!("✅ 仿真完成：{} 步，轨迹已写入 {}", out.steps, output.display());
+    // 打印输出变量末值
+    let outputs = file.output_variables();
+    if !outputs.is_empty() {
+        println!("   输出变量末值（第 {} 天）：", out.steps);
+        for (name, _) in outputs {
+            if let Some(v) = out.final_value(name) {
+                println!("     {name} = {v}");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 读驱动量 CSV：首行变量名，每行一天。返回（行数, 变量名 -> 列向量）。
+#[cfg(feature = "cli")]
+fn read_drivers_csv(
+    path: &PathBuf,
+) -> Result<(usize, std::collections::HashMap<String, Vec<f64>>), Box<dyn std::error::Error>> {
+    let content = std::fs::read_to_string(path)?;
+    let mut lines = content.lines().filter(|l| !l.trim().is_empty());
+    let header = lines.next().ok_or("驱动量 CSV 为空")?;
+    let names: Vec<String> = header.split(',').map(|s| s.trim().to_string()).collect();
+    let mut cols: Vec<Vec<f64>> = vec![Vec::new(); names.len()];
+    let mut rows = 0usize;
+    for line in lines {
+        let fields: Vec<&str> = line.split(',').collect();
+        if fields.len() != names.len() {
+            return Err(format!("驱动量 CSV 第 {} 行列数（{}）与表头（{}）不符", rows + 2, fields.len(), names.len()).into());
+        }
+        for (i, f) in fields.iter().enumerate() {
+            let v: f64 = f
+                .trim()
+                .parse()
+                .map_err(|_| format!("驱动量 CSV 第 {} 行无法解析数值: '{}'", rows + 2, f.trim()))?;
+            cols[i].push(v);
+        }
+        rows += 1;
+    }
+    let map = names.into_iter().zip(cols).collect();
+    Ok((rows, map))
+}
+
+/// 读参数覆盖 JSON：{"name": value, ...}。
+#[cfg(feature = "cli")]
+fn read_params_json(
+    path: &PathBuf,
+) -> Result<std::collections::HashMap<String, f64>, Box<dyn std::error::Error>> {
+    let content = std::fs::read_to_string(path)?;
+    let v: serde_json::Value = serde_json::from_str(&content)?;
+    let obj = v.as_object().ok_or("参数 JSON 应为对象 {name: value}")?;
+    let mut out = std::collections::HashMap::new();
+    for (k, val) in obj {
+        let f = val.as_f64().ok_or_else(|| format!("参数 {k} 不是数值"))?;
+        out.insert(k.clone(), f);
+    }
+    Ok(out)
 }
 
 #[cfg(feature = "cli")]

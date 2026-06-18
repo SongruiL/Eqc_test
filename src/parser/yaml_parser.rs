@@ -17,8 +17,15 @@ use crate::schema::EquationFile;
 pub fn parse_file(path: &Path) -> CompileResult<EquationFile> {
     let content = fs::read_to_string(path).map_err(|e| CompileError::io(path, e))?;
 
-    let mut file: EquationFile =
+    // 先把 YAML 读成 Value，做 cohort（同期群）展开——把按下标的模板宏展开成纯标量，
+    // 之后再反序列化成 EquationFile。无 `cohorts:` 段的模型原样通过，行为不变。
+    let raw: serde_yaml::Value =
         serde_yaml::from_str(&content).map_err(|e| CompileError::yaml_parse(path, e.to_string()))?;
+    let expanded = super::expand_cohorts(raw)
+        .map_err(|e| CompileError::yaml_parse(path, format!("cohort 展开失败: {e}")))?;
+
+    let mut file: EquationFile =
+        serde_yaml::from_value(expanded).map_err(|e| CompileError::yaml_parse(path, e.to_string()))?;
 
     // 加载后把引用到参数名的 Var 重分类为 Param（让参数可用任意有意义的名字）。
     file.reclassify_parameters();
@@ -124,5 +131,71 @@ equations:
         assert_eq!(file.meta.id, "TEST");
         assert_eq!(file.parameters.len(), 1);
         assert_eq!(file.equations.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_dynamic_variables() {
+        use crate::schema::VarClass;
+
+        let temp_dir = TempDir::new().unwrap();
+        // 一个最小动态模型片段：积分状态量 TDM、延迟寄存器 RFG_prev、驱动 T。
+        let yaml_content = r#"
+meta:
+  id: "DYN"
+  model: "DynModel"
+  name_cn: "动态变量测试"
+
+variables:
+  T:
+    type: input
+    class: driving
+    description: "日均温"
+  DDM:
+    type: intermediate
+    class: rate
+    description: "日干物质生产"
+  TDM:
+    type: output
+    class: state
+    init: 19.9
+    rate: DDM
+    description: "累积干物质"
+  RFG:
+    type: intermediate
+    description: "果实相对生长"
+  RFG_prev:
+    type: intermediate
+    init: 0.000217
+    prev: RFG
+    description: "上一步 RFG"
+
+equations:
+  - id: "DYN-01"
+    name: "日干物质生产"
+    output: "DDM"
+    expression: { const: 5.0 }
+"#;
+
+        create_test_file(temp_dir.path(), "dyn.eq.yaml", yaml_content);
+        let file = parse_file(&temp_dir.path().join("dyn.eq.yaml")).unwrap();
+
+        let tdm = &file.variables["TDM"];
+        assert_eq!(tdm.class, Some(VarClass::State));
+        assert_eq!(tdm.init, Some(19.9));
+        assert_eq!(tdm.rate.as_deref(), Some("DDM"));
+        assert!(tdm.is_integrator() && tdm.is_dynamic());
+
+        let rfg_prev = &file.variables["RFG_prev"];
+        assert_eq!(rfg_prev.prev.as_deref(), Some("RFG"));
+        assert!(rfg_prev.is_delay());
+        // 未显式声明 class，应推断为 SemiState
+        assert_eq!(rfg_prev.effective_class(), VarClass::SemiState);
+
+        // 驱动变量与显式 class
+        assert_eq!(file.variables["T"].class, Some(VarClass::Driving));
+        assert_eq!(file.variables["DDM"].class, Some(VarClass::Rate));
+        // 普通变量字段缺省为 None，向后兼容
+        assert_eq!(file.variables["RFG"].class, None);
+        assert!(!file.variables["RFG"].is_dynamic());
     }
 }

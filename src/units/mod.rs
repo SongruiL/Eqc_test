@@ -836,6 +836,10 @@ mod tests {
                 unit: Some(unit.to_string()),
                 description: None,
                 source: None,
+                class: None,
+                init: None,
+                rate: None,
+                prev: None,
             }
         }
         fn eq(id: &str, output: &str, expr: &str) -> Equation {
@@ -940,6 +944,10 @@ mod tests {
                 unit: Some(unit.to_string()),
                 description: None,
                 source: None,
+                class: None,
+                init: None,
+                rate: None,
+                prev: None,
             }
         }
         fn invar(unit: &str, src: &str) -> Variable {
@@ -949,6 +957,10 @@ mod tests {
                 unit: Some(unit.to_string()),
                 description: None,
                 source: Some(src.to_string()),
+                class: None,
+                init: None,
+                rate: None,
+                prev: None,
             }
         }
         fn meta(id: &str) -> Metadata {

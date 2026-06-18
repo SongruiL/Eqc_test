@@ -379,27 +379,9 @@ impl ModuleDef {
     }
 }
 
-/// Forrester 系统动力学变量分类（8 类）
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VarClass {
-    /// S - 状态变量：时间积分量，有记忆
-    State,
-    /// V - 速率变量：直接控制状态变量变化的速率
-    Rate,
-    /// A - 辅助变量：中间计算量，无记忆
-    Auxiliary,
-    /// R - 驱动变量：外部环境时间序列输入
-    Driving,
-    /// D - 模型参数：场景内不变的静态配置
-    Parameter,
-    /// C - 控制变量：人工管理决策输入
-    Control,
-    /// M - 半状态变量：有部分记忆但非严格积分
-    SemiState,
-    /// B - 系统边界：物质进出系统的源/汇
-    Boundary,
-}
+// Forrester 系统动力学变量分类（8 类）的单一真相源现在位于 `schema::VarClass`，
+// 这里重导出，保持管线 B 既有代码不变。
+pub use crate::schema::VarClass;
 
 /// Forrester 系统动力学流（边）分类（3 类）
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

@@ -5,8 +5,8 @@
 
 use crate::ast::Expr;
 use crate::dag::Dag;
-use crate::schema::EquationFile;
-use std::collections::{BTreeMap, HashMap};
+use crate::schema::{EquationFile, VarClass};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// XML/HTML 文本转义。
 fn xml(s: &str) -> String {
@@ -252,6 +252,219 @@ fn dag_svg(dag: &Dag) -> String {
 }
 
 // ============================================
+// Forrester 库存-流量图 -> SVG
+// ============================================
+//
+// 把变量按 Forrester 系统动力学分类渲染成不同图元：存量(矩形)、速率(六边阀门)、
+// 驱动(椭圆)、参数(胶囊)、辅助(圆角矩形)、半状态(虚框矩形)、边界(梯形云)。
+// 流分两类：**物质流**（速率→存量的积分管道，橙色粗线）与**信息流**（其余引用，灰色虚线）。
+// 复用 DAG 的节点与数据流边，另补上 schema 里 rate/prev 蕴含的积分/延迟边。
+
+/// 由节点 id（`MODULE.name`）查其 Forrester 分类。
+fn class_of(files: &[EquationFile], node_id: &str) -> VarClass {
+    let (module, name) = node_id.split_once('.').unwrap_or(("", node_id));
+    for f in files {
+        if f.meta.id == module {
+            if f.parameters.contains_key(name) {
+                return VarClass::Parameter;
+            }
+            if let Some(v) = f.variables.get(name) {
+                return v.effective_class();
+            }
+        }
+    }
+    VarClass::Auxiliary
+}
+
+/// 分类 -> CSS 类名。
+fn fclass_css(c: VarClass) -> &'static str {
+    match c {
+        VarClass::State => "state",
+        VarClass::Rate => "rate",
+        VarClass::Auxiliary => "auxiliary",
+        VarClass::Driving => "driving",
+        VarClass::Parameter => "parameter",
+        VarClass::Control => "control",
+        VarClass::SemiState => "semistate",
+        VarClass::Boundary => "boundary",
+    }
+}
+
+/// 按分类生成对应 SVG 图元（含 `fsh <css>` 类，便于 CSS 上色/描边）。
+fn fnode_shape(c: VarClass, x: f64, y: f64, bw: f64, bh: f64) -> String {
+    let css = fclass_css(c);
+    let (cx, cy) = (x + bw / 2.0, y + bh / 2.0);
+    match c {
+        // 存量 / 半状态：直角矩形（半状态的虚框由 CSS 控制）
+        VarClass::State | VarClass::SemiState => format!(
+            "<rect class=\"fsh {css}\" x=\"{x:.0}\" y=\"{y:.0}\" width=\"{bw:.0}\" height=\"{bh:.0}\"/>"
+        ),
+        // 辅助 / 控制：圆角矩形
+        VarClass::Auxiliary | VarClass::Control => format!(
+            "<rect class=\"fsh {css}\" x=\"{x:.0}\" y=\"{y:.0}\" width=\"{bw:.0}\" height=\"{bh:.0}\" rx=\"9\"/>"
+        ),
+        // 参数：胶囊
+        VarClass::Parameter => format!(
+            "<rect class=\"fsh {css}\" x=\"{x:.0}\" y=\"{y:.0}\" width=\"{bw:.0}\" height=\"{bh:.0}\" rx=\"{:.0}\"/>",
+            bh / 2.0
+        ),
+        // 驱动：椭圆
+        VarClass::Driving => format!(
+            "<ellipse class=\"fsh {css}\" cx=\"{cx:.0}\" cy=\"{cy:.0}\" rx=\"{:.0}\" ry=\"{:.0}\"/>",
+            bw / 2.0,
+            bh / 2.0
+        ),
+        // 速率：六边形阀门
+        VarClass::Rate => format!(
+            "<polygon class=\"fsh {css}\" points=\"{:.0},{:.0} {:.0},{:.0} {:.0},{:.0} {:.0},{:.0} {:.0},{:.0} {:.0},{:.0}\"/>",
+            x + 12.0, y,
+            x + bw - 12.0, y,
+            x + bw, cy,
+            x + bw - 12.0, y + bh,
+            x + 12.0, y + bh,
+            x, cy
+        ),
+        // 边界：梯形（源/汇）
+        VarClass::Boundary => format!(
+            "<polygon class=\"fsh {css}\" points=\"{:.0},{:.0} {:.0},{:.0} {:.0},{:.0} {:.0},{:.0}\"/>",
+            x + 14.0, y,
+            x + bw - 14.0, y,
+            x + bw, y + bh,
+            x, y + bh
+        ),
+    }
+}
+
+fn forrester_svg(files: &[EquationFile], dag: &Dag) -> String {
+    if dag.nodes.is_empty() {
+        return "<p class=\"empty\">（无节点）</p>".to_string();
+    }
+    let idset: HashSet<&str> = dag.nodes.iter().map(|n| n.id.as_str()).collect();
+
+    // 节点分类
+    let class: HashMap<&str, VarClass> =
+        dag.nodes.iter().map(|n| (n.id.as_str(), class_of(files, &n.id))).collect();
+
+    // 边：DAG 的数据流边（信息流）+ schema 蕴含的积分边（速率→存量，物质流）+ 延迟边（虚线信息流）
+    let mut edges: Vec<(String, String, bool)> = Vec::new(); // (from, to, is_material)
+    for e in &dag.edges {
+        edges.push((e.from.clone(), e.to.clone(), false));
+    }
+    for f in files {
+        for (name, v) in &f.variables {
+            let to = format!("{}.{}", f.meta.id, name);
+            if let Some(r) = &v.rate {
+                edges.push((format!("{}.{}", f.meta.id, r), to.clone(), true)); // 积分=物质流
+            }
+            if let Some(p) = &v.prev {
+                edges.push((format!("{}.{}", f.meta.id, p), to.clone(), false)); // 延迟=信息流
+            }
+        }
+    }
+    edges.retain(|(a, b, _)| idset.contains(a.as_str()) && idset.contains(b.as_str()));
+
+    // 分层：含全部边的最长路径松弛（对 DAG 精确，遇环有界终止）
+    let mut layer: HashMap<&str, usize> = dag.nodes.iter().map(|n| (n.id.as_str(), 0usize)).collect();
+    for _ in 0..dag.nodes.len() {
+        let mut changed = false;
+        for (a, b, _) in &edges {
+            let la = layer[a.as_str()];
+            let lb = layer[b.as_str()];
+            if lb < la + 1 {
+                layer.insert(b.as_str(), la + 1);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    // 按层定位
+    let (bw, bh, hgap, vgap) = (150.0_f64, 40.0_f64, 26.0_f64, 70.0_f64);
+    let mut by_layer: BTreeMap<usize, Vec<&str>> = BTreeMap::new();
+    for n in &dag.nodes {
+        by_layer.entry(layer[n.id.as_str()]).or_default().push(n.id.as_str());
+    }
+    let mut pos: HashMap<&str, (f64, f64)> = HashMap::new();
+    let mut width = 0.0_f64;
+    for (l, ids) in &by_layer {
+        let y = *l as f64 * (bh + vgap) + 24.0;
+        for (i, id) in ids.iter().enumerate() {
+            let x = i as f64 * (bw + hgap) + 24.0;
+            pos.insert(id, (x, y));
+            width = width.max(x + bw + 24.0);
+        }
+    }
+    let height = by_layer.keys().max().map(|m| (*m as f64 + 1.0) * (bh + vgap) + 24.0).unwrap_or(80.0);
+
+    let mut s = format!(
+        "<svg viewBox=\"0 0 {width:.0} {height:.0}\" class=\"dag-svg forr\" xmlns=\"http://www.w3.org/2000/svg\">\
+         <defs>\
+         <marker id=\"farrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"7\" markerHeight=\"7\" orient=\"auto-start-reverse\"><path d=\"M0,0 L10,5 L0,10 z\" fill=\"#94a3b8\"/></marker>\
+         <marker id=\"fmat\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto-start-reverse\"><path d=\"M0,0 L10,5 L0,10 z\" fill=\"#f97316\"/></marker>\
+         </defs>"
+    );
+    // 边
+    for (a, b, mat) in &edges {
+        if let (Some(&(x1, y1)), Some(&(x2, y2))) = (pos.get(a.as_str()), pos.get(b.as_str())) {
+            let (sx, sy) = (x1 + bw / 2.0, y1 + bh);
+            let (tx, ty) = (x2 + bw / 2.0, y2);
+            let (cls, mk) = if *mat { ("material", "fmat") } else { ("info", "farrow") };
+            s.push_str(&format!(
+                "<path d=\"M{sx:.0},{sy:.0} C{sx:.0},{:.0} {tx:.0},{:.0} {tx:.0},{ty:.0}\" class=\"fedge {cls}\" marker-end=\"url(#{mk})\"/>",
+                sy + 34.0,
+                ty - 34.0
+            ));
+        }
+    }
+    // 节点
+    for n in &dag.nodes {
+        let (x, y) = pos[n.id.as_str()];
+        let c = class[n.id.as_str()];
+        let short = n.id.rsplit('.').next().unwrap_or(&n.id);
+        let label = if short.chars().count() > 16 {
+            format!("{}…", short.chars().take(15).collect::<String>())
+        } else {
+            short.to_string()
+        };
+        s.push_str(&format!("<g class=\"fnode {}\">", fclass_css(c)));
+        s.push_str(&fnode_shape(c, x, y, bw, bh));
+        // 分类代号角标
+        s.push_str(&format!(
+            "<text class=\"fcode\" x=\"{:.0}\" y=\"{:.0}\">{}</text>",
+            x + 10.0,
+            y + 13.0,
+            c.code()
+        ));
+        // 标签
+        s.push_str(&format!(
+            "<text x=\"{:.0}\" y=\"{:.0}\">{}</text></g>",
+            x + bw / 2.0,
+            y + bh / 2.0 + 5.0,
+            xml(&label)
+        ));
+    }
+    s.push_str("</svg>");
+    s
+}
+
+/// Forrester 图例。
+fn forrester_legend() -> String {
+    "<div class=\"legend forr-legend\">\
+     <span class=\"l state\">▭ 存量 S</span>\
+     <span class=\"l rate\">⬡ 速率 V</span>\
+     <span class=\"l driving\">⬭ 驱动 R</span>\
+     <span class=\"l auxiliary\">▢ 辅助 A</span>\
+     <span class=\"l parameter\">▢ 参数 D</span>\
+     <span class=\"l semistate\">▭ 半状态 M</span>\
+     <span class=\"l boundary\">▱ 边界 B</span>\
+     <span class=\"l mat\">— 物质流</span>\
+     <span class=\"l inf\">┈ 信息流</span></div>"
+        .to_string()
+}
+
+// ============================================
 // HTML 报告
 // ============================================
 
@@ -272,6 +485,27 @@ h2 .sub { color:var(--sub); font-weight:400; font-size:13px; margin-left:8px; }
 .dag-svg .node.variable rect { fill:#eff6ff; stroke:#bfdbfe; }
 .dag-svg .node.equation rect { fill:#fef3c7; stroke:#fde68a; }
 .dag-svg .node text { text-anchor:middle; font-size:12px; fill:#1f2933; }
+/* —— Forrester 库存-流量图 —— */
+.dag-svg.forr .fnode text { text-anchor:middle; font-size:12px; fill:#1f2933; }
+.dag-svg.forr .fcode { text-anchor:start; font-size:9px; fill:#64748b; font-weight:700; }
+.dag-svg.forr .fsh { stroke-width:1.4; }
+.dag-svg.forr .fsh.state      { fill:#dbeafe; stroke:#3b82f6; stroke-width:2.2; }
+.dag-svg.forr .fsh.semistate  { fill:#dbeafe; stroke:#3b82f6; stroke-width:1.6; stroke-dasharray:5 3; }
+.dag-svg.forr .fsh.rate       { fill:#ffedd5; stroke:#f97316; stroke-width:1.8; }
+.dag-svg.forr .fsh.driving    { fill:#dcfce7; stroke:#22c55e; }
+.dag-svg.forr .fsh.parameter  { fill:#f3f4f6; stroke:#9ca3af; }
+.dag-svg.forr .fsh.auxiliary  { fill:#f8fafc; stroke:#cbd5e1; }
+.dag-svg.forr .fsh.control    { fill:#fae8ff; stroke:#d946ef; }
+.dag-svg.forr .fsh.boundary   { fill:#ffffff; stroke:#94a3b8; stroke-dasharray:4 3; }
+.dag-svg.forr .fedge { fill:none; }
+.dag-svg.forr .fedge.material { stroke:#f97316; stroke-width:3; }
+.dag-svg.forr .fedge.info     { stroke:#94a3b8; stroke-width:1.2; stroke-dasharray:4 3; }
+.forr-legend .l { border:1px solid var(--line); }
+.forr-legend .l.state { background:#dbeafe; } .forr-legend .l.rate { background:#ffedd5; }
+.forr-legend .l.driving { background:#dcfce7; } .forr-legend .l.auxiliary { background:#f8fafc; }
+.forr-legend .l.parameter { background:#f3f4f6; } .forr-legend .l.semistate { background:#dbeafe; border-style:dashed; }
+.forr-legend .l.boundary { background:#fff; border-style:dashed; }
+.forr-legend .l.mat { color:#f97316; font-weight:700; } .forr-legend .l.inf { color:#64748b; }
 .eq { background:var(--card); border:1px solid var(--line); border-radius:10px; margin:10px 28px; padding:14px 18px; }
 .eqhead { font-weight:600; font-size:14px; }
 .eqhead .eqid { color:var(--sub); font-weight:400; font-size:12px; margin-left:8px; }
@@ -296,7 +530,14 @@ pub fn generate_report(files: &[EquationFile], dag: &Dag) -> String {
         .unwrap_or_else(|| "EQC 模型".to_string());
 
     let mut body = String::from("<div class=\"wrap\">");
-    body.push_str("<h2>依赖关系图 (DAG)</h2>");
+
+    // Forrester 库存-流量图（动态结构：存量/速率/驱动/物质流）
+    body.push_str("<h2>Forrester 库存-流量图<span class=\"sub\">动态结构：存量·速率·驱动·物质流</span></h2>");
+    body.push_str(&forrester_legend());
+    body.push_str(&format!("<div class=\"dag\">{}</div>", forrester_svg(files, dag)));
+
+    // 依赖关系图（按角色分色的拓扑 DAG）
+    body.push_str("<h2>依赖关系图 (DAG)<span class=\"sub\">按角色分色</span></h2>");
     body.push_str("<div class=\"legend\">\
         <span style=\"background:#ecfdf5\">参数</span>\
         <span style=\"background:#eff6ff\">变量</span>\
@@ -371,6 +612,10 @@ mod tests {
             unit: Some(u.to_string()),
             description: None,
             source: None,
+            class: None,
+            init: None,
+            rate: None,
+            prev: None,
         };
         variables.insert("y".to_string(), var(VariableType::Output, "kPa"));
         variables.insert("x".to_string(), var(VariableType::Input, "degC"));
@@ -405,7 +650,48 @@ mod tests {
         assert!(html.contains("<math"), "应含 MathML 公式");
         assert!(html.contains("<svg"), "应含 SVG DAG");
         assert!(html.contains("演示模块"), "应含中文模块名");
+        // Forrester 视图：x 为驱动(driving)、y 为输出辅助(auxiliary)
+        assert!(html.contains("Forrester"), "应含 Forrester 图标题");
+        assert!(html.contains("class=\"dag-svg forr\""), "应含 Forrester SVG");
+        assert!(html.contains("fsh driving"), "输入 x 应分类为驱动");
         // 完全离线、零第三方 JS
         assert!(!html.contains("<script"), "报告不应含任何 JS");
+    }
+
+    #[test]
+    fn test_forrester_classes_and_material_flow() {
+        use crate::schema::{DataType, Equation, EquationFile, Metadata, Variable, VariableType};
+
+        // 极简动态模型：驱动 T、速率 R、积分状态 X（X.rate=R）
+        let mk = |class: Option<VarClass>, t: VariableType, rate: Option<&str>, init: Option<f64>| Variable {
+            var_type: t,
+            dtype: DataType::Float,
+            unit: None,
+            description: None,
+            source: None,
+            class,
+            init,
+            rate: rate.map(|s| s.to_string()),
+            prev: None,
+        };
+        let mut variables = indexmap::IndexMap::new();
+        variables.insert("T".into(), mk(Some(VarClass::Driving), VariableType::Input, None, None));
+        variables.insert("R".into(), mk(Some(VarClass::Rate), VariableType::Intermediate, None, None));
+        variables.insert("X".into(), mk(Some(VarClass::State), VariableType::Output, Some("R"), Some(0.0)));
+
+        let file = EquationFile {
+            meta: Metadata { id: "M".into(), model: "M".into(), name_cn: "动态".into(), name_en: None, version: "1.0".into(), description: None, reference: None, source_files: vec![] },
+            parameters: Default::default(),
+            variables,
+            equations: vec![Equation { id: "E".into(), name: "速率".into(), output: "R".into(), expression: Expr::mul(Expr::var("T"), Expr::Const(2.0)), formula_display: None, reference: None }],
+        };
+        let files = vec![file];
+        let dag = crate::dag::build_dag(&files).unwrap();
+        let html = generate_report(&files, &dag);
+
+        assert!(html.contains("fsh state"), "X 应渲染为存量");
+        assert!(html.contains("fsh rate"), "R 应渲染为速率阀门(polygon)");
+        assert!(html.contains("fedge material"), "速率→存量 应为物质流");
+        assert!(html.contains("<polygon"), "速率阀门用 polygon");
     }
 }

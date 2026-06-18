@@ -7,6 +7,14 @@ use std::collections::{HashMap, HashSet};
 use crate::error::ValidationError;
 use crate::schema::{EquationFile, VariableType};
 
+/// 仿真器注入的保留内置变量（无需在模型中声明即可引用）。
+/// 目前仅 `DAT`（days after transplanting/start，从 1 起 = 当前天数，供物候/开花门控）。
+const RESERVED_VARS: &[&str] = &["DAT"];
+
+fn is_reserved_var(name: &str) -> bool {
+    RESERVED_VARS.contains(&name)
+}
+
 /// 检查单个文件的引用完整性
 pub fn check_references(file: &EquationFile) -> Vec<ValidationError> {
     let mut errors = Vec::new();
@@ -23,9 +31,10 @@ pub fn check_references(file: &EquationFile) -> Vec<ValidationError> {
         // 检查变量引用（使用强类型 AST 的 get_variable_refs）
         let var_refs = equation.expression.get_variable_refs();
         for var_ref in var_refs {
-            // 变量引用应在 variables 中定义，或是其他方程的输出
+            // 变量引用应在 variables 中定义，或是其他方程的输出，或是保留内置变量
             if !defined_vars.contains(var_ref.as_str())
                 && !equation_outputs.contains(var_ref.as_str())
+                && !is_reserved_var(var_ref.as_str())
             {
                 errors.push(ValidationError::UndefinedReference {
                     kind: "变量".to_string(),
@@ -48,9 +57,11 @@ pub fn check_references(file: &EquationFile) -> Vec<ValidationError> {
         }
     }
 
-    // 检查 output 类型变量是否有对应方程
+    // 检查 output 类型变量是否有对应方程。
+    // 跨步变量（积分状态量 / 延迟寄存器）的值由仿真器按 init+rate/prev 维护，
+    // 本就不在 equations: 里写表达式，故豁免。
     for (var_name, var) in &file.variables {
-        if var.var_type == VariableType::Output {
+        if var.var_type == VariableType::Output && !var.is_dynamic() {
             let has_equation = file.equations.iter().any(|e| &e.output == var_name);
             if !has_equation {
                 errors.push(ValidationError::MissingOutputEquation {
@@ -190,6 +201,10 @@ mod tests {
                 unit: None,
                 description: None,
                 source: None,
+                class: None,
+                init: None,
+                rate: None,
+                prev: None,
             },
         );
 
@@ -294,6 +309,42 @@ mod tests {
 
         let errors = check_references(&file);
         assert!(errors.is_empty(), "引用其他方程输出应该有效: {:?}", errors);
+    }
+
+    #[test]
+    fn test_dynamic_model_state_and_dat() {
+        // 状态量输出 TDM（init+rate，无方程）+ 引用保留内置变量 DAT，都应通过校验
+        let mut variables = IndexMap::new();
+        variables.insert(
+            "TDM".to_string(),
+            Variable {
+                var_type: VariableType::Output,
+                dtype: crate::schema::DataType::Float,
+                unit: None,
+                description: None,
+                source: None,
+                class: Some(crate::schema::VarClass::State),
+                init: Some(0.0),
+                rate: Some("DDM".to_string()),
+                prev: None,
+            },
+        );
+        let file = EquationFile {
+            meta: create_test_metadata(),
+            parameters: Default::default(),
+            variables,
+            equations: vec![Equation {
+                id: "E1".to_string(),
+                name: "速率".to_string(),
+                output: "DDM".to_string(),
+                // 引用保留内置变量 DAT（无需声明）
+                expression: Expr::mul(Expr::var("DAT"), Expr::constant(2.0)),
+                formula_display: None,
+                reference: None,
+            }],
+        };
+        let errors = check_references(&file);
+        assert!(errors.is_empty(), "状态量无方程 + 引用 DAT 应通过: {errors:?}");
     }
 
     #[test]
