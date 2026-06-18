@@ -185,6 +185,7 @@ mod tests {
                 name_en: None,
                 dtype: crate::schema::DataType::Float,
                 default: 1.0,
+                values: None,
                 unit: None,
                 bounds: None,
                 optimizable: false,

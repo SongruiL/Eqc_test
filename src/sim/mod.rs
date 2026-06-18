@@ -31,7 +31,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use indexmap::IndexMap;
 
-use crate::eval::{Env, EvalError};
+use crate::eval::{value_binop, Env, EvalError, Value};
 use crate::schema::EquationFile;
 
 /// 仿真错误。
@@ -211,19 +211,21 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
     //       积分节点依赖其 rate（若 rate 也是可计算节点）。
     let order = topo_order(&nodes, &node_idx)?;
 
-    // —— 4. 逐步求值 ——
-    // 参数值表（常量，每步相同）
-    let mut params: HashMap<&str, f64> = HashMap::new();
+    // —— 4. 逐步求值（V2：Value 级，支持向量）——
+    // 参数值表（常量，每步相同）：有 values 的为向量，否则标量（可被标量覆盖）。
+    let mut params: HashMap<&str, Value> = HashMap::new();
     for (pname, p) in &file.parameters {
-        let v = input.param_overrides.get(pname).copied().unwrap_or(p.default);
+        let v = match &p.values {
+            Some(vals) => Value::Vector(vals.clone()),
+            None => Value::Scalar(input.param_overrides.get(pname).copied().unwrap_or(p.default)),
+        };
         params.insert(pname.as_str(), v);
     }
 
-    // 轨迹容器，按 variables: 声明顺序
+    // 轨迹容器：标量变量记到 `name`，向量变量逐分量记到 `name[1]`、`name[2]`…（输出展平，便于绘图/CSV）。
     let mut traj: IndexMap<String, Vec<f64>> = IndexMap::new();
-    for name in file.variables.keys() {
-        traj.insert(name.clone(), Vec::with_capacity(input.steps));
-    }
+    // 上一步各声明变量的完整 Value（积分/延迟跨步读取）。
+    let mut prev: HashMap<String, Value> = HashMap::new();
 
     for n in 0..input.steps {
         let mut env = Env::new();
@@ -231,65 +233,82 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
         env.set("DAT", (n + 1) as f64);
         // 4a. 参数
         for (pname, v) in &params {
-            env.set(*pname, *v);
+            env.set(*pname, v.clone());
         }
-        // 4b. 驱动量
+        // 4b. 驱动量（标量逐日序列）
         for d in &driver_names {
-            let v = input.drivers[*d][n];
-            env.set(*d, v);
+            env.set(*d, input.drivers[*d][n]);
         }
-        // 4c. 延迟寄存器：X[n] = src[n-1]（首步用 init）
+        // 4c. 延迟寄存器：X[n] = src[n-1]（首步用 init 标量广播）
         for (name, src, init) in &delays {
             let v = if n == 0 {
-                *init
+                Value::Scalar(*init)
             } else {
-                prev_value(&traj, src, &params)
+                prev.get(*src)
+                    .cloned()
+                    .or_else(|| params.get(*src).cloned())
                     .ok_or_else(|| SimError::Unresolved((*name).to_string()))?
             };
             env.set(*name, v);
         }
-        // 4d. 按拓扑序求值方程与积分状态量
+        // 4d. 按拓扑序求值方程与积分状态量（Value 级）
         for &idx in &order {
             let (name, node) = &nodes[idx];
             match node {
                 Node::Equation(expr) => {
-                    // V0：仿真器仍为标量（向量化在 V2）；非标量结果在此显式失败。
                     let v = expr
-                        .eval_scalar(&env)
+                        .eval(&env)
                         .map_err(|err| SimError::Eval { var: (*name).to_string(), err })?;
                     env.set(*name, v);
                 }
                 Node::Integrator { rate, init } => {
-                    let prev = if n == 0 {
-                        *init
+                    // X[n] = X[n-1] + rate[n]（逐元素广播；首步 X[n-1]=init 标量广播）
+                    let prev_val = if n == 0 {
+                        Value::Scalar(*init)
                     } else {
-                        traj.get(*name).unwrap()[n - 1]
+                        prev.get(*name).cloned().ok_or_else(|| SimError::Unresolved((*name).to_string()))?
                     };
-                    let r = env
-                        .get_scalar(rate)
+                    let rate_val = env
+                        .get(rate)
                         .ok_or_else(|| SimError::Unresolved((*rate).to_string()))?;
-                    env.set(*name, prev + r);
+                    let x = value_binop(&prev_val, &rate_val, |a, b| a + b)
+                        .map_err(|err| SimError::Eval { var: (*name).to_string(), err })?;
+                    env.set(*name, x);
                 }
             }
         }
-        // 4e. 记录本步所有变量值（V0 标量轨迹）
-        for (name, series) in traj.iter_mut() {
-            let v = env
-                .get_scalar(name)
-                .ok_or_else(|| SimError::Unresolved(name.clone()))?;
-            series.push(v);
+        // 4e. 记录本步：快照到 prev（供下一步）+ 展平到输出轨迹
+        let mut cur: HashMap<String, Value> = HashMap::new();
+        for name in file.variables.keys() {
+            let v = env.get(name).ok_or_else(|| SimError::Unresolved(name.clone()))?;
+            flatten_into(&mut traj, name, &v);
+            cur.insert(name.clone(), v);
         }
+        prev = cur;
     }
 
     Ok(SimOutput { steps: input.steps, trajectories: traj })
 }
 
-/// 取某来源变量「上一步」的值：先查已记录轨迹，再退回参数（常量）。
-fn prev_value(traj: &IndexMap<String, Vec<f64>>, src: &str, params: &HashMap<&str, f64>) -> Option<f64> {
-    if let Some(series) = traj.get(src) {
-        return series.last().copied();
+/// 把一个变量本步的 Value 展平记入轨迹：标量→`name`；向量→`name[1]`、`name[2]`…；矩阵→`name[r,c]`。
+fn flatten_into(traj: &mut IndexMap<String, Vec<f64>>, name: &str, v: &Value) {
+    match v {
+        Value::Scalar(x) => traj.entry(name.to_string()).or_default().push(*x),
+        Value::Vector(d) => {
+            for (i, x) in d.iter().enumerate() {
+                traj.entry(format!("{name}[{}]", i + 1)).or_default().push(*x);
+            }
+        }
+        Value::Matrix { rows, cols, data } => {
+            for r in 0..*rows {
+                for c in 0..*cols {
+                    traj.entry(format!("{name}[{},{}]", r + 1, c + 1))
+                        .or_default()
+                        .push(data[r * cols + c]);
+                }
+            }
+        }
     }
-    params.get(src).copied()
 }
 
 /// 对步内可计算节点做拓扑排序（Kahn 算法），返回节点下标的求值顺序。
@@ -402,6 +421,36 @@ equations:
         // dCT = CT[n] - CT[n-1]：首步 CT_prev=init0 → 10-0=10；之后 20、30
         assert_eq!(out.series("dCT").unwrap(), &[10.0, 20.0, 30.0]);
         assert_eq!(out.final_value("CT"), Some(60.0));
+    }
+
+    /// V2：向量参数 + 向量状态量逐元素积分；输出展平成 name[i]。
+    #[test]
+    fn test_vector_state_integration() {
+        let yaml = r#"
+meta: { id: VEC, model: Vec, name_cn: 向量仿真 }
+parameters:
+  rates: { name_cn: 各组速率, values: [1.0, 2.0, 3.0] }
+variables:
+  T:     { type: input, class: driving }
+  drive: { type: intermediate, class: rate }
+  S:     { type: output, class: state, init: 0.0, rate: drive }
+  Stot:  { type: output }
+equations:
+  - { id: E1, name: 向量速率, output: drive, expression: { op: mul, args: [ { ref: rates }, { ref: T } ] } }
+  - { id: E2, name: 求和, output: Stot, expression: { op: vsum, args: [ { ref: S } ] } }
+"#;
+        let (_d, file) = write_model(yaml);
+        let input = SimInput::new(3).driver("T", vec![1.0, 1.0, 1.0]);
+        let out = simulate(&file, &input).unwrap();
+
+        // drive=[1,2,3] 每步；S 逐元素积分：[1,2,3] → [2,4,6] → [3,6,9]
+        assert_eq!(out.series("S[1]").unwrap(), &[1.0, 2.0, 3.0]);
+        assert_eq!(out.series("S[2]").unwrap(), &[2.0, 4.0, 6.0]);
+        assert_eq!(out.series("S[3]").unwrap(), &[3.0, 6.0, 9.0]);
+        // Stot = Σ S = 6, 12, 18
+        assert_eq!(out.series("Stot").unwrap(), &[6.0, 12.0, 18.0]);
+        // 向量变量本身不作为单一键（已展平）
+        assert!(out.series("S").is_none());
     }
 
     /// 缺驱动量应报错。

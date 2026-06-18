@@ -18,8 +18,14 @@ pub struct Parameter {
     #[serde(rename = "type", default)]
     pub dtype: DataType,
 
-    /// 默认值
+    /// 默认值（标量参数）。向量参数（用 `values`）可省略。
+    #[serde(default)]
     pub default: f64,
+
+    /// 向量参数的逐元素值（如各 cohort 的开花日 `[40,80,120]`）。
+    /// 设置后该参数为**向量**（[`crate::eval::Value::Vector`]）；否则用 `default` 作标量。
+    #[serde(default)]
+    pub values: Option<Vec<f64>>,
 
     /// 单位
     #[serde(default)]

@@ -129,6 +129,7 @@ mod tests {
                 name_en: None,
                 dtype: DataType::Float,
                 default: 3.0,
+                values: None,
                 unit: Some("degC".into()),
                 bounds: None,
                 optimizable: true,

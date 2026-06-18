@@ -316,6 +316,7 @@ mod tests {
                 name_en: None,
                 dtype: DataType::Float,
                 default: 1.0,
+                values: None,
                 unit: None,
                 bounds: None,
                 optimizable: false,

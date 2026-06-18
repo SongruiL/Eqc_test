@@ -542,6 +542,20 @@ fn nary(
     }
 }
 
+/// 两个 [`Value`] 的逐元素二元运算（广播）。供仿真器向量积分等复用（如 `X = prev + rate`）。
+pub fn value_binop(a: &Value, b: &Value, f: fn(f64, f64) -> f64) -> Result<Value, EvalError> {
+    let args = [a.clone(), b.clone()];
+    Ok(match broadcast_shape("binop", &args)? {
+        Shape::Scalar => Value::Scalar(f(a.as_scalar()?, b.as_scalar()?)),
+        Shape::Vec(n) => Value::Vector((0..n).map(|i| f(a.elem(i), b.elem(i))).collect()),
+        Shape::Mat(r, c) => Value::Matrix {
+            rows: r,
+            cols: c,
+            data: (0..r * c).map(|i| f(a.elem(i), b.elem(i))).collect(),
+        },
+    })
+}
+
 /// 要求是向量（取切片）；否则 [`EvalError::ShapeMismatch`]。
 fn require_vec<'a>(v: &'a Value, op: &str) -> Result<&'a [f64], EvalError> {
     match v {
