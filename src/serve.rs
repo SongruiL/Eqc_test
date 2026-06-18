@@ -326,9 +326,11 @@ mod tests {
     fn test_studio_html_bundled() {
         assert!(STUDIO_HTML.contains("EQC Studio"));
         assert!(STUDIO_HTML.contains("/api/model"));
-        // 布局切换条已打包
+        // 布局切换条 + 缩放 + 专注控件已打包
         assert!(STUDIO_HTML.contains("layoutSeg"));
         assert!(STUDIO_HTML.contains("/api/report?layout="));
+        assert!(STUDIO_HTML.contains("zoomSeg"));
+        assert!(STUDIO_HTML.contains("focusBtn"));
     }
 
     #[test]

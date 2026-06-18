@@ -389,11 +389,22 @@ fn forrester_svg(files: &[EquationFile], dag: &Dag, kind: LayoutKind) -> String 
     let nodes: Vec<&str> = dag.nodes.iter().map(|n| n.id.as_str()).collect();
     let layout_edges: Vec<(&str, &str)> =
         edges.iter().map(|(a, b, _)| (a.as_str(), b.as_str())).collect();
-    let lay = compute_layout(&nodes, &layout_edges, kind, g);
+    let lay = match kind {
+        // Forrester 学术风需要节点分类（存量/速率/…）来排主干 + 卫星
+        LayoutKind::Forrester => layout::compute_forrester(&nodes, &layout_edges, &class, g),
+        _ => compute_layout(&nodes, &layout_edges, kind, g),
+    };
     let pos = &lay.pos;
 
+    // Forrester 学术风：主干横向、天然较宽 → 用原始尺寸 + 容器横向滚动（标签清晰），
+    // 不像 force/layered 那样缩放填满面板宽（会把字压小）。
+    let (size_attr, extra_cls) = if matches!(kind, LayoutKind::Forrester) {
+        (format!(" width=\"{:.0}\" height=\"{:.0}\"", lay.width, lay.height), " natural")
+    } else {
+        (String::new(), "")
+    };
     let mut s = format!(
-        "<svg viewBox=\"0 0 {width:.0} {height:.0}\" class=\"dag-svg forr\" xmlns=\"http://www.w3.org/2000/svg\">\
+        "<svg viewBox=\"0 0 {width:.0} {height:.0}\"{size_attr} class=\"dag-svg forr{extra_cls}\" xmlns=\"http://www.w3.org/2000/svg\">\
          <defs>\
          <marker id=\"farrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"7\" markerHeight=\"7\" orient=\"auto-start-reverse\"><path d=\"M0,0 L10,5 L0,10 z\" fill=\"#94a3b8\"/></marker>\
          <marker id=\"fmat\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto-start-reverse\"><path d=\"M0,0 L10,5 L0,10 z\" fill=\"#f97316\"/></marker>\
@@ -472,6 +483,7 @@ h2 .sub { color:var(--sub); font-weight:400; font-size:13px; margin-left:8px; }
 .wrap { max-width:1100px; margin:0 auto; padding:0 8px; }
 .dag { overflow-x:auto; background:var(--card); border:1px solid var(--line); border-radius:10px; margin:0 28px; padding:12px; }
 .dag-svg { min-width:100%; }
+.dag-svg.natural { min-width:0; }  /* Forrester 学术风：原始尺寸，靠容器横向滚动 */
 .dag-svg .edge { fill:none; stroke:#aab; stroke-width:1.5; }
 .dag-svg .node rect { fill:#eef2ff; stroke:#c7d2fe; stroke-width:1.2; }
 .dag-svg .node.parameter rect { fill:#ecfdf5; stroke:#a7f3d0; }
@@ -531,7 +543,8 @@ pub fn generate_report_with(files: &[EquationFile], dag: &Dag, layout: LayoutKin
         })
         .unwrap_or_else(|| "EQC 模型".to_string());
 
-    let mut body = String::from("<div class=\"wrap\">");
+    // 结构图放在窄栏(.wrap)之外 → 占满整屏宽（「专注」全屏时不被 1100px 限住）；公式留在窄栏里好读。
+    let mut body = String::new();
 
     // Forrester 库存-流量图（动态结构：存量/速率/驱动/物质流）
     body.push_str("<h2>Forrester 库存-流量图<span class=\"sub\">动态结构：存量·速率·驱动·物质流</span></h2>");
@@ -546,6 +559,8 @@ pub fn generate_report_with(files: &[EquationFile], dag: &Dag, layout: LayoutKin
         <span style=\"background:#fef3c7\">方程</span></div>");
     body.push_str(&format!("<div class=\"dag\">{}</div>", dag_svg(dag, layout)));
 
+    // 公式区（窄栏，便于阅读）
+    body.push_str("<div class=\"wrap\">");
     for f in files {
         body.push_str(&format!(
             "<h2>模块：{}<span class=\"sub\">{}</span></h2>",
