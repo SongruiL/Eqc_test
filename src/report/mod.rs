@@ -115,6 +115,11 @@ fn piecewise_mml(pieces: &[(Expr, Expr)], otherwise: &Expr) -> String {
     format!("<mrow><mo>{{</mo><mtable columnalign=\"left\">{rows}</mtable></mrow>")
 }
 
+/// 把表达式渲染成 MathML 字符串（含外层 `<math>`）。供 JSON 契约 / 前端复用。
+pub fn expr_mathml(e: &Expr) -> String {
+    format!("<math display=\"block\"><mrow>{}</mrow></math>", mml(e))
+}
+
 /// Expr -> MathML（不含外层 `<math>`）。
 fn mml(e: &Expr) -> String {
     match e {

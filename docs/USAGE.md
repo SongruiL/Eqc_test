@@ -82,7 +82,13 @@ eqc workflow <注解sexpr> -o <目录> --operators           # 注解 sexpr -> w
 eqc check-dims <目录> [--strict]                         # 量纲一致性 + 跨模块耦合单位检查
 eqc report <小目录> -o model.html                        # 自包含 HTML 报告（Forrester 库存-流量图 + DAG + 二维公式）
 eqc simulate <模型.eq.yaml> --drivers w.csv [--params s.json] -o out.csv  # 逐日仿真动态模型，输出轨迹 CSV
+eqc serve <模型.eq.yaml> [--drivers w.csv] [--params s.json] [--port 7878]  # EQC Studio：浏览器里看模型 + 跑仿真画轨迹
+eqc export <模型.eq.yaml> [-o model.json]                # 导出模型 JSON 契约（前端/工具消费用，可检视）
 ```
+
+> **EQC Studio（交互式前端）**：`eqc serve <模型> --drivers w.csv` 起一个本地服务（`http://localhost:7878/`）。浏览器里左边是 Forrester 图 + 二维公式，右边是**整季仿真折线图**（勾选变量即画其轨迹，如产量 Y）。编辑模型保存即自动刷新。
+> - 端点：`/api/model`（JSON 契约）、`/api/report`（HTML 报告）、`/api/simulate`（轨迹 JSON）、`/api/chart.svg?vars=Y,TDM`（折线图 SVG）。
+> - 原则：**EQC 始终是唯一权威**，前端只显示 EQC 生成的 SVG/MathML/JSON——前端与 EQC 之间只有一条「可检视、只增不改」的契约（`eqc export` 可随时打印它），所以随 EQC 升级而升级时低风险、易排查。后续增量：点节点高亮、浏览器内编辑、LLM 问答、GP 结构 diff。
 
 > `report`/`check-dims` 的"目录"是装 `.eq.yaml` 的文件夹（与 build/validate 同）。`report` 会把目录内所有文件合成一张 DAG，**指向一两个相关模块的小目录**，别指整个 `examples/`（52 模块图会过大）。
 

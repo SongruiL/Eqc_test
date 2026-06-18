@@ -59,7 +59,10 @@
 ## 下一步（未做）/ 当前不足
 
 **EQC 工具层**
-- **前端/可视化平台**：目前看模型要手动 `eqc report` 生成 HTML 再用浏览器打开，不够直观、不能交互。计划做一个能加载 S 表达式/YAML 模型、直接可视化（Forrester 图 + 公式 + 跑仿真画轨迹）的前端（app/网站），讨论中。
+- **交互式前端 EQC Studio（进行中，走「本地服务」路线）**：
+  - Phase 1 `eqc serve`：监听模型、存盘即重生成、`localhost` 自动刷新（手写极小 HTTP，零新依赖）。
+  - Phase 2（已完成）：**JSON 契约 + 整季仿真折线图**。新增 `eqc export`（导出模型 JSON 契约 `src/export.rs`，schema_version 版本化、只增不改、可检视）；`src/chart.rs`（EQC 自生成轨迹折线图 SVG，零图表库）；`eqc serve` 扩成 Studio：`--drivers/--params` + 端点 `/api/model`(JSON)、`/api/report`(HTML)、`/api/simulate`(轨迹 JSON)、`/api/chart.svg`(折线图)；前端页面 `src/serve_assets/studio.html`（打包进二进制，零构建步骤）——浏览器左看 Forrester 图+公式、右看整季产量曲线。`src/scenario.rs` 抽出驱动量/参数加载，simulate 与 serve 共用。
+  - 原则：EQC 始终是唯一权威、前端只显示其 SVG/MathML/JSON 产物，契约只增不改 → 随 EQC 升级低风险、易排查。下一步：点节点高亮、浏览器内编辑、LLM 问答、GP 结构 diff。可后续包成 Tauri 桌面应用或 VS Code 扩展。
 - **codegen 不生成积分循环**：`eqc build` 仍按静态网络生成代码，状态量（`state`）没有逐步更新代码——动态模型目前只能用 `eqc simulate`（树遍历）跑，不能导出独立可运行的 Python/Rust 仿真器。
 - cohort 在图上显示为展开的标量（`DF__1/2/3`），未按家族分组显示。
 - **GP 约束进化层**：核心愿景，但需要**完善的仿真模型 + 田间反馈数据**才有意义（fitness=跑仿真 vs 实测），属较远目标；动手前讨论可进化 vs 冻结节点、约束方式。

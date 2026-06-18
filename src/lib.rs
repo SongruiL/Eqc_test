@@ -19,7 +19,11 @@ pub mod units;
 
 // 完整编译器模块（仅 CLI 工具需要）
 #[cfg(feature = "cli")]
+pub mod chart;
+#[cfg(feature = "cli")]
 pub mod dag;
+#[cfg(feature = "cli")]
+pub mod export;
 #[cfg(feature = "cli")]
 pub mod generators;
 #[cfg(feature = "cli")]
@@ -27,7 +31,11 @@ pub mod parser;
 #[cfg(feature = "cli")]
 pub mod report;
 #[cfg(feature = "cli")]
+pub mod scenario;
+#[cfg(feature = "cli")]
 pub mod schema;
+#[cfg(feature = "cli")]
+pub mod serve;
 #[cfg(feature = "cli")]
 pub mod sim;
 #[cfg(feature = "cli")]

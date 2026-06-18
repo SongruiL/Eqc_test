@@ -172,6 +172,34 @@ enum Commands {
         #[arg(short, long, default_value = "sim_output.csv")]
         output: PathBuf,
     },
+
+    /// 本地预览服务（EQC Studio）：监听模型文件，存盘即刷新；可跑仿真画轨迹
+    Serve {
+        /// 模型文件（.eq.yaml）或目录
+        input: PathBuf,
+
+        /// 监听端口
+        #[arg(short, long, default_value_t = 7878)]
+        port: u16,
+
+        /// 驱动量 CSV（提供后 Studio 可跑仿真、画整季轨迹）
+        #[arg(short, long)]
+        drivers: Option<PathBuf>,
+
+        /// 参数覆盖 JSON
+        #[arg(long)]
+        params: Option<PathBuf>,
+    },
+
+    /// 导出模型的 JSON 契约（前端/工具消费用，可检视）
+    Export {
+        /// 模型文件（.eq.yaml）或目录
+        input: PathBuf,
+
+        /// 输出 JSON 文件（缺省打印到 stdout）
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[cfg(feature = "cli")]
@@ -197,6 +225,10 @@ fn main() {
         Commands::Simulate { input, drivers, params, steps, output } => {
             run_simulate(&input, &drivers, params.as_ref(), steps, &output)
         }
+        Commands::Serve { input, port, drivers, params } => {
+            equation_compiler::serve::serve(&input, port, drivers.as_ref(), params.as_ref())
+        }
+        Commands::Export { input, output } => run_export(&input, output.as_ref()),
     };
 
     if let Err(e) = result {
@@ -275,13 +307,14 @@ fn run_simulate(
     steps: Option<usize>,
     output: &PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    use equation_compiler::scenario::{load_drivers_csv, load_params_json};
     use equation_compiler::{parse_file, simulate, SimInput};
 
     println!("🌱 仿真模型: {}", input.display());
     let file = parse_file(input)?;
 
     // 读驱动量 CSV
-    let (rows, driver_map) = read_drivers_csv(drivers)?;
+    let (rows, driver_map) = load_drivers_csv(drivers)?;
     let steps = steps.unwrap_or(rows);
 
     let mut sim_in = SimInput::new(steps);
@@ -289,7 +322,7 @@ fn run_simulate(
 
     // 读参数覆盖 JSON（可选）
     if let Some(pjson) = params {
-        sim_in.param_overrides = read_params_json(pjson)?;
+        sim_in.param_overrides = load_params_json(pjson)?;
     }
 
     let out = simulate(&file, &sim_in).map_err(|e| format!("仿真失败: {e}"))?;
@@ -325,49 +358,24 @@ fn run_simulate(
     Ok(())
 }
 
-/// 读驱动量 CSV：首行变量名，每行一天。返回（行数, 变量名 -> 列向量）。
 #[cfg(feature = "cli")]
-fn read_drivers_csv(
-    path: &PathBuf,
-) -> Result<(usize, std::collections::HashMap<String, Vec<f64>>), Box<dyn std::error::Error>> {
-    let content = std::fs::read_to_string(path)?;
-    let mut lines = content.lines().filter(|l| !l.trim().is_empty());
-    let header = lines.next().ok_or("驱动量 CSV 为空")?;
-    let names: Vec<String> = header.split(',').map(|s| s.trim().to_string()).collect();
-    let mut cols: Vec<Vec<f64>> = vec![Vec::new(); names.len()];
-    let mut rows = 0usize;
-    for line in lines {
-        let fields: Vec<&str> = line.split(',').collect();
-        if fields.len() != names.len() {
-            return Err(format!("驱动量 CSV 第 {} 行列数（{}）与表头（{}）不符", rows + 2, fields.len(), names.len()).into());
-        }
-        for (i, f) in fields.iter().enumerate() {
-            let v: f64 = f
-                .trim()
-                .parse()
-                .map_err(|_| format!("驱动量 CSV 第 {} 行无法解析数值: '{}'", rows + 2, f.trim()))?;
-            cols[i].push(v);
-        }
-        rows += 1;
-    }
-    let map = names.into_iter().zip(cols).collect();
-    Ok((rows, map))
-}
+fn run_export(input: &PathBuf, output: Option<&PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+    use equation_compiler::{parse_directory, parse_file};
 
-/// 读参数覆盖 JSON：{"name": value, ...}。
-#[cfg(feature = "cli")]
-fn read_params_json(
-    path: &PathBuf,
-) -> Result<std::collections::HashMap<String, f64>, Box<dyn std::error::Error>> {
-    let content = std::fs::read_to_string(path)?;
-    let v: serde_json::Value = serde_json::from_str(&content)?;
-    let obj = v.as_object().ok_or("参数 JSON 应为对象 {name: value}")?;
-    let mut out = std::collections::HashMap::new();
-    for (k, val) in obj {
-        let f = val.as_f64().ok_or_else(|| format!("参数 {k} 不是数值"))?;
-        out.insert(k.clone(), f);
+    let files = if input.is_dir() {
+        parse_directory(input)?
+    } else {
+        vec![parse_file(input)?]
+    };
+    let json = equation_compiler::export::to_json_pretty(&files);
+    match output {
+        Some(path) => {
+            std::fs::write(path, &json)?;
+            println!("✅ 模型 JSON 契约已写入 {}", path.display());
+        }
+        None => println!("{json}"),
     }
-    Ok(out)
+    Ok(())
 }
 
 #[cfg(feature = "cli")]

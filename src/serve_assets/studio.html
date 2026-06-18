@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EQC Studio</title>
+<style>
+  :root { --bg:#fafbfc; --card:#fff; --ink:#1f2933; --sub:#6b7280; --line:#e5e7eb; --accent:#2563eb; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif; }
+  header { padding:12px 20px; background:var(--card); border-bottom:1px solid var(--line);
+    display:flex; align-items:baseline; gap:12px; }
+  header h1 { font-size:18px; margin:0; }
+  header .sub { color:var(--sub); font-size:13px; }
+  header .badge { margin-left:auto; font-size:12px; color:var(--sub); }
+  .grid { display:grid; grid-template-columns: 1fr 1fr; gap:14px; padding:14px; align-items:start; }
+  @media (max-width: 980px){ .grid { grid-template-columns:1fr; } }
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  .panel h2 { font-size:14px; margin:0; padding:10px 14px; border-bottom:1px solid var(--line); background:#f8fafc; }
+  .panel .body { padding:12px 14px; }
+  iframe { width:100%; height:560px; border:0; }
+  .chart-wrap { width:100%; overflow-x:auto; }
+  .chart-wrap img { width:100%; max-width:720px; height:auto; display:block; }
+  .vars { display:flex; flex-wrap:wrap; gap:6px 14px; max-height:150px; overflow-y:auto;
+    border-top:1px solid var(--line); margin-top:10px; padding-top:10px; }
+  .vars label { font-size:12px; display:flex; align-items:center; gap:4px; cursor:pointer; }
+  .vars .cls { color:var(--sub); font-size:10px; }
+  .vars .grp { width:100%; font-size:11px; color:var(--sub); font-weight:600; margin-top:4px; }
+  .err { color:#dc2626; font-size:13px; }
+  .hint { color:var(--sub); font-size:12px; margin-top:8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">EQC Studio</h1>
+  <span class="sub" id="subtitle"></span>
+  <span class="badge" id="badge">连接中…</span>
+</header>
+
+<div class="grid">
+  <section class="panel">
+    <h2>模型结构（Forrester 图 + 二维公式）</h2>
+    <iframe id="report" src="/api/report"></iframe>
+  </section>
+
+  <section class="panel">
+    <h2>整季仿真轨迹</h2>
+    <div class="body">
+      <div class="chart-wrap"><img id="chart" alt="trajectory chart"></div>
+      <div class="hint" id="chartHint"></div>
+      <div class="vars" id="vars"></div>
+    </div>
+  </section>
+</div>
+
+<script>
+let MODEL = null;
+
+function setBadge(t, ok){ const b=document.getElementById('badge'); b.textContent=t; b.style.color = ok?'#16a34a':'#6b7280'; }
+
+async function loadModel(){
+  try {
+    const r = await fetch('/api/model', {cache:'no-store'});
+    const m = await r.json();
+    MODEL = m;
+    const mod = (m.modules && m.modules[0]) || {};
+    document.getElementById('title').textContent = mod.name_cn || mod.model || 'EQC Studio';
+    document.getElementById('subtitle').textContent = mod.id ? ('· ' + mod.id) : '';
+    buildVarList(mod.variables || []);
+    setBadge('已连接', true);
+  } catch(e){ setBadge('加载模型失败', false); }
+}
+
+function buildVarList(vars){
+  const box = document.getElementById('vars');
+  box.innerHTML = '';
+  // 默认勾选：优先 Y，其次所有 output
+  const hasY = vars.some(v=>v.name==='Y');
+  const groups = {};
+  vars.forEach(v=>{ (groups[v.class] = groups[v.class] || []).push(v); });
+  const order = ['output','state','rate','auxiliary','semi_state','driving','parameter','control','boundary'];
+  const seen = new Set();
+  order.concat(Object.keys(groups)).forEach(cls=>{
+    if(seen.has(cls) || !groups[cls]) return; seen.add(cls);
+    const g = document.createElement('div'); g.className='grp'; g.textContent=cls; box.appendChild(g);
+    groups[cls].forEach(v=>{
+      const def = hasY ? (v.name==='Y') : (v.var_type==='output');
+      const id = 'v_'+v.name;
+      const lab = document.createElement('label');
+      lab.innerHTML = `<input type="checkbox" id="${id}" value="${v.name}" ${def?'checked':''}><span>${v.name}</span><span class="cls">${v.unit||''}</span>`;
+      lab.querySelector('input').addEventListener('change', updateChart);
+      box.appendChild(lab);
+    });
+  });
+  updateChart();
+}
+
+function updateChart(){
+  const checked = Array.from(document.querySelectorAll('#vars input:checked')).map(i=>i.value);
+  const img = document.getElementById('chart');
+  const hint = document.getElementById('chartHint');
+  if(checked.length===0){ img.removeAttribute('src'); hint.textContent='勾选变量以绘制轨迹。'; return; }
+  hint.textContent = '绘制：' + checked.join(', ');
+  img.src = '/api/chart.svg?vars=' + encodeURIComponent(checked.join(',')) + '&_=' + Date.now();
+  img.onerror = ()=>{ hint.innerHTML = '<span class="err">无法绘制（可能未提供 --drivers，或模型有错）</span>'; };
+}
+
+// 自动刷新：监听 /__version，变化即整页重载（含 iframe 报告与图表）
+let _ver = null;
+setInterval(async ()=>{
+  try {
+    const t = await (await fetch('/__version',{cache:'no-store'})).text();
+    if(_ver===null){ _ver=t; }
+    else if(t!==_ver){ location.reload(); }
+  } catch(e){}
+}, 1000);
+
+loadModel();
+</script>
+</body>
+</html>

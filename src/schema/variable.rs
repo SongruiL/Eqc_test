@@ -44,6 +44,20 @@ pub enum VarClass {
 }
 
 impl VarClass {
+    /// 规范名（snake_case，与 serde 序列化一致；用于 JSON 契约）。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            VarClass::State => "state",
+            VarClass::Rate => "rate",
+            VarClass::Auxiliary => "auxiliary",
+            VarClass::Driving => "driving",
+            VarClass::Parameter => "parameter",
+            VarClass::Control => "control",
+            VarClass::SemiState => "semi_state",
+            VarClass::Boundary => "boundary",
+        }
+    }
+
     /// 单字母代号（Forrester 图标注用：S/V/A/R/D/C/M/B）
     pub fn code(&self) -> char {
         match self {
