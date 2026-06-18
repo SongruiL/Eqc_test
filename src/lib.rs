@@ -50,7 +50,7 @@ pub use ast::{Expr, ExprVisitor};
 pub use error::{CompileError, CompileResult};
 
 // 求值器
-pub use eval::{Env, EvalError, EvalMode};
+pub use eval::{Env, EvalError, EvalMode, Value};
 
 // 算子注册表（算子单一真相源）
 pub use ops::OperatorSpec;

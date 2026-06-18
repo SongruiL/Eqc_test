@@ -253,8 +253,9 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
             let (name, node) = &nodes[idx];
             match node {
                 Node::Equation(expr) => {
+                    // V0：仿真器仍为标量（向量化在 V2）；非标量结果在此显式失败。
                     let v = expr
-                        .eval(&env)
+                        .eval_scalar(&env)
                         .map_err(|err| SimError::Eval { var: (*name).to_string(), err })?;
                     env.set(*name, v);
                 }
@@ -265,16 +266,16 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
                         traj.get(*name).unwrap()[n - 1]
                     };
                     let r = env
-                        .get(rate)
+                        .get_scalar(rate)
                         .ok_or_else(|| SimError::Unresolved((*rate).to_string()))?;
                     env.set(*name, prev + r);
                 }
             }
         }
-        // 4e. 记录本步所有变量值
+        // 4e. 记录本步所有变量值（V0 标量轨迹）
         for (name, series) in traj.iter_mut() {
             let v = env
-                .get(name)
+                .get_scalar(name)
                 .ok_or_else(|| SimError::Unresolved(name.clone()))?;
             series.push(v);
         }

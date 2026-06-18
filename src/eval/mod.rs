@@ -32,10 +32,14 @@ pub enum EvalError {
         expected: usize,
         found: usize,
     },
-    /// 算子尚未在求值器中实现（如特殊函数、向量/矩阵、积分等）
+    /// 算子尚未在求值器中实现（如特殊函数、矩阵运算、积分等）
     Unsupported(String),
     /// 结果非有限（NaN/Inf）——严格模式下产生。涵盖除零、`ln` 负数、定义域外等。
     NonFinite { op: String },
+    /// 期望标量却得到向量/矩阵（如把向量当 if 条件、求和上限）。
+    NotScalar,
+    /// 形状不匹配（广播失败：非标量参数形状不一致）。
+    ShapeMismatch { op: String },
 }
 
 impl fmt::Display for EvalError {
@@ -47,18 +51,86 @@ impl fmt::Display for EvalError {
             }
             EvalError::Unsupported(op) => write!(f, "求值器尚未实现该算子: {op}"),
             EvalError::NonFinite { op } => write!(f, "算子 {op} 求值结果非有限（NaN/Inf）"),
+            EvalError::NotScalar => write!(f, "期望标量，却得到向量/矩阵"),
+            EvalError::ShapeMismatch { op } => write!(f, "算子 {op} 形状不匹配（广播失败）"),
         }
     }
 }
 
 impl std::error::Error for EvalError {}
 
-/// 求值环境：变量/参数名 -> 值，外加用于 `sum`/`product` 绑定循环变量的作用域栈。
+/// 求值结果的值：标量 / 向量（1D）/ 矩阵（2D，行主序）。
+///
+/// 标量行为与从前完全一致（[`Value::Scalar`]）。向量/矩阵让 cohort（同期群）等
+/// 「按索引的量」能作为一等值参与运算。详见 `docs/spec-vector-matrix.md`。
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    Scalar(f64),
+    Vector(Vec<f64>),
+    Matrix { rows: usize, cols: usize, data: Vec<f64> },
+}
+
+/// 值的形状（广播判定用）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shape {
+    Scalar,
+    Vec(usize),
+    Mat(usize, usize),
+}
+
+impl Value {
+    /// 取标量；非标量报 [`EvalError::NotScalar`]。
+    pub fn as_scalar(&self) -> Result<f64, EvalError> {
+        match self {
+            Value::Scalar(x) => Ok(*x),
+            _ => Err(EvalError::NotScalar),
+        }
+    }
+
+    /// 取向量切片（标量视为长度 1；矩阵报错另议——本期仅 Vector 调用）。
+    pub fn as_vector(&self) -> Option<&[f64]> {
+        match self {
+            Value::Vector(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// 形状。
+    pub fn shape(&self) -> Shape {
+        match self {
+            Value::Scalar(_) => Shape::Scalar,
+            Value::Vector(v) => Shape::Vec(v.len()),
+            Value::Matrix { rows, cols, .. } => Shape::Mat(*rows, *cols),
+        }
+    }
+
+    /// 线性索引取元素（标量广播：忽略 i 返回自身值）。
+    fn elem(&self, i: usize) -> f64 {
+        match self {
+            Value::Scalar(x) => *x,
+            Value::Vector(v) => v[i],
+            Value::Matrix { data, .. } => data[i],
+        }
+    }
+}
+
+impl From<f64> for Value {
+    fn from(x: f64) -> Self {
+        Value::Scalar(x)
+    }
+}
+impl From<Vec<f64>> for Value {
+    fn from(v: Vec<f64>) -> Self {
+        Value::Vector(v)
+    }
+}
+
+/// 求值环境：变量/参数名 -> [`Value`]，外加用于 `sum`/`product` 绑定循环变量的作用域栈。
 #[derive(Debug, Clone, Default)]
 pub struct Env {
-    vars: HashMap<String, f64>,
-    /// 内层作用域绑定（如 sum 的循环变量），查找时优先于 `vars`。
-    scopes: Vec<(String, f64)>,
+    vars: HashMap<String, Value>,
+    /// 内层作用域绑定（如 sum 的循环变量，恒为标量），查找时优先于 `vars`。
+    scopes: Vec<(String, Value)>,
 }
 
 impl Env {
@@ -66,39 +138,44 @@ impl Env {
         Self::default()
     }
 
-    /// 链式设置一个变量值。
-    pub fn with(mut self, name: impl Into<String>, val: f64) -> Self {
-        self.vars.insert(name.into(), val);
+    /// 链式设置一个变量值（标量传 f64、向量传 Vec<f64> 均可）。
+    pub fn with(mut self, name: impl Into<String>, val: impl Into<Value>) -> Self {
+        self.vars.insert(name.into(), val.into());
         self
     }
 
     /// 设置/覆盖一个变量值。
-    pub fn set(&mut self, name: impl Into<String>, val: f64) -> &mut Self {
-        self.vars.insert(name.into(), val);
+    pub fn set(&mut self, name: impl Into<String>, val: impl Into<Value>) -> &mut Self {
+        self.vars.insert(name.into(), val.into());
         self
     }
 
-    /// 从 (名称, 值) 列表构造环境。
+    /// 从 (名称, 标量值) 列表构造环境。
     pub fn from_pairs(pairs: &[(&str, f64)]) -> Self {
         let mut env = Self::new();
         for (k, v) in pairs {
-            env.vars.insert((*k).to_string(), *v);
+            env.vars.insert((*k).to_string(), Value::Scalar(*v));
         }
         env
     }
 
     /// 查找变量值：先查内层作用域（后进先出），再查全局变量。
-    pub fn get(&self, name: &str) -> Option<f64> {
+    pub fn get(&self, name: &str) -> Option<Value> {
         for (n, v) in self.scopes.iter().rev() {
             if n == name {
-                return Some(*v);
+                return Some(v.clone());
             }
         }
-        self.vars.get(name).copied()
+        self.vars.get(name).cloned()
+    }
+
+    /// 查找并要求标量（向量/矩阵返回 None）。
+    pub fn get_scalar(&self, name: &str) -> Option<f64> {
+        self.get(name).and_then(|v| v.as_scalar().ok())
     }
 
     fn push_scope(&mut self, name: String, val: f64) {
-        self.scopes.push((name, val));
+        self.scopes.push((name, Value::Scalar(val)));
     }
 
     fn pop_scope(&mut self) {
@@ -121,48 +198,78 @@ impl Default for EvalMode {
 }
 
 impl Expr {
-    /// 以默认（严格）模式对表达式求值。
-    pub fn eval(&self, env: &Env) -> Result<f64, EvalError> {
+    /// 以默认（严格）模式对表达式求值，返回 [`Value`]（可能是标量/向量/矩阵）。
+    pub fn eval(&self, env: &Env) -> Result<Value, EvalError> {
         self.eval_with(env, EvalMode::default())
     }
 
     /// 以指定模式对表达式求值。
-    pub fn eval_with(&self, env: &Env, mode: EvalMode) -> Result<f64, EvalError> {
+    pub fn eval_with(&self, env: &Env, mode: EvalMode) -> Result<Value, EvalError> {
         let mut work = env.clone();
         ev(self, &mut work, mode)
     }
+
+    /// 求值并要求结果为标量（垫片：标量调用点用它，语义与从前一致）。
+    pub fn eval_scalar(&self, env: &Env) -> Result<f64, EvalError> {
+        self.eval(env)?.as_scalar()
+    }
+
+    /// 指定模式求值并要求标量。
+    pub fn eval_scalar_with(&self, env: &Env, mode: EvalMode) -> Result<f64, EvalError> {
+        self.eval_with(env, mode)?.as_scalar()
+    }
 }
 
-/// 递归求值。
-fn ev(expr: &Expr, env: &mut Env, mode: EvalMode) -> Result<f64, EvalError> {
-    // 注册表快路径：所有纯函数式标量算子从 `ops` 注册表求值（语义单一真相源）。
+/// 递归求值，返回 [`Value`]（标量/向量/矩阵）。
+fn ev(expr: &Expr, env: &mut Env, mode: EvalMode) -> Result<Value, EvalError> {
+    // 注册表快路径：纯函数式标量算子 + **广播**——标量算子自动逐元素作用于向量/矩阵。
     if let Some((name, args)) = crate::ops::as_operator(expr) {
         if let Some(s) = crate::ops::spec(name) {
             let mut vals = Vec::with_capacity(args.len());
             for a in args {
                 vals.push(ev(a, env, mode)?);
             }
-            return chk(name, (s.eval)(&vals), mode);
+            return broadcast_apply(name, s.eval, &vals, mode);
         }
     }
 
     match expr {
         // === 叶子 ===
-        Expr::Const(c) => Ok(*c),
-        Expr::Pi => Ok(std::f64::consts::PI),
-        Expr::E => Ok(std::f64::consts::E),
+        Expr::Const(c) => Ok(Value::Scalar(*c)),
+        Expr::Pi => Ok(Value::Scalar(std::f64::consts::PI)),
+        Expr::E => Ok(Value::Scalar(std::f64::consts::E)),
         Expr::Var(n) | Expr::Param(n) => env.get(n).ok_or_else(|| EvalError::UndefinedVar(n.clone())),
 
-        // 所有纯函数式标量算子（算术/三角/双曲/比较/逻辑/hypot/clamp/fma 等）已迁移至 ops 注册表，
-        // 由上方注册表快路径处理；此处仅保留叶子、聚合与特殊形式。
+        // === 聚合（可变参数）：广播后逐元素折叠 ===
+        Expr::Max(xs) => nary("max", xs, f64::NEG_INFINITY, f64::max, env, mode),
+        Expr::Min(xs) => nary("min", xs, f64::INFINITY, f64::min, env, mode),
 
-        // === 聚合（可变参数，非纯函数式）===
-        Expr::Max(xs) => fold_nary("max", xs, f64::NEG_INFINITY, f64::max, env, mode),
-        Expr::Min(xs) => fold_nary("min", xs, f64::INFINITY, f64::min, env, mode),
+        // === 向量/矩阵字面量（V0：元素须为标量）===
+        Expr::VectorLit(elems) => {
+            let mut data = Vec::with_capacity(elems.len());
+            for e in elems {
+                data.push(ev(e, env, mode)?.as_scalar()?);
+            }
+            Ok(Value::Vector(data))
+        }
+        Expr::MatrixLit(rows) => {
+            let r = rows.len();
+            let c = rows.first().map_or(0, |row| row.len());
+            let mut data = Vec::with_capacity(r * c);
+            for row in rows {
+                if row.len() != c {
+                    return Err(EvalError::ShapeMismatch { op: "matrix".into() });
+                }
+                for e in row {
+                    data.push(ev(e, env, mode)?.as_scalar()?);
+                }
+            }
+            Ok(Value::Matrix { rows: r, cols: c, data })
+        }
 
-        // === 特殊形式 ===
+        // === 特殊形式（条件 / 上下限须为标量）===
         Expr::IfThenElse { cond, then_branch, else_branch } => {
-            if ev(cond, env, mode)? != 0.0 {
+            if ev(cond, env, mode)?.as_scalar()? != 0.0 {
                 ev(then_branch, env, mode)
             } else {
                 ev(else_branch, env, mode)
@@ -170,40 +277,40 @@ fn ev(expr: &Expr, env: &mut Env, mode: EvalMode) -> Result<f64, EvalError> {
         }
         Expr::Piecewise { pieces, otherwise } => {
             for (cond, val) in pieces {
-                if ev(cond, env, mode)? != 0.0 {
+                if ev(cond, env, mode)?.as_scalar()? != 0.0 {
                     return ev(val, env, mode);
                 }
             }
             ev(otherwise, env, mode)
         }
         Expr::Sum { index, lower, upper, body } => {
-            let lo = ev(lower, env, mode)?.round() as i64;
-            let hi = ev(upper, env, mode)?.round() as i64;
+            let lo = ev(lower, env, mode)?.as_scalar()?.round() as i64;
+            let hi = ev(upper, env, mode)?.as_scalar()?.round() as i64;
             let mut acc = 0.0_f64;
             for i in lo..=hi {
                 env.push_scope(index.clone(), i as f64);
-                let r = ev(body, env, mode);
+                let r = ev(body, env, mode).and_then(|v| v.as_scalar());
                 env.pop_scope();
                 acc += r?;
             }
-            chk("sum", acc, mode)
+            Ok(Value::Scalar(chk("sum", acc, mode)?))
         }
         Expr::Product { index, lower, upper, body } => {
-            let lo = ev(lower, env, mode)?.round() as i64;
-            let hi = ev(upper, env, mode)?.round() as i64;
+            let lo = ev(lower, env, mode)?.as_scalar()?.round() as i64;
+            let hi = ev(upper, env, mode)?.as_scalar()?.round() as i64;
             let mut acc = 1.0_f64;
             for i in lo..=hi {
                 env.push_scope(index.clone(), i as f64);
-                let r = ev(body, env, mode);
+                let r = ev(body, env, mode).and_then(|v| v.as_scalar());
                 env.pop_scope();
                 acc *= r?;
             }
-            chk("product", acc, mode)
+            Ok(Value::Scalar(chk("product", acc, mode)?))
         }
 
-        // === 特殊函数（部分需 advanced_math 特性）；其余 -> Unsupported ===
+        // === 特殊函数（标量；部分需 advanced_math）；其余 -> Unsupported ===
         other => match eval_special(other, env, mode) {
-            Some(r) => r,
+            Some(r) => r.map(Value::Scalar),
             None => Err(EvalError::Unsupported(variant_tag(other))),
         },
     }
@@ -212,9 +319,10 @@ fn ev(expr: &Expr, env: &mut Env, mode: EvalMode) -> Result<f64, EvalError> {
 /// 特殊函数求值。返回 `None` 表示非本函数处理的算子（交由调用方报 Unsupported）；
 /// `Some(Ok/Err)` 表示已处理。部分函数需 `advanced_math` 特性（statrs/puruspe）。
 fn eval_special(expr: &Expr, env: &mut Env, mode: EvalMode) -> Option<Result<f64, EvalError>> {
+    // 特殊函数均为标量函数：先把参数求值并要求标量。
     macro_rules! e1 {
         ($name:expr, $a:expr, $f:expr) => {
-            match ev($a, env, mode) {
+            match ev($a, env, mode).and_then(|v| v.as_scalar()) {
                 Ok(x) => Some(chk($name, ($f)(x), mode)),
                 Err(e) => Some(Err(e)),
             }
@@ -223,7 +331,10 @@ fn eval_special(expr: &Expr, env: &mut Env, mode: EvalMode) -> Option<Result<f64
     #[cfg(feature = "advanced_math")]
     macro_rules! e2 {
         ($name:expr, $a:expr, $b:expr, $f:expr) => {
-            match (ev($a, env, mode), ev($b, env, mode)) {
+            match (
+                ev($a, env, mode).and_then(|v| v.as_scalar()),
+                ev($b, env, mode).and_then(|v| v.as_scalar()),
+            ) {
                 (Ok(x), Ok(y)) => Some(chk($name, ($f)(x, y), mode)),
                 (Err(e), _) | (_, Err(e)) => Some(Err(e)),
             }
@@ -232,7 +343,11 @@ fn eval_special(expr: &Expr, env: &mut Env, mode: EvalMode) -> Option<Result<f64
     #[cfg(feature = "advanced_math")]
     macro_rules! e3 {
         ($name:expr, $a:expr, $b:expr, $c:expr, $f:expr) => {
-            match (ev($a, env, mode), ev($b, env, mode), ev($c, env, mode)) {
+            match (
+                ev($a, env, mode).and_then(|v| v.as_scalar()),
+                ev($b, env, mode).and_then(|v| v.as_scalar()),
+                ev($c, env, mode).and_then(|v| v.as_scalar()),
+            ) {
                 (Ok(x), Ok(y), Ok(z)) => Some(chk($name, ($f)(x, y, z), mode)),
                 (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => Some(Err(e)),
             }
@@ -285,27 +400,98 @@ fn eval_special(expr: &Expr, env: &mut Env, mode: EvalMode) -> Option<Result<f64
     }
 }
 
-/// 聚合（max/min）：对所有子节点求值并折叠。
-fn fold_nary(
+/// 形状广播判定：标量可广播到任意形状；非标量须同形状，否则 [`EvalError::ShapeMismatch`]。
+fn broadcast_shape(name: &str, args: &[Value]) -> Result<Shape, EvalError> {
+    let mut shape = Shape::Scalar;
+    for v in args {
+        let s = v.shape();
+        if s == Shape::Scalar {
+            continue;
+        }
+        if shape == Shape::Scalar {
+            shape = s;
+        } else if shape != s {
+            return Err(EvalError::ShapeMismatch { op: name.to_string() });
+        }
+    }
+    Ok(shape)
+}
+
+/// 把标量算子 `f` 逐元素作用于（广播后的）各参数。标量参数广播；同形状非标量逐位计算。
+fn broadcast_apply(
+    name: &str,
+    f: fn(&[f64]) -> f64,
+    args: &[Value],
+    mode: EvalMode,
+) -> Result<Value, EvalError> {
+    match broadcast_shape(name, args)? {
+        Shape::Scalar => {
+            let xs: Vec<f64> = args.iter().map(|v| v.as_scalar()).collect::<Result<_, _>>()?;
+            Ok(Value::Scalar(chk(name, f(&xs), mode)?))
+        }
+        Shape::Vec(n) => {
+            let mut out = Vec::with_capacity(n);
+            for i in 0..n {
+                let xs: Vec<f64> = args.iter().map(|v| v.elem(i)).collect();
+                out.push(chk(name, f(&xs), mode)?);
+            }
+            Ok(Value::Vector(out))
+        }
+        Shape::Mat(r, c) => {
+            let mut out = Vec::with_capacity(r * c);
+            for i in 0..(r * c) {
+                let xs: Vec<f64> = args.iter().map(|v| v.elem(i)).collect();
+                out.push(chk(name, f(&xs), mode)?);
+            }
+            Ok(Value::Matrix { rows: r, cols: c, data: out })
+        }
+    }
+}
+
+/// 可变参数聚合（max/min）：广播后逐元素折叠。
+fn nary(
     name: &str,
     xs: &[Expr],
     init: f64,
-    f: fn(f64, f64) -> f64,
+    fold: fn(f64, f64) -> f64,
     env: &mut Env,
     mode: EvalMode,
-) -> Result<f64, EvalError> {
+) -> Result<Value, EvalError> {
     if xs.is_empty() {
-        return Err(EvalError::ArityMismatch {
-            op: name.to_string(),
-            expected: 1,
-            found: 0,
-        });
+        return Err(EvalError::ArityMismatch { op: name.to_string(), expected: 1, found: 0 });
     }
-    let mut acc = init;
-    for x in xs {
-        acc = f(acc, ev(x, env, mode)?);
+    let vals: Vec<Value> = xs.iter().map(|x| ev(x, env, mode)).collect::<Result<_, _>>()?;
+    match broadcast_shape(name, &vals)? {
+        Shape::Scalar => {
+            let mut acc = init;
+            for v in &vals {
+                acc = fold(acc, v.as_scalar()?);
+            }
+            Ok(Value::Scalar(chk(name, acc, mode)?))
+        }
+        Shape::Vec(n) => {
+            let mut out = Vec::with_capacity(n);
+            for i in 0..n {
+                let mut acc = init;
+                for v in &vals {
+                    acc = fold(acc, v.elem(i));
+                }
+                out.push(chk(name, acc, mode)?);
+            }
+            Ok(Value::Vector(out))
+        }
+        Shape::Mat(r, c) => {
+            let mut out = Vec::with_capacity(r * c);
+            for i in 0..(r * c) {
+                let mut acc = init;
+                for v in &vals {
+                    acc = fold(acc, v.elem(i));
+                }
+                out.push(chk(name, acc, mode)?);
+            }
+            Ok(Value::Matrix { rows: r, cols: c, data: out })
+        }
     }
-    chk(name, acc, mode)
 }
 
 /// 严格模式下：非有限结果报错。
@@ -334,7 +520,7 @@ mod tests {
     const EPS: f64 = 1e-9;
 
     fn eval_str(s: &str, env: &Env) -> Result<f64, EvalError> {
-        parse_to_expr(s).expect("parse").eval(env)
+        parse_to_expr(s).expect("parse").eval_scalar(env)
     }
 
     #[test]
@@ -376,9 +562,9 @@ mod tests {
     fn test_sign_zero_is_zero() {
         let env = Env::new();
         // sgn(0) = 0（区别于 Rust f64::signum 在 0 处返回 +1）
-        assert_eq!(Expr::sign(Expr::Const(0.0)).eval(&env).unwrap(), 0.0);
-        assert_eq!(Expr::sign(Expr::Const(-3.0)).eval(&env).unwrap(), -1.0);
-        assert_eq!(Expr::sign(Expr::Const(2.5)).eval(&env).unwrap(), 1.0);
+        assert_eq!(Expr::sign(Expr::Const(0.0)).eval_scalar(&env).unwrap(), 0.0);
+        assert_eq!(Expr::sign(Expr::Const(-3.0)).eval_scalar(&env).unwrap(), -1.0);
+        assert_eq!(Expr::sign(Expr::Const(2.5)).eval_scalar(&env).unwrap(), 1.0);
     }
 
     #[test]
@@ -386,7 +572,7 @@ mod tests {
         let env = Env::new();
         // 数学取模：(-7) mod 3 = 2（结果符号随除数），区别于 Rust `%` 的 -1
         let m = Expr::modulo(Expr::Const(-7.0), Expr::Const(3.0));
-        assert!((m.eval(&env).unwrap() - 2.0).abs() < EPS);
+        assert!((m.eval_scalar(&env).unwrap() - 2.0).abs() < EPS);
     }
 
     #[test]
@@ -396,7 +582,7 @@ mod tests {
         // 严格模式（默认）：除零 -> NonFinite
         assert!(matches!(expr.eval(&env), Err(EvalError::NonFinite { .. })));
         // 非严格模式：允许 inf 传播
-        let v = expr.eval_with(&env, EvalMode { strict: false }).unwrap();
+        let v = expr.eval_scalar_with(&env, EvalMode { strict: false }).unwrap();
         assert!(v.is_infinite());
     }
 
@@ -462,6 +648,47 @@ mod tests {
         // max/min
         assert!((eval_str("(max 1 5 3)", &env).unwrap() - 5.0).abs() < EPS);
         assert!((eval_str("(min 1 5 3)", &env).unwrap() - 1.0).abs() < EPS);
+    }
+
+    // ---- V0：向量值 + 广播 ----
+
+    #[test]
+    fn test_vector_broadcast_v0() {
+        let env = Env::new();
+        let v = Expr::vector_lit(vec![Expr::Const(1.0), Expr::Const(2.0), Expr::Const(3.0)]);
+        // 向量字面量
+        assert_eq!(v.eval(&env).unwrap(), Value::Vector(vec![1.0, 2.0, 3.0]));
+        // 标量广播：2 * [1,2,3] = [2,4,6]
+        let scaled = Expr::mul(Expr::Const(2.0), v.clone());
+        assert_eq!(scaled.eval(&env).unwrap(), Value::Vector(vec![2.0, 4.0, 6.0]));
+        // 同形状逐元素：[1,2,3] + [10,20,30]
+        let v2 = Expr::vector_lit(vec![Expr::Const(10.0), Expr::Const(20.0), Expr::Const(30.0)]);
+        assert_eq!(
+            Expr::add(v.clone(), v2).eval(&env).unwrap(),
+            Value::Vector(vec![11.0, 22.0, 33.0])
+        );
+        // 算子逐元素（注册表算子免费支持）：exp([0,1]) = [1, e]
+        let env2 = Env::new().with("x", vec![0.0, 1.0]);
+        match parse_to_expr("(exp x)").unwrap().eval(&env2).unwrap() {
+            Value::Vector(d) => {
+                assert!((d[0] - 1.0).abs() < EPS && (d[1] - std::f64::consts::E).abs() < 1e-9);
+            }
+            other => panic!("应为向量: {other:?}"),
+        }
+        // 形状不匹配 -> ShapeMismatch
+        let bad = Expr::add(
+            Expr::vector_lit(vec![Expr::Const(1.0), Expr::Const(2.0), Expr::Const(3.0)]),
+            Expr::vector_lit(vec![Expr::Const(1.0), Expr::Const(2.0)]),
+        );
+        assert!(matches!(bad.eval(&env), Err(EvalError::ShapeMismatch { .. })));
+        // 向量当标量用 -> NotScalar
+        assert!(matches!(v.eval(&env).unwrap().as_scalar(), Err(EvalError::NotScalar)));
+        // max 逐元素：max([1,5],[3,2]) = [3,5]
+        let mx = Expr::Max(vec![
+            Expr::vector_lit(vec![Expr::Const(1.0), Expr::Const(5.0)]),
+            Expr::vector_lit(vec![Expr::Const(3.0), Expr::Const(2.0)]),
+        ]);
+        assert_eq!(mx.eval(&env).unwrap(), Value::Vector(vec![3.0, 5.0]));
     }
 
     // ---- greenhouse.sexpr 验收：每个算子能求值，且与内联 Rust 参考一致 ----

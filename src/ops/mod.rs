@@ -574,7 +574,7 @@ mod tests {
     #[test]
     fn test_sign_eval_and_codegen_consistent() {
         let e = Expr::sign(Expr::Const(-2.0));
-        assert_eq!(e.eval(&Env::new()).unwrap(), -1.0);
+        assert_eq!(e.eval_scalar(&Env::new()).unwrap(), -1.0);
         let rust = e.to_rust();
         assert!(rust.contains("if x_ > 0.0"), "rust = {rust}");
         assert!(!rust.contains("signum"), "rust 不应再用 signum: {rust}");
@@ -586,7 +586,7 @@ mod tests {
     #[test]
     fn test_mod_eval_and_codegen_consistent() {
         let e = Expr::modulo(Expr::Const(-7.0), Expr::Const(3.0));
-        assert!((e.eval(&Env::new()).unwrap() - 2.0).abs() < 1e-12);
+        assert!((e.eval_scalar(&Env::new()).unwrap() - 2.0).abs() < 1e-12);
         let rust = e.to_rust();
         assert!(rust.contains(".floor()"), "rust = {rust}");
         assert!(!rust.contains("rem_euclid"), "rust 不应再用 rem_euclid: {rust}");
