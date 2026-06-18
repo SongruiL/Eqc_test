@@ -516,6 +516,10 @@ h2 .sub { color:var(--sub); font-weight:400; font-size:13px; margin-left:8px; }
 .eqhead .eqid { color:var(--sub); font-weight:400; font-size:12px; margin-left:8px; }
 .eq math { font-size:1.25em; margin:8px 0; }
 .meta { color:var(--sub); font-size:12px; margin-top:6px; }
+.fdisp { font-family:"Cambria Math","Times New Roman",serif; color:#334155; font-size:13px; margin:4px 0; }
+.cite { font-size:12px; margin-top:6px; padding:3px 8px; border-radius:6px; display:inline-block;
+  background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; }
+.cite.nocite { background:#fffbeb; color:#b45309; border-color:#fde68a; }
 .legend { margin:8px 28px; font-size:12px; color:var(--sub); }
 .legend span { display:inline-block; padding:1px 8px; border-radius:4px; margin-right:8px; }
 .empty { color:var(--sub); padding:8px; }
@@ -566,15 +570,25 @@ pub fn generate_report(files: &[EquationFile], dag: &Dag) -> String {
             } else {
                 format!("输出：{} · 单位 {}", xml(&eq.output), xml(&unit))
             };
+            // 可读公式（若提供）
+            let fdisp = eq
+                .formula_display
+                .as_ref()
+                .map(|s| format!("<div class=\"fdisp\">{}</div>", xml(s)))
+                .unwrap_or_default();
+            // 来源标注：有则显示「📖 来源」，无则高亮「未标注来源」以便发现出处缺口
+            let cite = match &eq.reference {
+                Some(r) => format!("<div class=\"cite\">📖 来源：{}</div>", xml(r)),
+                None => "<div class=\"cite nocite\">⚠ 未标注来源</div>".to_string(),
+            };
             body.push_str(&format!(
                 "<div class=\"eq\"><div class=\"eqhead\">{}<span class=\"eqid\">{}</span></div>\
                  <math display=\"block\"><mrow>{}<mo>=</mo>{}</mrow></math>\
-                 <div class=\"meta\">{}</div></div>",
+                 {fdisp}<div class=\"meta\">{meta}</div>{cite}</div>",
                 xml(&eq.name),
                 xml(&eq.id),
                 ident(&eq.output),
                 mml(&eq.expression),
-                meta
             ));
         }
     }

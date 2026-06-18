@@ -77,6 +77,12 @@ pub struct EqJson {
     pub mathml: String,
     /// 表达式引用到的名字（变量 + 参数）。
     pub refs: Vec<String>,
+    /// 来源/参考文献（公式出处；多来源模型每条公式应标注）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+    /// 可读公式（仅供展示）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub formula_display: Option<String>,
 }
 
 /// 把一组方程文件导出为契约 JSON 结构。
@@ -133,6 +139,8 @@ fn module_json(f: &EquationFile) -> ModuleJson {
                 output: e.output.clone(),
                 mathml: crate::report::expr_mathml(&e.expression),
                 refs,
+                reference: e.reference.clone(),
+                formula_display: e.formula_display.clone(),
             }
         })
         .collect();
