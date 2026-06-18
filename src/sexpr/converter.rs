@@ -407,6 +407,11 @@ impl Converter {
             "cross" => self.binary_op(args, Expr::cross, "cross"),
             "vec_norm" => self.unary_op(args, Expr::vec_norm, "vec_norm"),
             "vec_normalize" | "normalize" => self.unary_op(args, Expr::vec_normalize, "normalize"),
+            "vsum" => self.unary_op(args, Expr::vsum, "vsum"),
+            "vprod" => self.unary_op(args, Expr::vprod, "vprod"),
+            "vmean" => self.unary_op(args, Expr::vmean, "vmean"),
+            "vmin" => self.unary_op(args, Expr::vmin, "vmin"),
+            "vmax" => self.unary_op(args, Expr::vmax, "vmax"),
 
             // 矩阵运算
             "matmul" => self.binary_op(args, Expr::mat_mul, "matmul"),

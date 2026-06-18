@@ -198,7 +198,8 @@ impl ExprToYaml {
             Expr::Cross(a, b) => Self::binary("cross", a, b),
             Expr::VecNorm(a) => Self::unary("vec_norm", a),
             Expr::VecNormalize(a) => Self::unary("vec_normalize", a),
-            
+            Expr::Reduce { kind, arg } => Self::unary(kind.name(), arg),
+
             // 矩阵运算
             Expr::MatrixLit(rows) => {
                 let rows_yaml: Vec<Value> = rows.iter().map(|row| {

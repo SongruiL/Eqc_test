@@ -9,6 +9,30 @@ use serde::{Deserialize, Deserializer, Serialize};
 // 核心 AST 枚举定义
 // ============================================
 
+/// 向量归约种类（[`Expr::Reduce`]）：对一个向量的全部元素归约成一个标量。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReduceKind {
+    Sum,
+    Prod,
+    Mean,
+    Min,
+    Max,
+}
+
+impl ReduceKind {
+    /// 规范名（求值错误标签 / 代码生成 / 解析用）。
+    pub fn name(&self) -> &'static str {
+        match self {
+            ReduceKind::Sum => "vsum",
+            ReduceKind::Prod => "vprod",
+            ReduceKind::Mean => "vmean",
+            ReduceKind::Min => "vmin",
+            ReduceKind::Max => "vmax",
+        }
+    }
+}
+
 /// 表达式 AST 节点（强类型）
 ///
 /// 遵循规范文档 3.3 节，每个运算符都是独立的变体。
@@ -338,6 +362,9 @@ pub enum Expr {
 
     /// 向量归一化: v / ‖v‖
     VecNormalize(Box<Expr>),
+
+    /// 向量归约: 对一个向量的全部元素归约成标量（Σ/Π/mean/min/max）
+    Reduce { kind: ReduceKind, arg: Box<Expr> },
 
     // === 矩阵运算（需要 matrix feature）===
     /// 矩阵字面量: [[a,b],[c,d]]
@@ -1705,6 +1732,31 @@ impl Expr {
     /// 创建向量归一化
     pub fn vec_normalize(v: Expr) -> Self {
         Self::VecNormalize(Box::new(v))
+    }
+
+    /// 创建向量归约（Σ/Π/mean/min/max）。
+    pub fn reduce(kind: ReduceKind, arg: Expr) -> Self {
+        Self::Reduce { kind, arg: Box::new(arg) }
+    }
+    /// 向量求和归约 Σ。
+    pub fn vsum(a: Expr) -> Self {
+        Self::reduce(ReduceKind::Sum, a)
+    }
+    /// 向量求积归约 Π。
+    pub fn vprod(a: Expr) -> Self {
+        Self::reduce(ReduceKind::Prod, a)
+    }
+    /// 向量均值归约。
+    pub fn vmean(a: Expr) -> Self {
+        Self::reduce(ReduceKind::Mean, a)
+    }
+    /// 向量最小值归约。
+    pub fn vmin(a: Expr) -> Self {
+        Self::reduce(ReduceKind::Min, a)
+    }
+    /// 向量最大值归约。
+    pub fn vmax(a: Expr) -> Self {
+        Self::reduce(ReduceKind::Max, a)
     }
 
     // --- 矩阵运算 ---
@@ -3282,6 +3334,7 @@ impl Expr {
         match self {
             // 叶子节点
             Expr::Const(_) | Expr::Pi | Expr::E => {}
+            Expr::Reduce { arg, .. } => arg.collect_refs(refs, ref_type),
             Expr::Var(name) => {
                 if matches!(ref_type, RefType::Variable | RefType::All) && !refs.contains(name) {
                     refs.push(name.clone());
@@ -3738,6 +3791,8 @@ impl Expr {
         match self {
             Expr::Const(_) | Expr::Var(_) | Expr::Param(_) | Expr::Pi | Expr::E => 1,
 
+            Expr::Reduce { arg, .. } => 1 + arg.depth(),
+
             Expr::Neg(a)
             | Expr::Abs(a)
             | Expr::Ceil(a)
@@ -4088,6 +4143,16 @@ impl Expr {
             Expr::Param(name) => format!("{}.{}", params_prefix, name),
             Expr::Pi => "np.pi".to_string(),
             Expr::E => "np.e".to_string(),
+            Expr::Reduce { kind, arg } => {
+                let f = match kind {
+                    ReduceKind::Sum => "sum",
+                    ReduceKind::Prod => "prod",
+                    ReduceKind::Mean => "mean",
+                    ReduceKind::Min => "min",
+                    ReduceKind::Max => "max",
+                };
+                format!("np.{}({})", f, arg.to_python(params_prefix))
+            }
 
             // 算术运算
             Expr::Add(a, b) => format!("({} + {})", a.to_python(params_prefix), b.to_python(params_prefix)),
@@ -4721,6 +4786,16 @@ impl Expr {
             Expr::Param(name) => name.clone(),
             Expr::Pi => "std::f64::consts::PI".to_string(),
             Expr::E => "std::f64::consts::E".to_string(),
+            Expr::Reduce { kind, arg } => {
+                let m = match kind {
+                    ReduceKind::Sum => "sum",
+                    ReduceKind::Prod => "product",
+                    ReduceKind::Mean => "mean",
+                    ReduceKind::Min => "min",
+                    ReduceKind::Max => "max",
+                };
+                format!("({}).{}()", arg.to_rust(), m)
+            }
 
             // 算术运算
             Expr::Add(a, b) => format!("({} + {})", a.to_rust(), b.to_rust()),
@@ -5362,6 +5437,9 @@ impl Expr {
             Expr::Param(name) => Self::name_to_latex(name),
             Expr::Pi => "\\pi".to_string(),
             Expr::E => "e".to_string(),
+            Expr::Reduce { kind, arg } => {
+                format!("\\operatorname{{{}}}\\left({}\\right)", kind.name(), arg.to_latex())
+            }
 
             // 算术运算
             Expr::Add(a, b) => format!("{} + {}", a.to_latex(), b.to_latex()),
@@ -5979,6 +6057,11 @@ impl Expr {
             Expr::Param(name) if name == var => replacement.clone(),
 
             Expr::Const(_) | Expr::Var(_) | Expr::Param(_) | Expr::Pi | Expr::E => self.clone(),
+
+            Expr::Reduce { kind, arg } => Expr::Reduce {
+                kind: *kind,
+                arg: Box::new(arg.substitute(var, replacement)),
+            },
 
             // 一元运算
             Expr::Neg(a) => Expr::neg(a.substitute(var, replacement)),
@@ -6835,6 +6918,11 @@ impl YamlExpr {
                     "cross" => Self::binary_op(args, Expr::cross, "cross"),
                     "vec_norm" => Self::unary_op(args, Expr::vec_norm, "vec_norm"),
                     "vec_normalize" | "normalize" => Self::unary_op(args, Expr::vec_normalize, "normalize"),
+                    "vsum" => Self::unary_op(args, Expr::vsum, "vsum"),
+                    "vprod" => Self::unary_op(args, Expr::vprod, "vprod"),
+                    "vmean" => Self::unary_op(args, Expr::vmean, "vmean"),
+                    "vmin" => Self::unary_op(args, Expr::vmin, "vmin"),
+                    "vmax" => Self::unary_op(args, Expr::vmax, "vmax"),
 
                     // 矩阵运算
                     "matmul" => Self::binary_op(args, Expr::mat_mul, "matmul"),

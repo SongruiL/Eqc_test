@@ -267,6 +267,54 @@ fn ev(expr: &Expr, env: &mut Env, mode: EvalMode) -> Result<Value, EvalError> {
             Ok(Value::Matrix { rows: r, cols: c, data })
         }
 
+        // === 向量算子（V1：AST 已有，此处补求值）===
+        Expr::Reduce { kind, arg } => {
+            let v = ev(arg, env, mode)?;
+            let r = reduce_value(*kind, &v)?;
+            Ok(Value::Scalar(chk(kind.name(), r, mode)?))
+        }
+        Expr::Dot(a, b) => {
+            let (da, db) = (ev(a, env, mode)?, ev(b, env, mode)?);
+            let (u, v) = (require_vec(&da, "dot")?, require_vec(&db, "dot")?);
+            if u.len() != v.len() {
+                return Err(EvalError::ShapeMismatch { op: "dot".into() });
+            }
+            let r: f64 = u.iter().zip(v).map(|(x, y)| x * y).sum();
+            Ok(Value::Scalar(chk("dot", r, mode)?))
+        }
+        Expr::Cross(a, b) => {
+            let (da, db) = (ev(a, env, mode)?, ev(b, env, mode)?);
+            let (u, v) = (require_vec(&da, "cross")?, require_vec(&db, "cross")?);
+            if u.len() != 3 || v.len() != 3 {
+                return Err(EvalError::ShapeMismatch { op: "cross".into() });
+            }
+            let out = vec![
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+            ];
+            for &x in &out {
+                chk("cross", x, mode)?;
+            }
+            Ok(Value::Vector(out))
+        }
+        Expr::VecNorm(a) => {
+            let da = ev(a, env, mode)?;
+            let u = require_vec(&da, "norm")?;
+            let r = u.iter().map(|x| x * x).sum::<f64>().sqrt();
+            Ok(Value::Scalar(chk("norm", r, mode)?))
+        }
+        Expr::VecNormalize(a) => {
+            let da = ev(a, env, mode)?;
+            let u = require_vec(&da, "normalize")?;
+            let n = u.iter().map(|x| x * x).sum::<f64>().sqrt();
+            let mut out = Vec::with_capacity(u.len());
+            for &x in u {
+                out.push(chk("normalize", x / n, mode)?);
+            }
+            Ok(Value::Vector(out))
+        }
+
         // === 特殊形式（条件 / 上下限须为标量）===
         Expr::IfThenElse { cond, then_branch, else_branch } => {
             if ev(cond, env, mode)?.as_scalar()? != 0.0 {
@@ -494,6 +542,37 @@ fn nary(
     }
 }
 
+/// 要求是向量（取切片）；否则 [`EvalError::ShapeMismatch`]。
+fn require_vec<'a>(v: &'a Value, op: &str) -> Result<&'a [f64], EvalError> {
+    match v {
+        Value::Vector(d) => Ok(d),
+        _ => Err(EvalError::ShapeMismatch { op: op.to_string() }),
+    }
+}
+
+/// 向量归约（标量视为自身；矩阵对全部元素归约）。
+fn reduce_value(kind: crate::ast::ReduceKind, v: &Value) -> Result<f64, EvalError> {
+    use crate::ast::ReduceKind::*;
+    let d: &[f64] = match v {
+        Value::Scalar(x) => return Ok(*x),
+        Value::Vector(d) => d,
+        Value::Matrix { data, .. } => data,
+    };
+    Ok(match kind {
+        Sum => d.iter().sum(),
+        Prod => d.iter().product(),
+        Mean => {
+            if d.is_empty() {
+                f64::NAN
+            } else {
+                d.iter().sum::<f64>() / d.len() as f64
+            }
+        }
+        Min => d.iter().cloned().fold(f64::INFINITY, f64::min),
+        Max => d.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+    })
+}
+
 /// 严格模式下：非有限结果报错。
 fn chk(op: &str, v: f64, mode: EvalMode) -> Result<f64, EvalError> {
     if mode.strict && !v.is_finite() {
@@ -689,6 +768,61 @@ mod tests {
             Expr::vector_lit(vec![Expr::Const(3.0), Expr::Const(2.0)]),
         ]);
         assert_eq!(mx.eval(&env).unwrap(), Value::Vector(vec![3.0, 5.0]));
+    }
+
+    // ---- V1：向量算子（归约 / 点积 / 范数 / 归一化 / 叉积）----
+
+    #[test]
+    fn test_vector_ops_v1() {
+        use crate::ast::ReduceKind;
+        let env = Env::new().with("v", vec![3.0, 4.0]).with("u", vec![1.0, 2.0, 3.0]);
+
+        // 归约
+        assert_eq!(Expr::reduce(ReduceKind::Sum, Expr::var("u")).eval_scalar(&env).unwrap(), 6.0);
+        assert!((Expr::reduce(ReduceKind::Mean, Expr::var("u")).eval_scalar(&env).unwrap() - 2.0).abs() < EPS);
+        assert_eq!(Expr::reduce(ReduceKind::Max, Expr::var("u")).eval_scalar(&env).unwrap(), 3.0);
+        assert_eq!(Expr::reduce(ReduceKind::Min, Expr::var("u")).eval_scalar(&env).unwrap(), 1.0);
+        assert_eq!(Expr::reduce(ReduceKind::Prod, Expr::var("u")).eval_scalar(&env).unwrap(), 6.0);
+
+        // 点积 [3,4]·[3,4]=25；范数 ‖[3,4]‖=5；归一化=[0.6,0.8]
+        assert_eq!(
+            Expr::Dot(Box::new(Expr::var("v")), Box::new(Expr::var("v"))).eval_scalar(&env).unwrap(),
+            25.0
+        );
+        assert!((Expr::vec_norm(Expr::var("v")).eval_scalar(&env).unwrap() - 5.0).abs() < EPS);
+        match Expr::vec_normalize(Expr::var("v")).eval(&env).unwrap() {
+            Value::Vector(d) => assert!((d[0] - 0.6).abs() < EPS && (d[1] - 0.8).abs() < EPS),
+            o => panic!("应为向量: {o:?}"),
+        }
+
+        // 叉积 [1,0,0]×[0,1,0]=[0,0,1]
+        let cr = Expr::Cross(
+            Box::new(Expr::vector_lit(vec![Expr::Const(1.0), Expr::Const(0.0), Expr::Const(0.0)])),
+            Box::new(Expr::vector_lit(vec![Expr::Const(0.0), Expr::Const(1.0), Expr::Const(0.0)])),
+        );
+        assert_eq!(cr.eval(&env).unwrap(), Value::Vector(vec![0.0, 0.0, 1.0]));
+
+        // 点积长度不一致 -> ShapeMismatch
+        assert!(matches!(
+            Expr::Dot(Box::new(Expr::var("v")), Box::new(Expr::var("u"))).eval(&env),
+            Err(EvalError::ShapeMismatch { .. })
+        ));
+
+        // cohort 写法：gs = 0.24 * DRFG（逐元素），GS = Σ gs
+        let env2 = Env::new().with("DRFG", vec![10.0, 20.0, 0.0]);
+        let gs = Expr::mul(Expr::Const(0.24), Expr::var("DRFG"));
+        let gs_total = Expr::reduce(ReduceKind::Sum, gs);
+        assert!((gs_total.eval_scalar(&env2).unwrap() - 0.24 * 30.0).abs() < EPS);
+
+        // 经解析（S 表达式）：(vsum (vector 1 2 3)) = 6；(dot (vector 3 4) (vector 3 4)) = 25
+        assert_eq!(
+            parse_to_expr("(vsum (vector 1 2 3))").unwrap().eval_scalar(&Env::new()).unwrap(),
+            6.0
+        );
+        assert_eq!(
+            parse_to_expr("(dot (vector 3 4) (vector 3 4))").unwrap().eval_scalar(&Env::new()).unwrap(),
+            25.0
+        );
     }
 
     // ---- greenhouse.sexpr 验收：每个算子能求值，且与内联 Rust 参考一致 ----

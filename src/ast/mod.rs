@@ -16,6 +16,6 @@ pub mod codegen;
 pub mod constructors;
 pub mod parse;
 
-pub use expr::Expr;
+pub use expr::{Expr, ReduceKind};
 pub use visitor::ExprVisitor;
 pub use codegen::{ToPython, ToRust, ToLatex};
