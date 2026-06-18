@@ -1,0 +1,177 @@
+meta:
+  id: STRAWBERRY_V1
+  model: StrawberryV1
+  name_cn: 温室草莓源-库干物质分配模型 v1
+  name_en: Greenhouse strawberry sink-source DM model (Sugiyama 2025 skeleton)
+  description: >
+    照 Sugiyama et al. 2025 (Front. Plant Sci. 16:1544735, OA) 的纯方程骨架建的温室草莓
+    日步长动态模型。光合驱动干物质生产 → 源-库分配到果序 → 累积产量。叶/果序用 cohort
+    （同期群）表达：每个个体各自累积温度、各自生长曲线，再按库强汇总。LAI 与开花日为外部
+    输入（本模型不预测，后续接物候/CO2 子模型）。v1 用合成天气做演示，非验证。
+  reference: Sugiyama T, Kakei Y, Iwasaki Y, Oda A, Isozaki M (2025), Front. Plant Sci. 16:1544735
+
+# ============================================================================
+# 模型短板 / 当前局限（v1）—— 下一步改进方向，按优先级
+# ============================================================================
+# 1. 物候/发育周期是“填写”不是“计算”：各花序首花开花日（anthesis）是外部输入，
+#    LAI 也是外部输入。模型不从环境预测物候与叶面积。
+#    → 下一步：接 BBCH/积温物候子模型算开花日（经 active 门控变量接入，果序方程不变）；
+#      接叶面积子模型从叶生长算 LAI。
+# 2. 没有采摘/移除模拟：果实长到终重就留在株上，“累积果重 ≡ 累积产量”是构造恒等；
+#    不建模采收事件、采后库重释放与再分配反馈（番茄模型有 fruit-load 反馈）。
+#    → 下一步：加成熟阈值→采收移除→库重更新的事件逻辑。
+# 3. LUE 为常数（假定 400 ppm CO₂）：不响应 CO₂ 加富 / 光强 / 发育阶段。
+#    → 下一步：动态 LUE（CO₂、温度、发育）。
+# 4. 缺基点/阈值温度（cardinal temperatures）：导致采收始末产量高估（论文亦承认）。
+# 5. 单品种标定（'Benihoppe'）：跨品种参数可移植性未解决。
+# 6. 果实品质/糖度（Brix）无机理方程：只算产量(鲜重)，不算品质（文献空白，GP 创新点）。
+# 7. 连续/反复开花未建模：花序数量固定枚举（v1=3）；真实为 4–6 个离散花序批次(flushes)，
+#    数量与时序随品种/环境变。cohort 数量目前是“上限枚举 + 门控”，非真正按需出生。
+# 8. 当前用合成天气做演示，未验证：量级偏离论文（TDM≈1257 vs 628 g/m²），
+#    要对照论文 R²=0.99 需真实 'Benihoppe' 逐日 T/Sr/LAI + 各花序开花日。
+# ============================================================================
+
+# —— 同期群（cohort）：果序 q、叶片 p ——
+cohorts:
+  fruit: { size: 3, index: q }     # 3 个花序/果序（演示版）
+  leaf:  { size: 12, index: p }    # 至多 12 片叶（按积温自然出叶，未出叶者贡献~0）
+
+parameters:
+  k:    { name_cn: 消光系数,       default: 0.85, unit: "-" }          # Eq.2
+  LUE:  { name_cn: 光能利用率,     default: 2.75, unit: "g/MJ" }       # Tab.2 (2.75 g/MJ)
+  DMC:  { name_cn: 果实干物质含量, default: 0.10, unit: "g/g" }        # Tab.2 (0.10)
+  Pd:   { name_cn: 种植密度,       default: 7.05, unit: "plant/m2" }   # Tab.2
+  # 各果序首花开花日（DAT）。cohort 参数：每个果序一个值，可被外部情景覆盖。
+  anthesis: { cohort: fruit, name_cn: 首花开花日, values: [40, 80, 120], unit: d }
+
+variables:
+  # —— 驱动量（外部逐日输入）——
+  Sr:  { type: input, class: driving, unit: "MJ/m2", description: 太阳辐射 }
+  T:   { type: input, class: driving, unit: degC,    description: 日均温 }
+  LAI: { type: input, class: driving, unit: "m2/m2", description: 叶面积指数（实测/插值，外部输入）}
+
+  # —— 冠层光合与总干物质（标量）——
+  PAR: { class: auxiliary, unit: "MJ/m2", description: 光合有效辐射 }          # Eq.1
+  I:   { class: auxiliary, unit: "MJ/m2", description: 截获光 }                # Eq.2
+  DDM: { class: rate, unit: "g/m2/d", description: 当日干物质生产 }            # Eq.3
+  TDM: { type: output, class: state, init: 19.9, rate: DDM, unit: "g/m2", description: 累积总干物质 } # Eq.4 (init TDM0)
+  CT:  { class: state, init: 0.0, rate: T, unit: degC, description: 自移栽累积温度 }                  # Eq.5
+
+  # —— 叶片 cohort：相对生长 → 营养库强 ——
+  RLG:      { cohort: leaf, description: 叶 p 相对生长 }                       # Eq.6
+  RLG_prev: { cohort: leaf, class: semi_state, init: 0.0, prev: RLG, description: 上一步 RLG }
+  DRLG:     { cohort: leaf, description: 叶 p 日增量 }                         # Eq.7
+  vsleaf:   { cohort: leaf, description: 叶 p 营养库强分量(0.07*DRLG) }        # Eq.12 项
+
+  # —— 果序 cohort：累积温度 → 相对生长 → 生殖库强 → 干物质 ——
+  active:   { cohort: fruit, description: 0/1 开花门控 }
+  rateTF:   { cohort: fruit, class: rate, description: TF 速率(=T*active) }
+  TF:       { cohort: fruit, class: state, init: 0.0, rate: rateTF, unit: degC, description: 果序 q 自开花累积温度 } # Eq.8
+  RFG:      { cohort: fruit, description: 果序 q 相对生长 }                    # Eq.9
+  RFG_prev: { cohort: fruit, class: semi_state, init: 0.000217, prev: RFG, description: 上一步 RFG }
+  DRFG:     { cohort: fruit, description: 果序 q 日增量(*25) }                 # Eq.10
+  gs:       { cohort: fruit, description: 果序 q 生殖库强(0.24*DRFG) }         # Eq.11 项
+  DMF:      { cohort: fruit, unit: "g/plant", description: 分到果序 q 的干物质 } # Eq.14(消去ΣDRFG的等价形式)
+  DF:       { cohort: fruit, class: state, init: 0.0, rate: DMF, unit: "g/plant", description: 果序 q 干重 } # Eq.15
+  FF:       { cohort: fruit, unit: "g/plant", description: 果序 q 鲜重 }       # Eq.16
+
+  # —— 库强汇总与产量（标量）——
+  GS:         { class: auxiliary, description: 总生殖库强 }                    # Eq.11
+  VS:         { class: auxiliary, description: 总营养库强 }                    # Eq.12
+  sink_total: { class: auxiliary, description: 总库强(护栏 max ε) }
+  AF:         { type: output, description: 分配给果实的比例 }                  # Eq.13
+  F:          { class: auxiliary, unit: "g/plant", description: 全株果实鲜重 } # Eq.17
+  Y:          { type: output, unit: "kg/m2", description: 单位面积累积产量 }   # Eq.18
+
+equations:
+  # 标量：光合链
+  - { id: SB-01, name: 光合有效辐射, output: PAR,
+      expression: { op: mul, args: [ { const: 0.5 }, { ref: Sr } ] } }
+  - { id: SB-02, name: 截获光, output: I,
+      expression: { op: mul, args: [ { ref: PAR },
+        { op: sub, args: [ { const: 1 },
+          { op: exp, args: [ { op: neg, args: [ { op: mul, args: [ { ref: k }, { ref: LAI } ] } ] } ] } ] } ] } }
+  - { id: SB-03, name: 当日干物质, output: DDM,
+      expression: { op: mul, args: [ { ref: I }, { ref: LUE } ] } }
+
+  # 叶片 cohort（按 p 展开）
+  - id: SB-06
+    name: 叶相对生长
+    output: RLG
+    cohort: leaf
+    # RLG_p = 1 - 1/(1+exp(((CT-160p)-218.86)/74.61))
+    expression:
+      op: sub
+      args:
+        - { const: 1 }
+        - op: div
+          args:
+            - { const: 1 }
+            - op: add
+              args:
+                - { const: 1 }
+                - op: exp
+                  args:
+                    - op: div
+                      args:
+                        - op: sub
+                          args:
+                            - { op: sub, args: [ { ref: CT }, { op: mul, args: [ { const: 160 }, { idx: p } ] } ] }
+                            - { const: 218.86 }
+                        - { const: 74.61 }
+  - { id: SB-07, name: 叶日增量, output: DRLG, cohort: leaf,
+      expression: { op: sub, args: [ { ref: RLG, at: p }, { ref: RLG_prev, at: p } ] } }
+  - { id: SB-12a, name: 叶营养库强分量, output: vsleaf, cohort: leaf,
+      expression: { op: mul, args: [ { const: 0.07 }, { ref: DRLG, at: p } ] } }
+
+  # 果序 cohort（按 q 展开）
+  - { id: SB-08a, name: 开花门控, output: active, cohort: fruit,
+      expression: { op: geq, args: [ { ref: DAT }, { ref: anthesis, at: q } ] } }
+  - { id: SB-08b, name: TF速率, output: rateTF, cohort: fruit,
+      expression: { op: mul, args: [ { ref: T }, { ref: active, at: q } ] } }
+  - id: SB-09
+    name: 果序相对生长
+    output: RFG
+    cohort: fruit
+    # RFG_q = 1/(1 + 4615.91*exp(-0.011*TF_q))
+    expression:
+      op: div
+      args:
+        - { const: 1 }
+        - op: add
+          args:
+            - { const: 1 }
+            - op: mul
+              args:
+                - { const: 4615.91 }
+                - { op: exp, args: [ { op: mul, args: [ { const: -0.011 }, { ref: TF, at: q } ] } ] }
+  # DRFG ≥ 0：果实相对生长 RFG 对单调递增的 TF 单调递增，增量本应非负；
+  # max(0,·) 护栏消除 RFG_prev 初值与数值噪声带来的亚 ε 负值（冷启动）。
+  - { id: SB-10, name: 果序日增量, output: DRFG, cohort: fruit,
+      expression: { op: max, args: [ { const: 0 },
+        { op: mul, args: [ { const: 25 },
+          { op: sub, args: [ { ref: RFG, at: q }, { ref: RFG_prev, at: q } ] } ] } ] } }
+  - { id: SB-11a, name: 果序生殖库强, output: gs, cohort: fruit,
+      expression: { op: mul, args: [ { const: 0.24 }, { ref: DRFG, at: q } ] } }
+  # DMF_q = (DDM/Pd) * gs_q / sink_total  （= Eq.14 消去 ΣDRFG 的等价、无奇点形式）
+  - { id: SB-14, name: 分到果序干物质, output: DMF, cohort: fruit,
+      expression: { op: div, args: [
+        { op: mul, args: [ { op: div, args: [ { ref: DDM }, { ref: Pd } ] }, { ref: gs, at: q } ] },
+        { ref: sink_total } ] } }
+  - { id: SB-16, name: 果序鲜重, output: FF, cohort: fruit,
+      expression: { op: div, args: [ { ref: DF, at: q }, { ref: DMC } ] } }
+
+  # 标量：库强汇总 + 产量
+  - { id: SB-11, name: 总生殖库强, output: GS,
+      expression: { op: sum_over, over: fruit, body: { ref: gs, at: q } } }
+  - { id: SB-12, name: 总营养库强, output: VS,
+      expression: { op: mul, args: [ { const: 1.3 },
+        { op: sum_over, over: leaf, body: { ref: vsleaf, at: p } } ] } }
+  - { id: SB-12b, name: 总库强护栏, output: sink_total,
+      expression: { op: max, args: [ { op: add, args: [ { ref: VS }, { ref: GS } ] }, { const: 0.000000001 } ] } }
+  - { id: SB-13, name: 果实分配比, output: AF,
+      expression: { op: div, args: [ { ref: GS }, { ref: sink_total } ] } }
+  - { id: SB-17, name: 全株果实鲜重, output: F,
+      expression: { op: sum_over, over: fruit, body: { ref: FF, at: q } } }
+  - { id: SB-18, name: 单位面积产量, output: Y,
+      expression: { op: div, args: [ { op: mul, args: [ { ref: F }, { ref: Pd } ] }, { const: 1000 } ] } }

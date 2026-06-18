@@ -1,0 +1,226 @@
+meta:
+  id: STRAWBERRY_S4
+  model: StrawberryS4
+  name_cn: 温室草莓模型 S4（物候 + 基点温度 + 叶面积 + 采收速率 + 动态LUE）
+  name_en: Greenhouse strawberry model — phenology, cardinal temp, computed LAI, harvest rate, dynamic LUE(CO2)
+  description: >
+    在 S1 基础上做 S2：把 LAI 从输入变成计算——追踪叶干重 WLV（营养干物质分配到叶），
+    LAI = SLA × 叶干重（WOFOST/SUCROS/CROPGRO 标准式；SLA 取 Hopf 2022 草莓 SLAVR）。
+    顺带补上 Sugiyama 把营养干物质「丢掉」的旧漏。完成后模型只靠天气(T、Sr)+初始状态预测，
+    不再需要手填 LAI 或开花日。每条公式 reference 标来源。
+  reference: 多来源——Sugiyama 2025；Labadie 2019；Hopf 2022；de Koning 1994/Heuvelink 1996（详见各方程）
+
+# ============================================================================
+# S2 来源与诚实标注
+# ----------------------------------------------------------------------------
+# - LAI = SLA × 叶干重：形式为跨作物通行标准（WOFOST/SUCROS/CROPGRO）；SLA 数值取草莓自家的
+#   Hopf 2022 SLAVR（三品种 200/200/300 cm²/g），此处取常数 250 cm²/g【待重标定】。
+# - 叶得到营养干物质的份额用 Sugiyama 自身的「叶干重/营养器官干重 = 1/1.3」系数(Eq.12)拆；
+#   源-库分配框架 de Koning 1994 / Heuvelink 1996。
+# - LAI 用【前一日】叶干重计算（标准做法：今日冠层=昨日长好的叶），借延迟寄存器破步内环。
+# - 初始叶干重 WLV0=2.0 g/plant 为初始状态估计（由 Sugiyama TDM0=19.9 g/m² 推；待标定）。
+# - 计算出的 LAI 轨迹未必等于 S1 里手填的 LAI——这正是「由输入变计算」的结果，magnitude 待标定。
+# - S1 的物候/基点温度局限不变（Labadie 阈值借用、合成天气演示）。
+# ============================================================================
+
+cohorts:
+  fruit: { size: 6, index: q }
+  leaf:  { size: 18, index: p }
+
+parameters:
+  k:    { name_cn: 消光系数,       default: 0.85, unit: "-" }
+  LUE:  { name_cn: 参考光能利用率(400ppm), default: 2.75, unit: "g/MJ" }  # Sugiyama 2025 在 400 ppm 下的值
+  Cref: { name_cn: 参考CO2浓度,    default: 400.0, unit: "ppm" }  # 归一化基准(Sugiyama 假定值)
+  Kc:   { name_cn: CO2半饱和常数,  default: 340.0, unit: "ppm" }  # 直角双曲线半饱和，估计值待重标定
+  DMC:  { name_cn: 果实干物质含量, default: 0.10, unit: "g/g" }
+  Pd:   { name_cn: 种植密度,       default: 7.05, unit: "plant/m2" }
+  SLA:  { name_cn: 比叶面积,       default: 250.0, unit: "cm2/g" }  # Hopf 2022 SLAVR 中值，待重标定
+  ksen: { name_cn: 叶衰老周转率,   default: 0.016667, unit: "1/d" }  # ≈1/60，叶寿命~60天，估计值待重标定
+  anthesisGDD: { name_cn: 各花序开花积温阈值, values: [486, 789, 1030, 2288, 2450, 2612], unit: "degC*d" }
+  leaf_idx: { name_cn: 叶序号, values: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18], unit: "-" }
+
+variables:
+  # —— 驱动量：天气 + CO2（管理输入）——
+  Sr:  { type: input, class: driving, unit: "MJ/m2", description: 太阳辐射 }
+  T:   { type: input, class: driving, unit: degC,    description: 日均温 }
+  CO2: { type: input, class: control, unit: "ppm",   description: 温室CO2浓度(管理决策输入) }
+
+  # 冠层（标量）
+  PAR:     { class: auxiliary, unit: "MJ/m2" }
+  I:       { class: auxiliary, unit: "MJ/m2" }
+  f_CO2:   { type: output, class: auxiliary, unit: "-", description: LUE 的 CO2 响应因子(400ppm时=1) }
+  LUE_dyn: { type: output, class: auxiliary, unit: "g/MJ", description: 动态光能利用率(=LUE·f_CO2) }
+  DDM: { class: rate, unit: "g/m2/d" }
+  TDM: { type: output, class: state, init: 19.9, rate: DDM, unit: "g/m2", description: 累积总干物质 }
+  CT:  { class: state, init: 0.0, rate: T, unit: "degC*d", description: 自移栽累积温度(=GDD,Tbase=0) }
+  fT:  { type: output, class: auxiliary, unit: "-", description: 基点温度果实生长限制因子(0-1) }
+
+  # —— 叶干重与叶面积（S2 新增）——
+  leaf_dm:  { class: rate, unit: "g/plant/d", description: 分配到叶的干物质(生长，毛) }
+  wlv_rate: { class: rate, unit: "g/plant/d", description: 叶干重净速率(生长−衰老) }
+  WLV:      { type: output, class: state, init: 2.0, rate: wlv_rate, unit: "g/plant", description: 活叶干重 }
+  WLV_prev: { class: semi_state, init: 2.0, prev: WLV, unit: "g/plant", description: 上一日叶干重 }
+  LAI:      { type: output, class: auxiliary, unit: "m2/m2", description: 叶面积指数(计算所得) }
+
+  # 叶相对生长（向量；用于营养库强）
+  RLG:      { class: auxiliary }
+  RLG_prev: { class: semi_state, init: 0.0, prev: RLG }
+  DRLG:     { class: auxiliary }
+  vsleaf:   { class: auxiliary }
+
+  # 果序（向量，长度 6）
+  active:   { class: auxiliary, description: 各花序开花门控(CT≥阈值) }
+  rateTF:   { class: rate }
+  TF:       { class: state, init: 0.0, rate: rateTF, unit: "degC*d" }
+  RFG:      { class: auxiliary }
+  RFG_prev: { class: semi_state, init: 0.000217, prev: RFG }
+  DRFG:     { class: auxiliary }
+  gs:       { class: auxiliary }
+  DMF:      { class: auxiliary, unit: "g/plant" }
+  DF:       { class: state, init: 0.0, rate: DMF, unit: "g/plant" }
+  FF:       { class: auxiliary, unit: "g/plant" }
+
+  # 汇总与产量（标量）
+  GS:         { class: auxiliary }
+  VS:         { class: auxiliary }
+  sink_total: { class: auxiliary }
+  AF:         { type: output, description: 果实分配比 }
+  F:          { class: auxiliary, unit: "g/plant" }
+  Y:          { type: output, unit: "kg/m2", description: 单位面积累积产量(=累积采收，见 RFG) }
+  # —— S3：采收速率（累积采收 Y 的差分；采收已隐含于 Sugiyama RFG，不动核心）——
+  Y_prev:        { class: semi_state, init: 0.0, prev: Y, unit: "kg/m2", description: 上一日累积产量 }
+  harvest_rate:  { type: output, class: auxiliary, unit: "kg/m2/d", description: 日采收速率(月产量=其月度求和) }
+
+equations:
+  # —— 叶面积（S2 新增）：LAI 用前一日叶干重，避免步内环 ——
+  - { id: SB-LAI, name: 叶面积指数, output: LAI,
+      reference: "LAI=SLA·叶干重（WOFOST/SUCROS/CROPGRO 标准式，跨作物通行）；SLA 取 Hopf 2022 草莓 SLAVR；用前一日 WLV 破步内环；×1e-4 为 cm²→m²",
+      expression: { op: mul, args: [ { op: mul, args: [ { ref: SLA }, { ref: WLV_prev } ] },
+                                     { op: mul, args: [ { ref: Pd }, { const: 0.0001 } ] } ] } }
+
+  # 冠层
+  - { id: SB-01, name: 光合有效辐射, output: PAR, reference: "Sugiyama 2025 Eq.1 (PAR=0.5·Sr)",
+      expression: { op: mul, args: [ { const: 0.5 }, { ref: Sr } ] } }
+  - { id: SB-02, name: 截获光, output: I, reference: "Sugiyama 2025 Eq.2 (Beer: I=PAR·(1−e^(−k·LAI)))",
+      expression: { op: mul, args: [ { ref: PAR },
+        { op: sub, args: [ { const: 1 },
+          { op: exp, args: [ { op: neg, args: [ { op: mul, args: [ { ref: k }, { ref: LAI } ] } ] } ] } ] } ] } }
+  # —— 动态 LUE（S4 新增）：CO2 响应因子 + 动态 LUE，DDM 用动态 LUE ——
+  # f_CO2 = (CO2/Cref)·((Cref+Kc)/(CO2+Kc))：归一化直角双曲线，f(400)=1
+  - { id: SB-CO2, name: LUE的CO2响应因子, output: f_CO2,
+      reference: "动态 LUE-CO2 概念源 Higashide & Heuvelink 2009(番茄，Sugiyama 引)；函数取标准光合 CO2 饱和(直角双曲线/Michaelis-Menten)归一化到 Cref=400ppm；Kc=340ppm 半饱和为估计值，待重标定",
+      expression: { op: mul, args: [
+        { op: div, args: [ { ref: CO2 }, { ref: Cref } ] },
+        { op: div, args: [ { op: add, args: [ { ref: Cref }, { ref: Kc } ] }, { op: add, args: [ { ref: CO2 }, { ref: Kc } ] } ] } ] } }
+  - { id: SB-LUE, name: 动态光能利用率, output: LUE_dyn, reference: "LUE_dyn = 参考LUE(Sugiyama 2025,400ppm) × f_CO2(SB-CO2)",
+      expression: { op: mul, args: [ { ref: LUE }, { ref: f_CO2 } ] } }
+  - { id: SB-03, name: 当日干物质, output: DDM, reference: "Sugiyama 2025 Eq.3 (ΔDM=I·LUE)；S4 用动态 LUE_dyn 替常数 LUE",
+      expression: { op: mul, args: [ { ref: I }, { ref: LUE_dyn } ] } }
+
+  # 基点温度因子
+  - id: SB-FT
+    name: 基点温度果实生长因子
+    output: fT
+    reference: "Hopf 2022 (CROPGRO-Strawberry) Table 3 果实生长基点 Tb8.5/Topt20-24/Tmax40；daily 分段线性近似（原为 hourly 抛物线 QDR）"
+    expression:
+      op: max
+      args:
+        - { const: 0 }
+        - op: min
+          args:
+            - { op: div, args: [ { op: sub, args: [ { ref: T }, { const: 8.5 } ] }, { const: 11.5 } ] }
+            - { const: 1 }
+            - { op: div, args: [ { op: sub, args: [ { const: 40 }, { ref: T } ] }, { const: 16 } ] }
+
+  # 叶相对生长（向量）
+  - id: SB-06
+    name: 各叶相对生长
+    output: RLG
+    reference: "Sugiyama 2025 Eq.6 (Chen 2009 叶相对生长；叶发生间隔 160 °C·d)"
+    expression:
+      op: sub
+      args:
+        - { const: 1 }
+        - op: div
+          args:
+            - { const: 1 }
+            - op: add
+              args:
+                - { const: 1 }
+                - op: exp
+                  args:
+                    - op: div
+                      args:
+                        - op: sub
+                          args:
+                            - { op: sub, args: [ { ref: CT }, { op: mul, args: [ { const: 160 }, { ref: leaf_idx } ] } ] }
+                            - { const: 218.86 }
+                        - { const: 74.61 }
+  - { id: SB-07, name: 各叶日增量, output: DRLG, reference: "Sugiyama 2025 Eq.7 (ΔRLG)",
+      expression: { op: sub, args: [ { ref: RLG }, { ref: RLG_prev } ] } }
+  - { id: SB-12a, name: 各叶营养库强分量, output: vsleaf, reference: "Sugiyama 2025 Eq.12 项 (0.07·ΔRLG)",
+      expression: { op: mul, args: [ { const: 0.07 }, { ref: DRLG } ] } }
+
+  # 物候
+  - { id: SB-PHEN, name: 各花序开花门控, output: active,
+      reference: "物候计算：Labadie 2019 GDD(Tbase=0) 批次阈值 486/789/1030 + 2nd 起 2288；单花序分配为本模型指派；借用值待 'Benihoppe' 重标定",
+      expression: { op: geq, args: [ { ref: CT }, { ref: anthesisGDD } ] } }
+  - { id: SB-08b, name: 各花序 TF 速率, output: rateTF, reference: "Sugiyama 2025 Eq.8（门控由 SB-PHEN 计算）",
+      expression: { op: mul, args: [ { ref: T }, { ref: active } ] } }
+  - id: SB-09
+    name: 各花序相对生长
+    output: RFG
+    reference: "Sugiyama 2025 Eq.9 (RFG=1/(1+4615.91·e^(−0.011·TF)))"
+    expression:
+      op: div
+      args:
+        - { const: 1 }
+        - op: add
+          args:
+            - { const: 1 }
+            - op: mul
+              args:
+                - { const: 4615.91 }
+                - { op: exp, args: [ { op: mul, args: [ { const: -0.011 }, { ref: TF } ] } ] }
+  - { id: SB-10, name: 各花序日增量, output: DRFG, reference: "Sugiyama 2025 Eq.10 (25·ΔRFG)；max(0,·) 单调护栏(本模型)",
+      expression: { op: max, args: [ { const: 0 },
+        { op: mul, args: [ { const: 25 }, { op: sub, args: [ { ref: RFG }, { ref: RFG_prev } ] } ] } ] } }
+  - { id: SB-11a, name: 各花序生殖库强, output: gs,
+      reference: "Sugiyama 2025 Eq.11 项 (0.24·ΔRFG) × 基点温度因子 fT (Hopf 2022)",
+      expression: { op: mul, args: [ { ref: fT }, { op: mul, args: [ { const: 0.24 }, { ref: DRFG } ] } ] } }
+  - { id: SB-14, name: 各花序分得干物质, output: DMF, reference: "Sugiyama 2025 Eq.14 等价式 ((DDM/Pd)·gs/总库强)",
+      expression: { op: div, args: [
+        { op: mul, args: [ { op: div, args: [ { ref: DDM }, { ref: Pd } ] }, { ref: gs } ] },
+        { ref: sink_total } ] } }
+  - { id: SB-16, name: 各花序鲜重, output: FF, reference: "Sugiyama 2025 Eq.16 (FF=DF/DMC)",
+      expression: { op: div, args: [ { ref: DF }, { ref: DMC } ] } }
+
+  # 汇总
+  - { id: SB-11, name: 总生殖库强, output: GS, reference: "Sugiyama 2025 Eq.11 (Σ gs)",
+      expression: { op: vsum, args: [ { ref: gs } ] } }
+  - { id: SB-12, name: 总营养库强, output: VS, reference: "Sugiyama 2025 Eq.12 (1.3·Σ vsleaf)",
+      expression: { op: mul, args: [ { const: 1.3 }, { op: vsum, args: [ { ref: vsleaf } ] } ] } }
+  - { id: SB-12b, name: 总库强护栏, output: sink_total, reference: "数值护栏(本模型)",
+      expression: { op: max, args: [ { op: add, args: [ { ref: VS }, { ref: GS } ] }, { const: 0.000000001 } ] } }
+  - { id: SB-13, name: 果实分配比, output: AF, reference: "Sugiyama 2025 Eq.13 (AF=GS/(VS+GS))",
+      expression: { op: div, args: [ { ref: GS }, { ref: sink_total } ] } }
+
+  # —— 叶得到的干物质（S2 新增）：(1−AF)·(DDM/Pd)·(叶/营养器官比 1/1.3) ——
+  - { id: SB-LDM, name: 分配到叶的干物质, output: leaf_dm,
+      reference: "营养干物质分叶：(1−AF)·(DDM/Pd)·(叶干重/营养器官干重=1/1.3，Sugiyama 2025 Eq.12 系数)；分配框架 de Koning 1994/Heuvelink 1996",
+      expression: { op: div, args: [
+        { op: mul, args: [ { op: sub, args: [ { const: 1 }, { ref: AF } ] }, { op: div, args: [ { ref: DDM }, { ref: Pd } ] } ] },
+        { const: 1.3 } ] } }
+  # 叶干重净速率 = 生长 − 一阶衰老(ksen·上一日WLV)；标准作物模型叶衰老写法(CROPGRO 亦有叶衰老)
+  - { id: SB-WSEN, name: 叶干重净速率, output: wlv_rate,
+      reference: "一阶叶衰老：WLV速率=leaf_dm−ksen·WLV；ksen≈1/60(叶寿命~60天，估计待重标定)；衰老为作物模型标准环节(CROPGRO)",
+      expression: { op: sub, args: [ { ref: leaf_dm }, { op: mul, args: [ { ref: ksen }, { ref: WLV_prev } ] } ] } }
+
+  - { id: SB-17, name: 全株果实鲜重, output: F, reference: "Sugiyama 2025 Eq.17 (Σ FF)",
+      expression: { op: vsum, args: [ { ref: FF } ] } }
+  - { id: SB-18, name: 单位面积产量, output: Y, reference: "Sugiyama 2025 Eq.18 (Y=F·Pd/1000)",
+      expression: { op: div, args: [ { op: mul, args: [ { ref: F }, { ref: Pd } ] }, { const: 1000 } ] } }
+  # S3：日采收速率 = 累积采收 Y 的差分（采收已隐含于 Sugiyama RFG=累积采收，此处只取差分给出时序，不动核心）
+  - { id: SB-HARV, name: 日采收速率, output: harvest_rate,
+      reference: "采收速率=ΔY（日产量增量）；采收已隐含于 Sugiyama 2025 RFG(Eq.9，=果序累积采收曲线)，此处仅取累积产量差分给出月/日采收时序，未改任何核心方程",
+      expression: { op: sub, args: [ { ref: Y }, { ref: Y_prev } ] } }

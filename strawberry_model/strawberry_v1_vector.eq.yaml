@@ -1,0 +1,138 @@
+meta:
+  id: STRAWBERRY_VEC
+  model: StrawberryVec
+  name_cn: 温室草莓源-库干物质分配模型（向量版 v1）
+  name_en: Greenhouse strawberry sink-source DM model (vectorized)
+  description: >
+    与 strawberry_v1.eq.yaml 数学等价，但把果序/叶 cohort 直接表达成**向量变量**
+    （不再宏展开成几十个标量）。果序长度 3、叶长度 12 由向量参数 anthesis/leaf_idx 给出；
+    逐元素方程 + vsum 归约。结果 Y 与标量版逐位一致，但变量/节点数从 92 降到约 28。
+  reference: Sugiyama T et al. (2025), Front. Plant Sci. 16:1544735
+
+# 局限同标量版（见 strawberry_v1.eq.yaml 顶部）：物候/LAI 为输入、无采摘、常数 LUE、
+# 缺基点温度、单品种、无品质机理、合成数据未验证。本文件只演示「cohort=向量」的表达。
+
+parameters:
+  k:    { name_cn: 消光系数,       default: 0.85, unit: "-" }
+  LUE:  { name_cn: 光能利用率,     default: 2.75, unit: "g/MJ" }
+  DMC:  { name_cn: 果实干物质含量, default: 0.10, unit: "g/g" }
+  Pd:   { name_cn: 种植密度,       default: 7.05, unit: "plant/m2" }
+  # 向量参数：各果序首花开花日（长度=果序数 3）
+  anthesis: { name_cn: 各果序开花日, values: [40, 80, 120], unit: d }
+  # 向量参数：叶序号 1..12（用于逐元素的叶发生积温阈值 160*p）
+  leaf_idx: { name_cn: 叶序号, values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], unit: "-" }
+
+variables:
+  # —— 驱动量 ——
+  Sr:  { type: input, class: driving, unit: "MJ/m2", description: 太阳辐射 }
+  T:   { type: input, class: driving, unit: degC,    description: 日均温 }
+  LAI: { type: input, class: driving, unit: "m2/m2", description: 叶面积指数 }
+
+  # —— 冠层光合（标量）——
+  PAR: { class: auxiliary, unit: "MJ/m2" }
+  I:   { class: auxiliary, unit: "MJ/m2" }
+  DDM: { class: rate, unit: "g/m2/d" }
+  TDM: { type: output, class: state, init: 19.9, rate: DDM, unit: "g/m2", description: 累积总干物质 }
+  CT:  { class: state, init: 0.0, rate: T, unit: degC, description: 自移栽累积温度 }
+
+  # —— 叶（向量，长度 12）——
+  RLG:      { class: auxiliary, description: 各叶相对生长 }
+  RLG_prev: { class: semi_state, init: 0.0, prev: RLG, description: 上一步 RLG }
+  DRLG:     { class: auxiliary, description: 各叶日增量 }
+  vsleaf:   { class: auxiliary, description: 各叶营养库强分量 }
+
+  # —— 果序（向量，长度 3）——
+  active:   { class: auxiliary, description: 各果序开花门控(0/1) }
+  rateTF:   { class: rate, description: 各果序 TF 速率 }
+  TF:       { class: state, init: 0.0, rate: rateTF, unit: degC, description: 各果序自开花累积温度 }
+  RFG:      { class: auxiliary, description: 各果序相对生长 }
+  RFG_prev: { class: semi_state, init: 0.000217, prev: RFG, description: 上一步 RFG }
+  DRFG:     { class: auxiliary, description: 各果序日增量 }
+  gs:       { class: auxiliary, description: 各果序生殖库强 }
+  DMF:      { class: auxiliary, unit: "g/plant", description: 各果序分得干物质 }
+  DF:       { class: state, init: 0.0, rate: DMF, unit: "g/plant", description: 各果序干重 }
+  FF:       { class: auxiliary, unit: "g/plant", description: 各果序鲜重 }
+
+  # —— 库强汇总与产量（标量；vsum 归约）——
+  GS:         { class: auxiliary, description: 总生殖库强 }
+  VS:         { class: auxiliary, description: 总营养库强 }
+  sink_total: { class: auxiliary }
+  AF:         { type: output, description: 果实分配比 }
+  F:          { class: auxiliary, unit: "g/plant", description: 全株果实鲜重 }
+  Y:          { type: output, unit: "kg/m2", description: 单位面积累积产量 }
+
+equations:
+  # 冠层（标量）
+  - { id: SB-01, name: 光合有效辐射, output: PAR, expression: { op: mul, args: [ { const: 0.5 }, { ref: Sr } ] } }
+  - { id: SB-02, name: 截获光, output: I,
+      expression: { op: mul, args: [ { ref: PAR },
+        { op: sub, args: [ { const: 1 },
+          { op: exp, args: [ { op: neg, args: [ { op: mul, args: [ { ref: k }, { ref: LAI } ] } ] } ] } ] } ] } }
+  - { id: SB-03, name: 当日干物质, output: DDM, expression: { op: mul, args: [ { ref: I }, { ref: LUE } ] } }
+
+  # 叶（向量）：RLG = 1 - 1/(1+exp(((CT - 160*leaf_idx) - 218.86)/74.61))
+  - id: SB-06
+    name: 各叶相对生长
+    output: RLG
+    expression:
+      op: sub
+      args:
+        - { const: 1 }
+        - op: div
+          args:
+            - { const: 1 }
+            - op: add
+              args:
+                - { const: 1 }
+                - op: exp
+                  args:
+                    - op: div
+                      args:
+                        - op: sub
+                          args:
+                            - { op: sub, args: [ { ref: CT }, { op: mul, args: [ { const: 160 }, { ref: leaf_idx } ] } ] }
+                            - { const: 218.86 }
+                        - { const: 74.61 }
+  - { id: SB-07, name: 各叶日增量, output: DRLG, expression: { op: sub, args: [ { ref: RLG }, { ref: RLG_prev } ] } }
+  - { id: SB-12a, name: 各叶营养库强分量, output: vsleaf, expression: { op: mul, args: [ { const: 0.07 }, { ref: DRLG } ] } }
+
+  # 果序（向量）
+  - { id: SB-08a, name: 各果序开花门控, output: active, expression: { op: geq, args: [ { ref: DAT }, { ref: anthesis } ] } }
+  - { id: SB-08b, name: 各果序 TF 速率, output: rateTF, expression: { op: mul, args: [ { ref: T }, { ref: active } ] } }
+  - id: SB-09
+    name: 各果序相对生长
+    output: RFG
+    # RFG = 1/(1 + 4615.91*exp(-0.011*TF))
+    expression:
+      op: div
+      args:
+        - { const: 1 }
+        - op: add
+          args:
+            - { const: 1 }
+            - op: mul
+              args:
+                - { const: 4615.91 }
+                - { op: exp, args: [ { op: mul, args: [ { const: -0.011 }, { ref: TF } ] } ] }
+  # DRFG = max(0, 25*(RFG - RFG_prev))
+  - { id: SB-10, name: 各果序日增量, output: DRFG,
+      expression: { op: max, args: [ { const: 0 },
+        { op: mul, args: [ { const: 25 }, { op: sub, args: [ { ref: RFG }, { ref: RFG_prev } ] } ] } ] } }
+  - { id: SB-11a, name: 各果序生殖库强, output: gs, expression: { op: mul, args: [ { const: 0.24 }, { ref: DRFG } ] } }
+  # DMF = (DDM/Pd) * gs / sink_total
+  - { id: SB-14, name: 各果序分得干物质, output: DMF,
+      expression: { op: div, args: [
+        { op: mul, args: [ { op: div, args: [ { ref: DDM }, { ref: Pd } ] }, { ref: gs } ] },
+        { ref: sink_total } ] } }
+  - { id: SB-16, name: 各果序鲜重, output: FF, expression: { op: div, args: [ { ref: DF }, { ref: DMC } ] } }
+
+  # 汇总（vsum）+ 产量（标量）
+  - { id: SB-11, name: 总生殖库强, output: GS, expression: { op: vsum, args: [ { ref: gs } ] } }
+  - { id: SB-12, name: 总营养库强, output: VS,
+      expression: { op: mul, args: [ { const: 1.3 }, { op: vsum, args: [ { ref: vsleaf } ] } ] } }
+  - { id: SB-12b, name: 总库强护栏, output: sink_total,
+      expression: { op: max, args: [ { op: add, args: [ { ref: VS }, { ref: GS } ] }, { const: 0.000000001 } ] } }
+  - { id: SB-13, name: 果实分配比, output: AF, expression: { op: div, args: [ { ref: GS }, { ref: sink_total } ] } }
+  - { id: SB-17, name: 全株果实鲜重, output: F, expression: { op: vsum, args: [ { ref: FF } ] } }
+  - { id: SB-18, name: 单位面积产量, output: Y,
+      expression: { op: div, args: [ { op: mul, args: [ { ref: F }, { ref: Pd } ] }, { const: 1000 } ] } }

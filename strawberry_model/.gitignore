@@ -1,0 +1,7 @@
+literature/
+*_out.csv
+s4_400.csv
+s4_enr.csv
+sim_*.csv
+*.html
+strawberry_model.json
