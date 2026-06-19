@@ -29,7 +29,9 @@ pub use run::{
     mo_result_json, prescreen, result_json, run, run_mo, MoFrontPoint, MoResult, OptimizeResult,
     PrescreenResult,
 };
-pub use objective::{eval_objective, ObjError, REDUCTIONS};
+pub use objective::{
+    eval_objective, eval_objective_obs, ObjError, ObservedData, ERROR_OPS, REDUCTIONS,
+};
 pub use problem::{
     load_problem, parse_problem, Constraint, Knob, KnobKind, Objective, OptimizerCfg, Problem, Sense,
 };

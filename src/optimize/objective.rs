@@ -33,6 +33,13 @@ use crate::sim::SimOutput;
 /// 时间归约词（保留字）。
 pub const REDUCTIONS: &[&str] = &["final", "at", "max", "min", "mean", "total"];
 
+/// 误差算子（保留字）：把**仿真序列**与**实测序列**逐（观测）日比对、归约成标量。
+/// 用于参数标定（目标 = 预测 vs 实测的误差）。见 `docs/spec-calibration.md` §2。
+pub const ERROR_OPS: &[&str] = &["rmse", "mae", "nse", "bias"];
+
+/// 实测数据：变量名 → 稀疏 `[(天, 值)]`（天为 1 起的 `DAT`；只在有观测的天给值）。
+pub type ObservedData = HashMap<String, Vec<(usize, f64)>>;
+
 /// 目标/约束表达式求值错误。
 #[derive(Debug, Clone, PartialEq)]
 pub enum ObjError {
@@ -42,6 +49,10 @@ pub enum ObjError {
     Eval(EvalError),
     /// 归约引用了一个不存在的轨迹变量（向量变量请用 `名[1]` 形式）。
     UnknownTrajectory(String),
+    /// 误差算子引用了一个不存在的实测变量列。
+    UnknownObserved(String),
+    /// 误差算子的实测序列为空（无观测点）。
+    NoObservations(String),
     /// 归约写法不合法（如 `at` 缺天数、`final` 套了子表达式而非轨迹变量）。
     BadReduction(String),
     /// 轨迹为空（0 步）。
@@ -58,6 +69,8 @@ impl std::fmt::Display for ObjError {
             ObjError::UnknownTrajectory(n) => {
                 write!(f, "归约引用了未知轨迹变量 '{n}'（向量变量请用 '{n}[1]' 形式）")
             }
+            ObjError::UnknownObserved(n) => write!(f, "误差算子引用了未知实测列 '{n}'"),
+            ObjError::NoObservations(n) => write!(f, "实测列 '{n}' 无观测点"),
             ObjError::BadReduction(s) => write!(f, "时间归约写法不合法: {s}"),
             ObjError::EmptyTrajectory(n) => write!(f, "轨迹 '{n}' 为空（0 步），无法归约"),
             ObjError::DayOutOfRange { var, day, len } => {
@@ -79,8 +92,19 @@ pub fn eval_objective(
     out: &SimOutput,
     bindings: &HashMap<String, f64>,
 ) -> Result<f64, ObjError> {
+    eval_objective_obs(expr_src, out, bindings, &ObservedData::new())
+}
+
+/// 同 [`eval_objective`]，但额外提供**实测数据** `observed`——支持误差算子
+/// （`rmse/mae/nse/bias`，把仿真序列与实测序列比对）。参数标定用。
+pub fn eval_objective_obs(
+    expr_src: &str,
+    out: &SimOutput,
+    bindings: &HashMap<String, f64>,
+    observed: &ObservedData,
+) -> Result<f64, ObjError> {
     let sx = crate::sexpr::parse(expr_src).map_err(|e| ObjError::Parse(e.to_string()))?;
-    let reduced = reduce_sexpr(&sx, out)?;
+    let reduced = reduce_sexpr(&sx, out, observed)?;
     let expr = crate::sexpr::convert(&reduced).map_err(|e| ObjError::Parse(e.to_string()))?;
     let mut env = Env::new();
     for (k, v) in bindings {
@@ -89,27 +113,69 @@ pub fn eval_objective(
     expr.eval_scalar(&env).map_err(ObjError::Eval)
 }
 
-/// 在 SExpr 层把每个时间归约子式替换成一个数（其余结构原样递归）。
-fn reduce_sexpr(sx: &SExpr, out: &SimOutput) -> Result<SExpr, ObjError> {
+/// 在 SExpr 层把每个时间归约 / 误差子式替换成一个数（其余结构原样递归）。
+fn reduce_sexpr(sx: &SExpr, out: &SimOutput, observed: &ObservedData) -> Result<SExpr, ObjError> {
     match sx {
         SExpr::Number(_) | SExpr::Symbol(_) => Ok(sx.clone()),
         SExpr::List(items) => {
-            // 形如 (R ...) 且 R 是归约词时，先尝试当时间归约
             if let Some(SExpr::Symbol(head)) = items.first() {
+                // 时间归约 (final/at/max/min/mean/total)
                 if REDUCTIONS.contains(&head.as_str()) {
                     if let Some(v) = try_reduce(head, &items[1..], out)? {
                         return Ok(SExpr::Number(v));
                     }
                     // None = 不是时间归约（如逐元素 max/min），落到下面原样递归
                 }
+                // 误差算子 (rmse/mae/nse/bias 仿真变量 实测列)
+                if ERROR_OPS.contains(&head.as_str()) {
+                    let v = try_error(head, &items[1..], out, observed)?;
+                    return Ok(SExpr::Number(v));
+                }
             }
             let mut new_items = Vec::with_capacity(items.len());
             for it in items {
-                new_items.push(reduce_sexpr(it, out)?);
+                new_items.push(reduce_sexpr(it, out, observed)?);
             }
             Ok(SExpr::List(new_items))
         }
     }
+}
+
+/// 计算误差算子 `(head 仿真变量 实测列)`：在有观测的天上把 `sim[天-1]` 与实测对比。
+fn try_error(head: &str, args: &[SExpr], out: &SimOutput, observed: &ObservedData) -> Result<f64, ObjError> {
+    let (simvar, obsname) = match args {
+        [SExpr::Symbol(s), SExpr::Symbol(o)] => (s, o),
+        _ => return Err(ObjError::BadReduction(format!("{head} 须写成 ({head} 仿真变量 实测列名)"))),
+    };
+    let sim = out.series(simvar).ok_or_else(|| ObjError::UnknownTrajectory(simvar.clone()))?;
+    let obs = observed.get(obsname).ok_or_else(|| ObjError::UnknownObserved(obsname.clone()))?;
+    if obs.is_empty() {
+        return Err(ObjError::NoObservations(obsname.clone()));
+    }
+    // 对齐：每个观测点 (天, 实测) → (sim[天-1], 实测)
+    let mut pairs: Vec<(f64, f64)> = Vec::with_capacity(obs.len());
+    for &(day, ov) in obs {
+        if day < 1 || day > sim.len() {
+            return Err(ObjError::DayOutOfRange { var: simvar.clone(), day, len: sim.len() });
+        }
+        pairs.push((sim[day - 1], ov));
+    }
+    let n = pairs.len() as f64;
+    Ok(match head {
+        "rmse" => (pairs.iter().map(|(s, o)| (s - o) * (s - o)).sum::<f64>() / n).sqrt(),
+        "mae" => pairs.iter().map(|(s, o)| (s - o).abs()).sum::<f64>() / n,
+        "bias" => pairs.iter().map(|(s, o)| s - o).sum::<f64>() / n,
+        "nse" => {
+            let mean_o = pairs.iter().map(|(_, o)| *o).sum::<f64>() / n;
+            let denom: f64 = pairs.iter().map(|(_, o)| (o - mean_o) * (o - mean_o)).sum();
+            if denom == 0.0 {
+                return Err(ObjError::BadReduction("nse 分母为 0（实测无变化）".into()));
+            }
+            let num: f64 = pairs.iter().map(|(s, o)| (s - o) * (s - o)).sum();
+            1.0 - num / denom
+        }
+        other => return Err(ObjError::BadReduction(format!("未知误差算子 '{other}'"))),
+    })
 }
 
 /// 尝试把 `(head args...)` 解释为时间归约。
@@ -267,5 +333,61 @@ mod tests {
             eval_objective("(at Y 99)", &out, &b),
             Err(ObjError::DayOutOfRange { var: "Y".into(), day: 99, len: 3 })
         );
+    }
+
+    fn obs_of(pairs: &[(&str, Vec<(usize, f64)>)]) -> ObservedData {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
+    }
+
+    #[test]
+    fn test_error_ops_rmse_mae_bias() {
+        // 仿真 Y=[1,2,3,4,5]；实测在第 2、4 天 = 2.5、3.0 → sim 取 [2,4]
+        let out = out_of(&[("Y", vec![1.0, 2.0, 3.0, 4.0, 5.0])]);
+        let obs = obs_of(&[("obs_Y", vec![(2, 2.5), (4, 3.0)])]);
+        let b = HashMap::new();
+        // 残差 sim−obs = [2−2.5, 4−3.0] = [−0.5, 1.0]
+        let rmse = eval_objective_obs("(rmse Y obs_Y)", &out, &b, &obs).unwrap();
+        assert!((rmse - (((0.25 + 1.0) / 2.0) as f64).sqrt()).abs() < 1e-12); // √0.625
+        let mae = eval_objective_obs("(mae Y obs_Y)", &out, &b, &obs).unwrap();
+        assert!((mae - 0.75).abs() < 1e-12); // (0.5+1.0)/2
+        let bias = eval_objective_obs("(bias Y obs_Y)", &out, &b, &obs).unwrap();
+        assert!((bias - 0.25).abs() < 1e-12); // (−0.5+1.0)/2
+    }
+
+    #[test]
+    fn test_error_op_nse_perfect() {
+        // sim 在观测点与实测完全一致 → NSE = 1
+        let out = out_of(&[("Y", vec![10.0, 20.0, 30.0])]);
+        let obs = obs_of(&[("obs_Y", vec![(1, 10.0), (2, 20.0), (3, 30.0)])]);
+        let nse = eval_objective_obs("(nse Y obs_Y)", &out, &HashMap::new(), &obs).unwrap();
+        assert!((nse - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_error_op_composite_weighted() {
+        // 多变量加权拟合：rmse(Y) + 0.5·rmse(LAI)
+        let out = out_of(&[("Y", vec![1.0, 3.0]), ("LAI", vec![2.0, 2.0])]);
+        let obs = obs_of(&[("oY", vec![(2, 4.0)]), ("oL", vec![(2, 1.0)])]);
+        let b = binds(&[("w", 0.5)]);
+        // rmse(Y)=|3−4|=1；rmse(LAI)=|2−1|=1 → 1 + 0.5·1 = 1.5
+        let v = eval_objective_obs("(add (rmse Y oY) (mul w (rmse LAI oL)))", &out, &b, &obs).unwrap();
+        assert!((v - 1.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_error_op_unknown_observed() {
+        let out = out_of(&[("Y", vec![1.0, 2.0])]);
+        let obs = ObservedData::new();
+        assert_eq!(
+            eval_objective_obs("(rmse Y nope)", &out, &HashMap::new(), &obs),
+            Err(ObjError::UnknownObserved("nope".into()))
+        );
+    }
+
+    #[test]
+    fn test_decision_objective_ignores_observed() {
+        // 决策目标（无误差算子）走 eval_objective（空实测）仍正常
+        let out = out_of(&[("Y", vec![1.0, 2.0, 10.0])]);
+        assert_eq!(eval_objective("(final Y)", &out, &HashMap::new()).unwrap(), 10.0);
     }
 }
