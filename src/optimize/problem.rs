@@ -61,6 +61,10 @@ pub struct Problem {
     /// 实测数据 CSV（参数标定用）；相对 spec 目录解析。可缺省（用 CLI `--observed`）。
     #[serde(default)]
     pub observed: Option<String>,
+    /// 候选可观测变量（可辨识性分析用 `eqc identify`）：园区**能测**哪些变量。
+    /// 缺省 = 模型所有 `type: output` 标量变量。可被 CLI `--observables` 覆盖。
+    #[serde(default)]
+    pub observables: Option<Vec<String>>,
     #[serde(default)]
     pub optimizer: OptimizerCfg,
 }

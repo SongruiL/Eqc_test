@@ -137,6 +137,7 @@ optimize:
 - **误差算子**（作用于「仿真序列 vs 实测序列」）：`rmse / mae / nse（纳什效率，max）/ bias`。实测**稀疏**（周期性取样即可）。
 - **可观测 vs 不可观测**：只能标定被观测约束住的参数。库强/LUE/分配比等模型内部量测不到、靠可观测输出（产量/生物量/LAI 的**时间序列**）反推。要时间序列（非单期末值）+ 处理梯度，并警惕「异参同效」。
 - **recover-the-params 自验**（无需真数据即可建+验）：用已知参数造一条轨迹当伪实测，标定能把参数找回。实测：S4 用 LUE=4.0 造伪实测 → `eqc calibrate` 找回 LUE=4.000000、误差 0。
+- **可辨识性 / 「该测什么」助手** `eqc identify`：标定前对每个候选参数 ±10% 扰动，量其对每个候选可观测变量整条轨迹的**相对** RMS 影响 → 告诉你「要定准某参数最该测哪个变量、哪些参数无观测能约束（不可辨识）、哪些参数对可能异参同效」，直接产出给园区的测量清单。S4 实测洞见：**LUE** 测谁都行（全局乘子）；**Pd** 必须测 **F**（果鲜重）——因 `Y=F·Pd/1000` 使产量 Y 几乎不随 Pd 变，只测 Y 标不出 Pd；**Kc** 在 CO₂≡400(=Cref) 下 `f_CO2≡1`、**不可辨识**——要标 Kc 必须有 CO₂ 处理梯度。
 
 ## 4. CLI 命令速查
 
@@ -156,6 +157,7 @@ eqc serve <模型.eq.yaml> [--drivers w.csv] [--params s.json] [--port 7878]  # 
 eqc export <模型.eq.yaml> [-o model.json]                # 导出模型 JSON 契约（前端/工具消费用，可检视）
 eqc optimize <模型.eq.yaml> --spec problem.yaml [--drivers w.csv] [--prescreen] [-o result.json]  # 仿真优化：DE 搜旋钮空间求目标最优（spec 含 objective2 则多目标 Pareto；--prescreen 先剔低敏感旋钮）
 eqc calibrate <模型.eq.yaml> --spec calib.yaml [--drivers w.csv] [--observed obs.csv] [-o result.json]  # 参数标定：用实测数据反推参数（旋钮=参数、目标=预测vs实测误差）
+eqc identify <模型.eq.yaml> --spec calib.yaml [--drivers w.csv] [--observables Y,LAI] [-o report.json]  # 可辨识性：标定前看「要定准哪个参数、最该测哪个变量」（服务实验设计）
 ```
 
 > **EQC Studio（交互式前端）**：`eqc serve <模型> --drivers w.csv` 起一个本地服务（`http://localhost:7878/`）。浏览器里左边是 Forrester 图 + 二维公式，右边是**整季仿真折线图**（勾选变量即画其轨迹，如产量 Y）。编辑模型保存即自动刷新。

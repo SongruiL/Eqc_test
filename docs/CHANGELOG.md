@@ -135,10 +135,11 @@
 让模型可信的关键一步、也是通往 GP 的桥：用实测数据反推参数。与决策优化**同一外循环、共用评估核**，只换「旋钮=参数、目标=误差」。设计见 `docs/spec-calibration.md`。
 - **Cal-1 误差算子**（`0465cca`）：`objective.rs` 加 `rmse/mae/nse/bias`——把仿真序列与实测序列逐(观测)日比对归约成标量；写法 `(rmse Y obs_Y)`，可多变量加权组合。沿用时间归约套路在 SExpr 层替换、复用 convert+eval，不新增 AST 变体。实测稀疏（`名→[(天,值)]`）。`eval_objective_obs`（带实测）/`eval_objective`（不带，决策优化照旧）。
 - **Cal-2 贯通 + CLI**（本次）：`core.rs` 用 wrapper 模式把实测贯通评估核（`evaluate_obs`/`evaluate_mo_obs`/`prepare(observed)`，决策优化的 `evaluate` 等仍是零实测 wrapper、零改动）；`run_obs` 同理。`scenario.rs::load_observed_csv`（稀疏，首列 DAT）；`Problem.observed` 字段。新 CLI `eqc calibrate <模型> --spec calib.yaml [--drivers w.csv] [--observed obs.csv]`（底层复用 `run_obs`）。**recover-the-params 验证**：单测（合成 gain=3 找回）+ 端到端（S4 用 LUE=4.0 造伪实测 → `eqc calibrate` 找回 LUE=4.000000、误差 0）。
-- 后续：Cal-4 可辨识性/「该测什么」助手（服务云南实验设计）；数据到位后真标 S4 / 带根系-水肥的新模型。
+- **Cal-4 可辨识性/「该测什么」助手**（本次）：`optimize::identifiability`——对每个候选参数 ±10% 扰动，量其对每个候选可观测变量整条轨迹的**相对** RMS 影响（÷ 基线 RMS，跨量级可比）→ 敏感矩阵。`eqc identify <模型> --spec calib.yaml [--observables Y,LAI]`：报告「参数→最该测的观测」、不可辨识参数（无观测能约束）、可能异参同效的参数对（敏感模式皮尔逊相关 >0.99）+ 测量清单。`core.rs::simulate_candidate`（pub）；`Problem.observables` 字段。S4 实测洞见：LUE 测谁都行（全局乘子）；Pd 必须测 F（Y=F·Pd/1000 使 Y 几乎不随 Pd → 只测 Y 标不出 Pd）；Kc 在 CO₂≡400(=Cref) 下 f_CO2≡1 不可辨识（需 CO₂ 处理梯度）。2 个单测。
+- 后续：数据到位后真标 S4 / 带根系-水肥的新模型。
 
 ## 工程基线
-- 测试：197 lib + 2 bin + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
+- 测试：199 lib + 2 bin + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
 - 远程：github.com/SongruiL/Eqc_test，SSH 推送。
 - 文档：见 `docs/USAGE.md`（架构与模块地图）、`docs/spec-*.md`（设计规格）。
 

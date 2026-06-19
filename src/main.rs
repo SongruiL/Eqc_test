@@ -302,6 +302,32 @@ enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+
+    /// 可辨识性分析（服务实验设计）：标定前看「要定准哪个参数、最该测哪个变量」，见 docs/spec-calibration.md §5
+    Identify {
+        /// 模型文件（单个 .eq.yaml）
+        input: PathBuf,
+
+        /// 标定 spec（候选参数 = 其 knobs；可含 observables: 候选可观测变量）
+        #[arg(short, long)]
+        spec: PathBuf,
+
+        /// 同期天气驱动量 CSV（覆盖 spec 的 environment:）
+        #[arg(short, long)]
+        drivers: Option<PathBuf>,
+
+        /// 候选可观测变量（逗号分隔，覆盖 spec 的 observables:；缺省=模型所有 output 标量）
+        #[arg(long)]
+        observables: Option<String>,
+
+        /// 步数（默认取驱动量 CSV 行数）
+        #[arg(long)]
+        steps: Option<usize>,
+
+        /// 输出报告 JSON，缺省只打印到控制台
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[cfg(feature = "cli")]
@@ -339,6 +365,9 @@ fn main() {
         }
         Commands::Calibrate { input, spec, drivers, observed, steps, output } => {
             run_calibrate(&input, &spec, drivers.as_ref(), observed.as_ref(), steps, output.as_ref())
+        }
+        Commands::Identify { input, spec, drivers, observables, steps, output } => {
+            run_identify(&input, &spec, drivers.as_ref(), observables.as_deref(), steps, output.as_ref())
         }
     };
 
@@ -893,6 +922,131 @@ fn run_calibrate(
         let json = optimize::result_json(&file, &problem, &res);
         std::fs::write(path, serde_json::to_string_pretty(&json)?)?;
         println!("   结果已写入 {}", path.display());
+    }
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+#[allow(clippy::too_many_arguments)]
+fn run_identify(
+    input: &PathBuf,
+    spec: &PathBuf,
+    drivers: Option<&PathBuf>,
+    observables_arg: Option<&str>,
+    steps: Option<usize>,
+    output: Option<&PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use equation_compiler::optimize::{self, load_problem, simulate_candidate, validate_problem};
+    use equation_compiler::parse_file;
+    use equation_compiler::scenario::load_drivers_csv;
+
+    println!("🔬 可辨识性分析: {}", input.display());
+    let file = parse_file(input)?;
+    let problem = load_problem(spec)?;
+    validate_problem(&file, &problem).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+
+    let driver_path: PathBuf = match drivers {
+        Some(p) => p.clone(),
+        None => match &problem.environment {
+            Some(env) => spec.parent().unwrap_or_else(|| std::path::Path::new(".")).join(env),
+            None => return Err("缺天气：请加 --drivers，或在 spec 写 environment:".into()),
+        },
+    };
+    let (rows, driver_map) = load_drivers_csv(&driver_path)?;
+    let steps = steps.unwrap_or(rows);
+
+    // —— 候选可观测变量：--observables > spec.observables > 默认（所有 output 标量轨迹键）——
+    let observables: Vec<String> = if let Some(s) = observables_arg {
+        s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()
+    } else if let Some(list) = &problem.observables {
+        list.clone()
+    } else {
+        // 默认：跑一次基线仿真，取所有 output 变量里直接成轨迹键（标量）的
+        let baseline: Vec<f64> =
+            problem.knobs.iter().map(|k| 0.5 * (k.bounds[0] + k.bounds[1])).collect();
+        let out = simulate_candidate(&file, &problem, &baseline, &driver_map, steps)?;
+        file.output_variables()
+            .iter()
+            .map(|(n, _)| n.to_string())
+            .filter(|n| out.series(n).is_some())
+            .collect()
+    };
+    if observables.is_empty() {
+        return Err("无候选可观测变量（用 --observables 指定，或在 spec 写 observables:）".into());
+    }
+
+    println!(
+        "   候选参数 {} 个 | 候选观测 {} 个 [{}] | 环境 {} ({} 步)",
+        problem.knobs.len(),
+        observables.len(),
+        observables.join(", "),
+        driver_path.display(),
+        steps,
+    );
+
+    let rep = optimize::identifiability(&file, &problem, &driver_map, steps, &observables, 10.0, 0.01)?;
+
+    println!("\n   参数 → 最该测的观测（相对敏感度，±10% 扰动引起的轨迹相对 RMS 变化）：");
+    for p in &rep.params {
+        if p.identifiable {
+            let top = &p.per_observable[0];
+            let others: Vec<String> = p
+                .per_observable
+                .iter()
+                .skip(1)
+                .filter(|(_, s)| *s > 0.0)
+                .map(|(v, s)| format!("{v}={s:.4}"))
+                .collect();
+            let more = if others.is_empty() { String::new() } else { format!("（其它: {}）", others.join(", ")) };
+            println!("     {:<16} → 测 {} (敏感度 {:.4}){more}", p.param, top.0, top.1);
+        } else {
+            println!("     {:<16} → ⚠️ 不可辨识：候选观测都约束不住它（需补测别的变量，或先固定它）", p.param);
+        }
+    }
+    if !rep.confounded.is_empty() {
+        println!("\n   ⚠️ 可能异参同效（敏感模式高度相关、难分辨，建议加处理梯度/多变量观测核实）：");
+        for (a, b, r) in &rep.confounded {
+            println!("     {a} ↔ {b}（相关 {r:.3}）");
+        }
+    }
+    // 测量清单建议：可辨识参数所需观测的并集
+    let mut need: Vec<String> = Vec::new();
+    for p in &rep.params {
+        if p.identifiable {
+            let top = p.per_observable[0].0.clone();
+            if !need.contains(&top) {
+                need.push(top);
+            }
+        }
+    }
+    let unident: Vec<&str> = rep.params.iter().filter(|p| !p.identifiable).map(|p| p.param.as_str()).collect();
+    println!("\n   📋 测量建议：至少测 [{}] 可约束 {} 个可辨识参数。", need.join(", "), rep.params.len() - unident.len());
+    if !unident.is_empty() {
+        println!("      不可辨识（这组观测下）：{} —— 需补测能反映它们的变量，或标定时固定。", unident.join(", "));
+    }
+
+    if let Some(path) = output {
+        let params_json: Vec<serde_json::Value> = rep
+            .params
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "param": p.param,
+                    "identifiable": p.identifiable,
+                    "sensitivities": p.per_observable.iter().map(|(v, s)| serde_json::json!({"observable": v, "sensitivity": s})).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        let json = serde_json::json!({
+            "model": file.meta.id,
+            "observables": rep.observables,
+            "params": params_json,
+            "confounded": rep.confounded.iter().map(|(a, b, r)| serde_json::json!({"a": a, "b": b, "corr": r})).collect::<Vec<_>>(),
+            "measure": need,
+            "unidentifiable": unident,
+        });
+        std::fs::write(path, serde_json::to_string_pretty(&json)?)?;
+        println!("   报告已写入 {}", path.display());
     }
     Ok(())
 }

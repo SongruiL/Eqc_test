@@ -9,7 +9,9 @@ use std::collections::HashMap;
 
 use crate::schema::EquationFile;
 
-use super::core::{evaluate, evaluate_mo, evaluate_obs, validate_problem, EvalOutcome};
+use super::core::{
+    evaluate, evaluate_mo, evaluate_obs, simulate_candidate, validate_problem, EvalOutcome,
+};
 use super::de::{differential_evolution, differential_evolution_mo, DeConfig};
 use super::objective::ObservedData;
 use super::problem::{Problem, Sense};
@@ -78,6 +80,129 @@ pub fn run_obs(
         best_cost: res.best_cost,
         config,
     })
+}
+
+/// 单个参数对各候选观测变量的敏感性（可辨识性分析）。
+pub struct ParamSens {
+    pub param: String,
+    /// (观测变量, 敏感度 = 参数扰动引起的整条轨迹 RMS 变化)，按敏感度降序。
+    pub per_observable: Vec<(String, f64)>,
+    /// 是否可辨识：在候选观测下最大敏感度 ≥ 阈值（否则无观测能约束它）。
+    pub identifiable: bool,
+}
+
+/// 可辨识性 / 「该测什么」报告。
+pub struct IdentReport {
+    pub observables: Vec<String>,
+    pub params: Vec<ParamSens>,
+    /// 可能**异参同效**的参数对（敏感模式高度相关，难分辨）：(参数a, 参数b, 相关系数)。
+    pub confounded: Vec<(String, String, f64)>,
+}
+
+/// **可辨识性分析**（服务实验设计）：对每个候选参数 ±`percent`% 扰动，量其对**每个候选可观测变量**
+/// 整条轨迹的 RMS 影响 → 敏感矩阵。回答：要定准某参数最该测哪个变量、哪些参数无观测能约束（不可辨识）、
+/// 哪些参数对可能异参同效。见 `docs/spec-calibration.md` §5。候选参数 = `problem.knobs`（kind=param）。
+pub fn identifiability(
+    file: &EquationFile,
+    problem: &Problem,
+    drivers: &HashMap<String, Vec<f64>>,
+    steps: usize,
+    observables: &[String],
+    percent: f64,
+    rel: f64,
+) -> Result<IdentReport, String> {
+    let nk = problem.knobs.len();
+    let baseline: Vec<f64> =
+        problem.knobs.iter().map(|k| 0.5 * (k.bounds[0] + k.bounds[1])).collect();
+
+    // 基线轨迹（用于把敏感度归一成**相对**变化，跨不同量级观测可比）。
+    let base_out = simulate_candidate(file, problem, &baseline, drivers, steps)?;
+    let rms = |s: &[f64]| -> f64 {
+        if s.is_empty() {
+            0.0
+        } else {
+            (s.iter().map(|x| x * x).sum::<f64>() / s.len() as f64).sqrt()
+        }
+    };
+    let base_rms: Vec<f64> = observables.iter().map(|v| base_out.series(v).map(rms).unwrap_or(0.0)).collect();
+
+    // 敏感矩阵 mat[参数][观测] = 扰动引起的该观测轨迹**相对** RMS 变化（÷ 基线 RMS）
+    let mut mat = vec![vec![0.0_f64; observables.len()]; nk];
+    for i in 0..nk {
+        let (lo, hi) = (problem.knobs[i].bounds[0], problem.knobs[i].bounds[1]);
+        let h = (percent / 100.0) * (hi - lo);
+        if h <= 0.0 {
+            continue;
+        }
+        let mut xm = baseline.clone();
+        xm[i] = (baseline[i] - h).max(lo);
+        let mut xp = baseline.clone();
+        xp[i] = (baseline[i] + h).min(hi);
+        let om = simulate_candidate(file, problem, &xm, drivers, steps)?;
+        let op = simulate_candidate(file, problem, &xp, drivers, steps)?;
+        for (j, v) in observables.iter().enumerate() {
+            let abs_change = match (om.series(v), op.series(v)) {
+                (Some(a), Some(b)) if !a.is_empty() && a.len() == b.len() => {
+                    let n = a.len() as f64;
+                    (a.iter().zip(b).map(|(x, y)| (y - x) * (y - x)).sum::<f64>() / n).sqrt()
+                }
+                _ => 0.0, // 该观测变量不在轨迹里 → 无法约束
+            };
+            // 相对化：÷ 基线 RMS（基线≈0 时退回绝对值，避免除零放大）
+            mat[i][j] = if base_rms[j] > 1e-9 { abs_change / base_rms[j] } else { abs_change };
+        }
+    }
+
+    let gmax = mat.iter().flatten().cloned().fold(0.0_f64, f64::max);
+    let thresh = rel * gmax;
+    let mut params = Vec::with_capacity(nk);
+    for i in 0..nk {
+        let mut per: Vec<(String, f64)> =
+            observables.iter().cloned().zip(mat[i].iter().cloned()).collect();
+        per.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let maxs = mat[i].iter().cloned().fold(0.0_f64, f64::max);
+        params.push(ParamSens {
+            param: problem.knobs[i].var.clone(),
+            per_observable: per,
+            identifiable: gmax > 0.0 && maxs > 0.0 && maxs >= thresh,
+        });
+    }
+
+    // 异参同效：敏感行向量两两相关，高相关 → 可能难分辨
+    let mut confounded = Vec::new();
+    for a in 0..nk {
+        for b in (a + 1)..nk {
+            if let Some(r) = pearson(&mat[a], &mat[b]) {
+                if r > 0.99 {
+                    confounded.push((
+                        problem.knobs[a].var.clone(),
+                        problem.knobs[b].var.clone(),
+                        r,
+                    ));
+                }
+            }
+        }
+    }
+    Ok(IdentReport { observables: observables.to_vec(), params, confounded })
+}
+
+/// 皮尔逊相关系数（长度 <2 或方差为 0 → None）。
+fn pearson(a: &[f64], b: &[f64]) -> Option<f64> {
+    let n = a.len() as f64;
+    if a.len() < 2 {
+        return None;
+    }
+    let (ma, mb) = (a.iter().sum::<f64>() / n, b.iter().sum::<f64>() / n);
+    let (mut cov, mut va, mut vb) = (0.0, 0.0, 0.0);
+    for (x, y) in a.iter().zip(b) {
+        cov += (x - ma) * (y - mb);
+        va += (x - ma) * (x - ma);
+        vb += (y - mb) * (y - mb);
+    }
+    if va <= 0.0 || vb <= 0.0 {
+        return None;
+    }
+    Some(cov / (va.sqrt() * vb.sqrt()))
 }
 
 /// 敏感性预筛结果：在搜索前用 OAT 扰动判定哪些旋钮对目标几乎无影响、可固定。
@@ -424,6 +549,40 @@ equations:
         let r = run_obs(&file, &p, &drivers3(), 3, &observed).unwrap();
         assert!((r.best_knobs[0] - 3.0).abs() < 1e-2, "应找回 gain≈3，得 {}", r.best_knobs[0]);
         assert!(r.outcome.objective.unwrap() < 1e-3, "拟合误差应接近 0");
+    }
+
+    #[test]
+    fn test_identifiability_matches_observables_to_params() {
+        // model_with_inert：Y 只受 gain、Z 只受 noise。
+        // 候选观测 [Y, Z] → gain 最该测 Y、noise 最该测 Z；都可辨识。
+        let (_d, file) = model_with_inert();
+        let p = parse_problem(
+            "optimize:\n  objective: { expr: (final Y) }\n  knobs:\n    - { var: gain,  kind: param, bounds: [1, 5] }\n    - { var: noise, kind: param, bounds: [1, 5] }\n",
+        )
+        .unwrap();
+        let obs = vec!["Y".to_string(), "Z".to_string()];
+        let rep = identifiability(&file, &p, &drivers3(), 3, &obs, 10.0, 0.01).unwrap();
+        let gain = rep.params.iter().find(|p| p.param == "gain").unwrap();
+        let noise = rep.params.iter().find(|p| p.param == "noise").unwrap();
+        assert!(gain.identifiable && noise.identifiable);
+        assert_eq!(gain.per_observable[0].0, "Y", "gain 最该测 Y");
+        assert_eq!(noise.per_observable[0].0, "Z", "noise 最该测 Z");
+        // gain 对 Z 无影响、noise 对 Y 无影响
+        assert_eq!(gain.per_observable.iter().find(|(v, _)| v == "Z").unwrap().1, 0.0);
+        assert_eq!(noise.per_observable.iter().find(|(v, _)| v == "Y").unwrap().1, 0.0);
+    }
+
+    #[test]
+    fn test_identifiability_flags_unobservable_param() {
+        // 只测 Y → noise（只进 Z）不可辨识
+        let (_d, file) = model_with_inert();
+        let p = parse_problem(
+            "optimize:\n  objective: { expr: (final Y) }\n  knobs:\n    - { var: gain,  kind: param, bounds: [1, 5] }\n    - { var: noise, kind: param, bounds: [1, 5] }\n",
+        )
+        .unwrap();
+        let rep = identifiability(&file, &p, &drivers3(), 3, &["Y".to_string()], 10.0, 0.01).unwrap();
+        let noise = rep.params.iter().find(|p| p.param == "noise").unwrap();
+        assert!(!noise.identifiable, "只测 Y 时 noise 不可辨识");
     }
 
     #[test]

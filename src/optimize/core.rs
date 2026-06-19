@@ -241,6 +241,18 @@ fn prepare(
     Ok(Prep { out, bindings, penalty, constraints })
 }
 
+/// 用一组旋钮赋值跑一次仿真、返回完整轨迹（可辨识性分析用：要看各观测变量的整条序列）。
+pub fn simulate_candidate(
+    file: &EquationFile,
+    problem: &Problem,
+    knob_values: &[f64],
+    drivers: &HashMap<String, Vec<f64>>,
+    steps: usize,
+) -> Result<SimOutput, String> {
+    let input = build_input(problem, knob_values, drivers, steps);
+    simulate(file, &input).map_err(|e| format!("仿真失败: {e}"))
+}
+
 /// 把旋钮值装配进 [`SimInput`]：param→参数覆盖，init→初值覆盖，driver_const→整列常数。
 fn build_input(
     problem: &Problem,
