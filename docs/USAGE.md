@@ -135,11 +135,12 @@ eqc optimize <模型.eq.yaml> --spec problem.yaml [--drivers w.csv] [-o result.j
 ```
 
 > **EQC Studio（交互式前端）**：`eqc serve <模型> --drivers w.csv` 起一个本地服务（`http://localhost:7878/`）。浏览器里左边是 Forrester 图 + 二维公式，右边是**整季仿真折线图**（勾选变量即画其轨迹，如产量 Y）。编辑模型保存即自动刷新。
-> - 端点：`/api/model`（JSON 契约）、`/api/report[?layout=force]`（HTML 报告）、`/api/simulate`（轨迹 JSON）、`/api/chart.svg?vars=Y,TDM`（折线图 SVG）。
+> - 端点：`/api/model`（JSON 契约）、`/api/report[?layout=force]`（HTML 报告）、`/api/simulate`（轨迹 JSON）、`/api/chart.svg?vars=Y,TDM`（折线图 SVG）、`/api/optimize?spec=problem.yaml`（跑优化、返回最优旋钮+收敛轨迹+收敛曲线 SVG）。
 > - **结构图布局可切换**（面板右上「Forrester / 力导向 / 分层」切换条，选择记在浏览器里）：`forrester`=学术风（存量横向主干 + 速率阀门 + 辅助/参数/驱动作卫星就近摆放，最像作物模型论文图）；`force`=力导向有机网络（确定性、可复现）；`layered`=自上而下分层（基线，已修复"环把层号顶飞"的高度爆炸）。布局全由 EQC-Rust 算坐标、出 SVG，前端只切换。
 > - **缩放 + 专注**：工具栏 `−/适应/+` 缩放结构图（拖动滚动条平移，比例记在浏览器里）；`⛶ 专注` 一键全屏只看结构图、再点恢复双栏。缩放/专注是 Studio 行为，离线报告仍零 JS。
 > - **节点交互**：鼠标**悬停**节点 → 浮出注释（变量名·分类·单位 + 备注 + 二维公式 + 来源，全取自 `/api/model` 契约）；**点击**节点 = 切换选中（高亮节点+公式 + 画其轨迹），再点取消，依次点多个曲线累加，与右栏复选框双向同步。联动逻辑在 Studio（同源 iframe），报告本身只带 `data-var`/`data-output` 数据属性，仍零 JS。
-> - **情景探索器**：曲线下方「情景」面板自动列出**标量参数 + 状态量初值**（各一行滑块+数值框，向量参数跳过）；拖动/输入即**实时重算曲线**（防抖），改过标蓝，「重置默认」复位。机制：覆盖经 `/api/chart.svg?p=name:val,…&init=name:val,…`（`/api/simulate` 同）交给 EQC 重算——`--drivers`/`--params` 不再启动时冻结。
+> - **情景探索器**：曲线下方「情景」面板自动列出**标量参数 + 状态量初值**（各一行滑块+数值框，向量参数跳过）；拖动/输入即**实时重算曲线**（防抖），改过标蓝，「重置默认」复位。机制：覆盖经 `/api/chart.svg?p=name:val,…&init=name:val,…&d=name:val,…`（`/api/simulate` 同）交给 EQC 重算——`--drivers`/`--params` 不再启动时冻结（`d=` 把某驱动整列设成常数，对应 `driver_const` 旋钮）。
+> - **决策优化面板**：页面底部「决策优化」面板——填决策 spec 路径（相对模型目录）点「运行优化」，跑 DE（数十秒，release 更快、编辑模型时暂不可用），显示**最优旋钮 + 目标值 + 可行性/逐约束 + 收敛曲线**（EQC 自生成 SVG）；「叠加最优旋钮到曲线」把最优旋钮喂回情景、在「整季仿真轨迹」里画出最优整季轨迹。后端 `/api/optimize` 与 CLI `eqc optimize` 共用同一计算与 JSON。
 > - **结构图拖拽**：拖**空白**=平移画布；拖**节点方框**=移动它、连线跟随（手动错开遮挡，会话内有效、刷新复位）；**轻点**节点=选中。三者按落点/位移自动区分。
 > - 原则：**EQC 始终是唯一权威**，前端只显示 EQC 生成的 SVG/MathML/JSON——前端与 EQC 之间只有一条「可检视、只增不改」的契约（`eqc export` 可随时打印它），所以随 EQC 升级而升级时低风险、易排查。后续增量：点节点高亮、浏览器内编辑、LLM 问答、GP 结构 diff。
 

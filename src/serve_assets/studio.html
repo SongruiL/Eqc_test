@@ -66,6 +66,20 @@
   #nodeTip .t-eq math { font-size:1.15em; }
   #nodeTip .t-cite { margin-top:6px; font-size:12px; color:#1d4ed8; }
   #nodeTip .t-cite.t-none { color:var(--sub); }
+  /* 决策优化面板 */
+  .opt-panel { margin:0 14px 14px; }
+  .opt-panel input.spec { width:240px; font-size:12px; padding:3px 7px; border:1px solid var(--line); border-radius:6px; }
+  .opt-grid { display:grid; grid-template-columns: 1fr 1fr; gap:14px; align-items:start; }
+  @media (max-width: 980px){ .opt-grid { grid-template-columns:1fr; } }
+  .opt-best b { color:var(--ink); }
+  .opt-tbl { width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; }
+  .opt-tbl th, .opt-tbl td { text-align:left; padding:3px 8px; border-bottom:1px solid var(--line); }
+  .opt-tbl th { color:var(--sub); font-weight:600; }
+  .opt-cons { font-size:12px; margin-top:8px; }
+  .opt-cons .ok { color:#16a34a; } .opt-cons .bad { color:#dc2626; }
+  .opt-conv svg { width:100%; max-width:720px; height:auto; display:block; }
+  .opt-summary { font-size:13px; margin-bottom:4px; }
+  .opt-summary .feas-ok { color:#16a34a; font-weight:600; } .opt-summary .feas-bad { color:#dc2626; font-weight:600; }
 </style>
 </head>
 <body>
@@ -107,6 +121,22 @@
     </div>
   </section>
 </div>
+
+<section class="panel opt-panel">
+  <h2>决策优化（差分进化 DE）
+    <span class="tools">
+      <input class="spec" id="optSpec" placeholder="problem.yaml（相对模型目录）">
+      <button class="btn" id="optRun">运行优化</button>
+    </span>
+  </h2>
+  <div class="body">
+    <div class="hint" id="optStatus">填入决策 spec 路径（见 docs/spec-optimization.md），点「运行优化」。DE 搜索可能数十秒（release 构建更快）。</div>
+    <div class="opt-grid" id="optResult" style="display:none">
+      <div id="optLeft"></div>
+      <div class="opt-conv" id="optConv"></div>
+    </div>
+  </div>
+</section>
 
 <script>
 let MODEL = null;
@@ -155,14 +185,17 @@ function buildVarList(vars){
 // —— 情景探索器：调参数/初值 → 实时重算曲线（覆盖经 /api/chart.svg?p=&init= 交给 EQC 重算）——
 const OVR = {};   // 参数覆盖 name->值（仅存与默认不同者）
 const IOVR = {};  // 初值覆盖
+const DOVR = {};  // 驱动常量覆盖（driver_const 旋钮：把某驱动整列设成常数）
 let _chartTimer = null;
 function scheduleChart(){ clearTimeout(_chartTimer); _chartTimer = setTimeout(updateChart, 150); }
 function overrideQuery(){
   const ps = Object.entries(OVR).map(([k,v])=>k+':'+v);
   const is = Object.entries(IOVR).map(([k,v])=>k+':'+v);
+  const ds = Object.entries(DOVR).map(([k,v])=>k+':'+v);
   let q = '';
   if(ps.length) q += '&p=' + encodeURIComponent(ps.join(','));
   if(is.length) q += '&init=' + encodeURIComponent(is.join(','));
+  if(ds.length) q += '&d=' + encodeURIComponent(ds.join(','));
   return q;
 }
 function ctrlRow(box, store, name, label, def){
@@ -191,6 +224,7 @@ function buildScenario(params, vars){
   const box = document.getElementById('scenario'); box.innerHTML = '';
   for(const k in OVR) delete OVR[k];
   for(const k in IOVR) delete IOVR[k];
+  for(const k in DOVR) delete DOVR[k];
   // 向量参数（cohort 种子）不可被标量覆盖 → 情景面板跳过
   const scalarParams = (params||[]).filter(p=> !p.values);
   if(scalarParams.length){
@@ -454,6 +488,73 @@ document.getElementById('focusBtn').addEventListener('click', ()=>{
   btn.classList.toggle('on', on);
   setTimeout(applyZoom, 60); // 容器宽度变了，重新适配
 });
+
+// —— 决策优化：填 spec 路径 → 跑 /api/optimize（转圈等待）→ 显示最优旋钮 + 收敛曲线 + 可叠加最优轨迹 ——
+function fmtNum(x){ const v=Number(x); if(!Number.isFinite(v)) return String(x);
+  return (Math.abs(v)>=1000||Math.abs(v)<0.001&&v!==0) ? v.toExponential(3) : v.toFixed(4); }
+const KIND_CN = {param:'参数', init:'初值', driver_const:'恒定驱动'};
+async function runOptimize(){
+  const spec = document.getElementById('optSpec').value.trim();
+  const status = document.getElementById('optStatus');
+  const grid = document.getElementById('optResult');
+  if(!spec){ status.innerHTML = '<span class="err">请填决策 spec 路径（相对模型所在目录）。</span>'; return; }
+  const btn = document.getElementById('optRun');
+  btn.disabled = true; status.textContent = '⏳ 运行中…（DE 搜索，可能数十秒；编辑模型时优化暂不可用）';
+  try {
+    const r = await fetch('/api/optimize?spec=' + encodeURIComponent(spec) + '&_=' + Date.now(), {cache:'no-store'});
+    const j = await r.json();
+    if(j.error){ status.innerHTML = '<span class="err">优化失败：' + esc(j.error) + '</span>'; grid.style.display='none'; return; }
+    status.textContent = '✅ 完成（' + (j.optimizer? ('DE pop='+j.optimizer.pop+' iters='+j.optimizer.iters+' seed='+j.optimizer.seed) : '') + '）';
+    renderOptResult(j);
+  } catch(e){ status.innerHTML = '<span class="err">优化请求失败：' + esc(e) + '</span>'; grid.style.display='none'; }
+  finally { btn.disabled = false; }
+}
+function renderOptResult(j){
+  const grid = document.getElementById('optResult'); grid.style.display='';
+  const feas = j.feasible ? '<span class="feas-ok">可行 ✓</span>' : '<span class="feas-bad">违反约束 ✗</span>';
+  let left = '<div class="opt-summary"><b>目标值（' + esc(j.objective.sense) + '）：</b>'
+    + (j.objective_value!=null ? fmtNum(j.objective_value) : '—') + '　' + feas + '</div>';
+  left += '<table class="opt-tbl"><tr><th>旋钮</th><th>最优值</th><th>种类</th><th>边界</th></tr>';
+  (j.best_knobs||[]).forEach(k=>{
+    left += '<tr><td>' + esc(k.var) + '</td><td>' + fmtNum(k.value) + (k.unit?(' '+esc(k.unit)):'')
+      + '</td><td>' + (KIND_CN[k.kind]||esc(k.kind)) + '</td><td>['
+      + fmtNum(k.bounds[0]) + ', ' + fmtNum(k.bounds[1]) + ']</td></tr>';
+  });
+  left += '</table>';
+  if(j.constraints && j.constraints.length){
+    left += '<div class="opt-cons"><b>约束：</b>';
+    j.constraints.forEach(c=>{
+      const ok = c.satisfied;
+      left += '<div class="' + (ok?'ok':'bad') + '">' + (ok?'✓':'✗') + ' ' + esc(c.expr)
+        + ' = ' + fmtNum(c.value) + ' ≤ ' + fmtNum(c.max) + (ok?'':(' （违反 '+fmtNum(c.violation)+'）')) + '</div>';
+    });
+    left += '</div>';
+  }
+  left += '<button class="btn" id="optApply" style="margin-top:10px">叠加最优旋钮到曲线</button>'
+    + '<span class="scn-note" style="margin-left:8px">把最优旋钮喂回情景、重画整季轨迹</span>';
+  document.getElementById('optLeft').innerHTML = left;
+  document.getElementById('optConv').innerHTML = j.convergence_svg || '';
+  const ap = document.getElementById('optApply');
+  if(ap) ap.addEventListener('click', ()=>applyBestKnobs(j.best_knobs));
+}
+// 把最优旋钮喂回情景覆盖（param→OVR、init→IOVR、driver_const→DOVR），重画曲线
+function applyBestKnobs(knobs){
+  (knobs||[]).forEach(k=>{
+    if(k.kind==='param') OVR[k.var] = k.value;
+    else if(k.kind==='init') IOVR[k.var] = k.value;
+    else if(k.kind==='driver_const') DOVR[k.var] = k.value;
+  });
+  // 同步情景面板里已有控件的显示值（driver_const 无控件，仅影响曲线）
+  document.querySelectorAll('#scenario .scn-row').forEach(row=>{
+    const name = row.querySelector('.scn-lab') ? row.querySelector('.scn-lab').textContent : '';
+    const val = (name in OVR) ? OVR[name] : (name in IOVR ? IOVR[name] : null);
+    if(val!=null){ const rng=row.querySelector('input[type=range]'), num=row.querySelector('input[type=number]');
+      if(rng) rng.value=val; if(num) num.value=val; row.classList.add('changed'); }
+  });
+  updateChart();
+  document.getElementById('optStatus').textContent = '已把最优旋钮叠加到「整季仿真轨迹」（情景面板已更新；重置默认可还原）。';
+}
+document.getElementById('optRun').addEventListener('click', runOptimize);
 
 let _savedLayout = 'layered';
 try { _savedLayout = localStorage.getItem('eqc_layout') || 'layered'; } catch(e){}

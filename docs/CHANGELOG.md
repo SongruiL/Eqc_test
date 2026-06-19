@@ -124,10 +124,11 @@
   - **利润变体** `(sub (mul (final Y) price) (mul CO2 co2_cost))`：最优 CO₂=**757 ppm（内点**，成本项把它从 1200 拉回）、利润 199.87，比两边界各高 8–11%——证明优化器响应目标**结构**而非顶界。端到端**可复现**（重跑同结果）。
 - 单测 26 个（objective 6 + problem/core 8 + de 6 + 已计入）覆盖归约/算术/边界、评估核（最大化/driver_const/min+常量/约束惩罚/垃圾候选不崩/validate）、DE（Sphere/Rosenbrock 收敛/同种子可复现/边界/单调/零维）。
 - **阶段 2-A 约束一等公民**（`feb22ad` + 本次）：核里把约束从「只有总 penalty」做细——`ConstraintStatus{expr,value,max,violation}`、`EvalOutcome.constraints` 逐约束明细；惩罚权重可经决策 spec `penalty_weight:` 覆盖（默认 `DEFAULT_PENALTY_WEIGHT=1e9`）。`eqc optimize` 控制台 + result JSON **逐约束报告**满足/违反与违反量、标记整体可行性。S4 算例：约束 `max(LAI) ≤ 10`（涌现量，LAI=SLA·WLV·Pd·1e-4）→ 最优从无约束的 CO₂1200/Pd12（Y10.95、峰值LAI12.66）推到 **CO₂≈681/Pd=4（Y9.36、峰值LAI 恰好=10、可行）**——优化器自行权衡「Pd 直接抬 LAI、CO₂ 增产对 LAI 代价更小」。约束值 `max(LAI)=10` 与独立 `eqc simulate` 逐位一致。
-- **后置**（spec §8 阶段 2 余下）：Studio 可视化收敛与最优（工作流 B，进行中）；`--sensitivity` 自动预筛接入；多输出/多目标雏形。阶段 3+：曲线参数化时变控制、离散旋钮、**参数标定（接田间数据）**、其它优化器（CMA-ES/贝叶斯）；更远是 GP 约束进化层（复用本评估核当 fitness 引擎）。
+- **阶段 2-B Studio 可视化优化**（B1 `0603623` + 本次）：抽 `optimize::run` + `result_json` 库函数（CLI 与 serve **共用同一计算与 JSON**）；serve 新增 `/api/optimize?spec=` 端点。`chart.rs` 加 `convergence_chart_svg`（代价 vs 代数，EQC 自生成 SVG），端点响应注入 `convergence_svg`（CLI 写文件的 result_json 保持纯数据）。`/api/chart.svg`/`/api/simulate` 加 `d=name:val` **驱动常量覆盖**（driver_const 旋钮的最优轨迹靠它叠加）。Studio 底部「决策优化」面板：填 spec → 转圈跑 DE → 显示最优旋钮/目标/可行性/逐约束 + 收敛曲线 → 「叠加最优旋钮到曲线」把最优喂回情景画最优整季轨迹。性能记录：S4 spec debug 107s / release 32.5s（解释器为瓶颈，提速作为独立后续）；UX 按「触发→转圈→出结果」。
+- **后置**（spec §8 阶段 2 余下）：`--sensitivity` 自动预筛接入；多输出/多目标雏形。阶段 3+：曲线参数化时变控制、离散旋钮、**参数标定（接田间数据）**、其它优化器（CMA-ES/贝叶斯）；解释器提速（惠及 sim/sweep/optimize）；更远是 GP 约束进化层（复用本评估核当 fitness 引擎）。
 
 ## 工程基线
-- 测试：178 lib + 2 bin + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
+- 测试：185 lib + 2 bin + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
 - 远程：github.com/SongruiL/Eqc_test，SSH 推送。
 - 文档：见 `docs/USAGE.md`（架构与模块地图）、`docs/spec-*.md`（设计规格）。
 

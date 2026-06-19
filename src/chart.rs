@@ -144,6 +144,114 @@ pub fn line_chart_svg(out: &SimOutput, vars: &[&str], width: f64, height: f64) -
     s
 }
 
+/// 把 DE 收敛轨迹（每代「至今最优代价」）画成 SVG：x=代数、y=代价（越小越好）。
+/// 与 [`line_chart_svg`] 同一套自生成 SVG 风格（零图表库、离线）。
+pub fn convergence_chart_svg(history: &[f64], width: f64, height: f64) -> String {
+    if history.is_empty() {
+        return format!(
+            "<svg viewBox=\"0 0 {width:.0} {height:.0}\" class=\"chart-svg\" xmlns=\"http://www.w3.org/2000/svg\">\
+             <text x=\"{:.0}\" y=\"{:.0}\" font-size=\"13\" fill=\"#6b7280\" text-anchor=\"middle\">（无收敛数据）</text></svg>",
+            width / 2.0,
+            height / 2.0
+        );
+    }
+    let n = history.len();
+
+    let (mut ymin, mut ymax) = (f64::INFINITY, f64::NEG_INFINITY);
+    for &y in history {
+        if y.is_finite() {
+            ymin = ymin.min(y);
+            ymax = ymax.max(y);
+        }
+    }
+    if !ymin.is_finite() {
+        ymin = 0.0;
+        ymax = 1.0;
+    }
+    if (ymax - ymin).abs() < 1e-12 {
+        ymax = ymin + 1.0;
+    }
+    let pad = (ymax - ymin) * 0.05;
+    ymin -= pad;
+    ymax += pad;
+
+    let (ml, mr, mt, mb) = (66.0, 16.0, 18.0, 38.0);
+    let pw = (width - ml - mr).max(1.0);
+    let ph = (height - mt - mb).max(1.0);
+    let xmap = |i: usize| ml + (i as f64) / ((n - 1).max(1) as f64) * pw;
+    let ymap = |y: f64| mt + (ymax - y) / (ymax - ymin) * ph;
+
+    let mut s = format!(
+        "<svg viewBox=\"0 0 {width:.0} {height:.0}\" class=\"chart-svg\" xmlns=\"http://www.w3.org/2000/svg\">"
+    );
+
+    // y 网格 + 刻度
+    for k in 0..=4 {
+        let yv = ymin + (ymax - ymin) * (k as f64 / 4.0);
+        let yy = ymap(yv);
+        s.push_str(&format!(
+            "<line x1=\"{ml:.0}\" y1=\"{yy:.1}\" x2=\"{:.1}\" y2=\"{yy:.1}\" stroke=\"#eef2ff\" stroke-width=\"1\"/>",
+            ml + pw
+        ));
+        s.push_str(&format!(
+            "<text x=\"{:.0}\" y=\"{:.1}\" font-size=\"10\" fill=\"#6b7280\" text-anchor=\"end\">{}</text>",
+            ml - 6.0,
+            yy + 3.0,
+            fmt(yv)
+        ));
+    }
+    // x 刻度（约 6 个，代数从 0 起）
+    let xticks = 6.min(n);
+    for k in 0..xticks {
+        let i = if xticks <= 1 { 0 } else { k * (n - 1) / (xticks - 1) };
+        let xx = xmap(i);
+        s.push_str(&format!(
+            "<line x1=\"{xx:.1}\" y1=\"{mt:.0}\" x2=\"{xx:.1}\" y2=\"{:.1}\" stroke=\"#f3f4f6\" stroke-width=\"1\"/>",
+            mt + ph
+        ));
+        s.push_str(&format!(
+            "<text x=\"{xx:.1}\" y=\"{:.0}\" font-size=\"10\" fill=\"#6b7280\" text-anchor=\"middle\">{i}</text>",
+            mt + ph + 14.0
+        ));
+    }
+    // 坐标轴
+    s.push_str(&format!(
+        "<line x1=\"{ml:.0}\" y1=\"{mt:.0}\" x2=\"{ml:.0}\" y2=\"{:.1}\" stroke=\"#cbd5e1\"/>",
+        mt + ph
+    ));
+    s.push_str(&format!(
+        "<line x1=\"{ml:.0}\" y1=\"{:.1}\" x2=\"{:.1}\" y2=\"{:.1}\" stroke=\"#cbd5e1\"/>",
+        mt + ph,
+        ml + pw,
+        mt + ph
+    ));
+    s.push_str(&format!(
+        "<text x=\"{:.1}\" y=\"{:.0}\" font-size=\"10\" fill=\"#6b7280\" text-anchor=\"middle\">代数 (generation)</text>",
+        ml + pw / 2.0,
+        height - 4.0
+    ));
+
+    // 收敛折线
+    let pts: String = history
+        .iter()
+        .enumerate()
+        .filter(|(_, y)| y.is_finite())
+        .map(|(i, y)| format!("{:.1},{:.1}", xmap(i), ymap(*y)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    s.push_str(&format!(
+        "<polyline points=\"{pts}\" fill=\"none\" stroke=\"#2563eb\" stroke-width=\"1.8\"/>"
+    ));
+    s.push_str(&format!(
+        "<text x=\"{:.0}\" y=\"{:.0}\" font-size=\"10\" fill=\"#374151\">代价（越小越好）</text>",
+        ml + 8.0,
+        mt + 12.0
+    ));
+
+    s.push_str("</svg>");
+    s
+}
+
 fn fmt(v: f64) -> String {
     if v.abs() >= 100.0 {
         format!("{v:.0}")
@@ -187,5 +295,19 @@ mod tests {
         let o = out(&[("Y", vec![1.0, 2.0])]);
         let svg = line_chart_svg(&o, &["NotThere"], 640.0, 320.0);
         assert!(svg.contains("无可绘制数据"));
+    }
+
+    #[test]
+    fn test_convergence_chart() {
+        let svg = convergence_chart_svg(&[-8.0, -9.0, -10.0, -10.5], 720.0, 300.0);
+        assert!(svg.contains("<svg"));
+        assert_eq!(svg.matches("<polyline").count(), 1);
+        assert!(svg.contains("代数"));
+    }
+
+    #[test]
+    fn test_convergence_chart_empty() {
+        let svg = convergence_chart_svg(&[], 720.0, 300.0);
+        assert!(svg.contains("无收敛数据"));
     }
 }

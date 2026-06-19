@@ -142,16 +142,24 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
             Err(e) => ("200 OK", "text/html; charset=utf-8", error_html(&e)),
         },
         "/api/simulate" => {
-            let (pv, iv) = (parse_overrides(query, "p"), parse_overrides(query, "init"));
-            match run_sim(ctx, &pv, &iv) {
+            let (pv, iv, dv) = (
+                parse_overrides(query, "p"),
+                parse_overrides(query, "init"),
+                parse_overrides(query, "d"),
+            );
+            match run_sim(ctx, &pv, &iv, &dv) {
                 Ok(out) => ("200 OK", "application/json; charset=utf-8", trajectory_json(&out)),
                 Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
             }
         }
         "/api/chart.svg" => {
             let vars = parse_vars(query);
-            let (pv, iv) = (parse_overrides(query, "p"), parse_overrides(query, "init"));
-            let svg = match run_sim(ctx, &pv, &iv) {
+            let (pv, iv, dv) = (
+                parse_overrides(query, "p"),
+                parse_overrides(query, "init"),
+                parse_overrides(query, "d"),
+            );
+            let svg = match run_sim(ctx, &pv, &iv, &dv) {
                 Ok(out) => {
                     let refs: Vec<&str> = vars.iter().map(|s| s.as_str()).collect();
                     crate::chart::line_chart_svg(&out, &refs, 720.0, 360.0)
@@ -246,11 +254,14 @@ fn parse_layout(query: &str) -> LayoutKind {
 }
 
 /// 用预加载的驱动量 + 参数跑一次仿真（单模型，取第一个模块）。
-/// `param_ov`/`init_ov`：请求级覆盖（情景探索器传来），叠加在启动级 `--params` 之上。
+/// `param_ov`/`init_ov`/`driver_ov`：请求级覆盖（情景探索器 / 最优轨迹叠加传来），
+/// 叠加在启动级 `--params`/`--drivers` 之上。`driver_ov` 把某驱动整列设成常数
+/// （对应 `driver_const` 旋钮——这样优化得到的恒定 CO₂ 等也能画出其最优轨迹）。
 fn run_sim(
     ctx: &Ctx,
     param_ov: &HashMap<String, f64>,
     init_ov: &HashMap<String, f64>,
+    driver_ov: &HashMap<String, f64>,
 ) -> Result<SimOutput, String> {
     let files = load_files(&ctx.path)?;
     let file = files.first().ok_or_else(|| "无模型".to_string())?;
@@ -268,6 +279,10 @@ fn run_sim(
         input.param_overrides.insert(k.clone(), *v);
     }
     input.init_overrides = init_ov.clone();
+    // 驱动常量覆盖：整列设成常数
+    for (k, v) in driver_ov {
+        input.drivers.insert(k.clone(), vec![*v; *steps]);
+    }
     simulate(file, &input).map_err(|e| format!("仿真失败: {e}"))
 }
 
@@ -313,7 +328,16 @@ fn run_optimize(ctx: &Ctx, query: &str) -> Result<String, String> {
     };
 
     let res = optimize::run(file, &problem, &driver_map, steps)?;
-    Ok(optimize::result_json(file, &problem, &res).to_string())
+    // 数据 JSON（与 CLI 同结构）+ 注入 EQC 自生成的收敛曲线 SVG（供 Studio 直接显示；
+    // CLI 写文件的 result_json 保持纯数据、不含 SVG）。
+    let mut j = optimize::result_json(file, &problem, &res);
+    if let Some(obj) = j.as_object_mut() {
+        obj.insert(
+            "convergence_svg".to_string(),
+            serde_json::Value::String(crate::chart::convergence_chart_svg(&res.history, 720.0, 300.0)),
+        );
+    }
+    Ok(j.to_string())
 }
 
 /// `?spec=problem.yaml` → 路径串（url 解码）。
@@ -432,6 +456,9 @@ mod tests {
         // 节点悬停注释 + 点击联动
         assert!(STUDIO_HTML.contains("nodeTip"));
         assert!(STUDIO_HTML.contains("wireNodeClicks"));
+        // 决策优化面板
+        assert!(STUDIO_HTML.contains("optRun"));
+        assert!(STUDIO_HTML.contains("/api/optimize?spec="));
     }
 
     #[test]
