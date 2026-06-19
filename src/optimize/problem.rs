@@ -58,6 +58,9 @@ pub struct Problem {
     /// 不可控环境（驱动量时间序列 CSV）；相对 spec 文件目录解析。可缺省（用 CLI `--drivers`）。
     #[serde(default)]
     pub environment: Option<String>,
+    /// 实测数据 CSV（参数标定用）；相对 spec 目录解析。可缺省（用 CLI `--observed`）。
+    #[serde(default)]
+    pub observed: Option<String>,
     #[serde(default)]
     pub optimizer: OptimizerCfg,
 }

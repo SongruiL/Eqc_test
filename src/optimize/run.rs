@@ -9,8 +9,9 @@ use std::collections::HashMap;
 
 use crate::schema::EquationFile;
 
-use super::core::{evaluate, evaluate_mo, validate_problem, EvalOutcome};
+use super::core::{evaluate, evaluate_mo, evaluate_obs, validate_problem, EvalOutcome};
 use super::de::{differential_evolution, differential_evolution_mo, DeConfig};
+use super::objective::ObservedData;
 use super::problem::{Problem, Sense};
 
 /// 一次优化的完整结果（供 CLI 打印 / serve 转 JSON 共用）。
@@ -37,6 +38,18 @@ pub fn run(
     drivers: &HashMap<String, Vec<f64>>,
     steps: usize,
 ) -> Result<OptimizeResult, String> {
+    run_obs(file, problem, drivers, steps, &ObservedData::new())
+}
+
+/// 同 [`run`]，但额外提供**实测数据**——目标可用误差算子（`rmse` 等）。**参数标定**用：
+/// 旋钮=参数、目标=预测 vs 实测的误差。底层与决策优化是同一条计算路径。
+pub fn run_obs(
+    file: &EquationFile,
+    problem: &Problem,
+    drivers: &HashMap<String, Vec<f64>>,
+    steps: usize,
+    observed: &ObservedData,
+) -> Result<OptimizeResult, String> {
     validate_problem(file, problem)?;
     if problem.optimizer.method != "de" {
         return Err(format!(
@@ -54,9 +67,9 @@ pub fn run(
         problem.knobs.iter().map(|k| (k.bounds[0], k.bounds[1])).collect();
 
     let res = differential_evolution(&bounds, &config, |x| {
-        evaluate(file, problem, x, drivers, steps).cost
+        evaluate_obs(file, problem, x, drivers, steps, observed).cost
     });
-    let outcome = evaluate(file, problem, &res.best_x, drivers, steps);
+    let outcome = evaluate_obs(file, problem, &res.best_x, drivers, steps, observed);
 
     Ok(OptimizeResult {
         best_knobs: res.best_x,
@@ -396,6 +409,21 @@ equations:
         let path = dir.path().join("m.eq.yaml");
         std::fs::File::create(&path).unwrap().write_all(yaml.as_bytes()).unwrap();
         (dir, parse_file(&path).unwrap())
+    }
+
+    #[test]
+    fn test_calibrate_recovers_param() {
+        // recover-the-params：真值 gain=3 → Y=[3,6,9] 当伪实测；从中标定应找回 gain≈3。
+        let (_d, file) = model();
+        let observed: ObservedData =
+            [("obs_Y".to_string(), vec![(1usize, 3.0), (2, 6.0), (3, 9.0)])].into_iter().collect();
+        let p = parse_problem(
+            "optimize:\n  objective: { expr: (rmse Y obs_Y), sense: min }\n  knobs:\n    - { var: gain, kind: param, bounds: [1, 5] }\n  optimizer: { pop: 20, iters: 80, seed: 1 }\n",
+        )
+        .unwrap();
+        let r = run_obs(&file, &p, &drivers3(), 3, &observed).unwrap();
+        assert!((r.best_knobs[0] - 3.0).abs() < 1e-2, "应找回 gain≈3，得 {}", r.best_knobs[0]);
+        assert!(r.outcome.objective.unwrap() < 1e-3, "拟合误差应接近 0");
     }
 
     #[test]

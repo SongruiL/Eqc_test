@@ -15,7 +15,7 @@ use std::collections::{HashMap, HashSet};
 use crate::schema::EquationFile;
 use crate::sim::{build_plan, simulate, SimInput, SimOutput};
 
-use super::objective::eval_objective;
+use super::objective::{eval_objective_obs, ObservedData};
 use super::problem::{KnobKind, Objective, Problem, Sense};
 
 /// 垃圾候选（仿真发散/出错/目标无法求值/约束求值失败）的代价：一个很大的**有限**值
@@ -83,13 +83,25 @@ pub fn evaluate(
     drivers: &HashMap<String, Vec<f64>>,
     steps: usize,
 ) -> EvalOutcome {
-    let prep = match prepare(file, problem, knob_values, drivers, steps) {
+    evaluate_obs(file, problem, knob_values, drivers, steps, &ObservedData::new())
+}
+
+/// 同 [`evaluate`]，但额外提供**实测数据**——目标/约束可用误差算子（`rmse` 等）。参数标定用。
+pub fn evaluate_obs(
+    file: &EquationFile,
+    problem: &Problem,
+    knob_values: &[f64],
+    drivers: &HashMap<String, Vec<f64>>,
+    steps: usize,
+    observed: &ObservedData,
+) -> EvalOutcome {
+    let prep = match prepare(file, problem, knob_values, drivers, steps, observed) {
         Ok(p) => p,
         Err(note) => return EvalOutcome::garbage(note),
     };
 
     // 目标值
-    let obj = match eval_objective(&problem.objective.expr, &prep.out, &prep.bindings) {
+    let obj = match eval_objective_obs(&problem.objective.expr, &prep.out, &prep.bindings, observed) {
         Ok(v) if v.is_finite() => v,
         Ok(_) => return EvalOutcome::garbage("目标值非有限（NaN/Inf）".into()),
         Err(e) => return EvalOutcome::garbage(format!("目标求值失败: {e}")),
@@ -144,18 +156,30 @@ pub fn evaluate_mo(
     drivers: &HashMap<String, Vec<f64>>,
     steps: usize,
 ) -> MoOutcome {
+    evaluate_mo_obs(file, problem, knob_values, drivers, steps, &ObservedData::new())
+}
+
+/// 同 [`evaluate_mo`]，但额外提供实测数据（多目标标定/拟合权衡可用误差算子）。
+pub fn evaluate_mo_obs(
+    file: &EquationFile,
+    problem: &Problem,
+    knob_values: &[f64],
+    drivers: &HashMap<String, Vec<f64>>,
+    steps: usize,
+    observed: &ObservedData,
+) -> MoOutcome {
     let objs: Vec<&Objective> = match &problem.objective2 {
         Some(o2) => vec![&problem.objective, o2],
         None => vec![&problem.objective], // 退化：单目标也可用（caller 通常已判定多目标）
     };
-    let prep = match prepare(file, problem, knob_values, drivers, steps) {
+    let prep = match prepare(file, problem, knob_values, drivers, steps, observed) {
         Ok(p) => p,
         Err(note) => return MoOutcome::garbage(note, objs.len()),
     };
 
     let mut raw = Vec::with_capacity(objs.len());
     for o in &objs {
-        match eval_objective(&o.expr, &prep.out, &prep.bindings) {
+        match eval_objective_obs(&o.expr, &prep.out, &prep.bindings, observed) {
             Ok(v) if v.is_finite() => raw.push(v),
             _ => return MoOutcome::garbage(format!("目标求值失败/非有限: {}", o.expr), objs.len()),
         }
@@ -195,6 +219,7 @@ fn prepare(
     knob_values: &[f64],
     drivers: &HashMap<String, Vec<f64>>,
     steps: usize,
+    observed: &ObservedData,
 ) -> Result<Prep, String> {
     let input = build_input(problem, knob_values, drivers, steps);
     let out = simulate(file, &input).map_err(|e| format!("仿真失败: {e}"))?;
@@ -204,7 +229,7 @@ fn prepare(
     let mut penalty = 0.0;
     let mut constraints = Vec::with_capacity(problem.constraints.len());
     for c in &problem.constraints {
-        match eval_objective(&c.expr, &out, &bindings) {
+        match eval_objective_obs(&c.expr, &out, &bindings, observed) {
             Ok(cv) if cv.is_finite() => {
                 let violation = (cv - c.max).max(0.0);
                 penalty += violation;

@@ -276,6 +276,32 @@ enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+
+    /// 参数标定：用实测数据反推模型参数（旋钮=参数、目标=预测 vs 实测误差），见 docs/spec-calibration.md
+    Calibrate {
+        /// 模型文件（单个 .eq.yaml）
+        input: PathBuf,
+
+        /// 标定 spec（YAML：误差目标/参数旋钮/observed/environment）
+        #[arg(short, long)]
+        spec: PathBuf,
+
+        /// 同期天气驱动量 CSV（覆盖 spec 的 environment:）
+        #[arg(short, long)]
+        drivers: Option<PathBuf>,
+
+        /// 实测数据 CSV（覆盖 spec 的 observed:；首列 DAT + 各观测变量列，空格=未测）
+        #[arg(long)]
+        observed: Option<PathBuf>,
+
+        /// 步数（默认取驱动量 CSV 行数）
+        #[arg(long)]
+        steps: Option<usize>,
+
+        /// 输出结果 JSON（拟合参数 + 误差 + 收敛轨迹），缺省只打印到控制台
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[cfg(feature = "cli")]
@@ -310,6 +336,9 @@ fn main() {
         Commands::Export { input, output } => run_export(&input, output.as_ref()),
         Commands::Optimize { input, spec, drivers, steps, prescreen, output } => {
             run_optimize(&input, &spec, drivers.as_ref(), steps, prescreen, output.as_ref())
+        }
+        Commands::Calibrate { input, spec, drivers, observed, steps, output } => {
+            run_calibrate(&input, &spec, drivers.as_ref(), observed.as_ref(), steps, output.as_ref())
         }
     };
 
@@ -780,6 +809,91 @@ fn run_optimize(
         println!("   结果已写入 {}", path.display());
     }
 
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+#[allow(clippy::too_many_arguments)]
+fn run_calibrate(
+    input: &PathBuf,
+    spec: &PathBuf,
+    drivers: Option<&PathBuf>,
+    observed: Option<&PathBuf>,
+    steps: Option<usize>,
+    output: Option<&PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use equation_compiler::optimize::{self, load_problem, Sense};
+    use equation_compiler::parse_file;
+    use equation_compiler::scenario::{load_drivers_csv, load_observed_csv};
+
+    println!("🔧 标定模型: {}", input.display());
+    let file = parse_file(input)?;
+    let problem = load_problem(spec)?;
+    if problem.is_multi() {
+        return Err("标定暂为单目标（误差最小化）：请用单个 objective".into());
+    }
+    let spec_dir = || spec.parent().unwrap_or_else(|| std::path::Path::new("."));
+
+    // —— 同期天气驱动量：--drivers 优先，否则 spec 的 environment ——
+    let driver_path: PathBuf = match drivers {
+        Some(p) => p.clone(),
+        None => match &problem.environment {
+            Some(env) => spec_dir().join(env),
+            None => return Err("缺同期天气：请加 --drivers，或在 spec 写 environment:".into()),
+        },
+    };
+    let (rows, driver_map) = load_drivers_csv(&driver_path)?;
+    let steps = steps.unwrap_or(rows);
+
+    // —— 实测数据：--observed 优先，否则 spec 的 observed ——
+    let obs_path: PathBuf = match observed {
+        Some(p) => p.clone(),
+        None => match &problem.observed {
+            Some(o) => spec_dir().join(o),
+            None => return Err("缺实测数据：请加 --observed，或在 spec 写 observed:".into()),
+        },
+    };
+    let observed_data = load_observed_csv(&obs_path)?;
+    let n_obs: usize = observed_data.values().map(|v| v.len()).sum();
+
+    let sense_str = match problem.objective.sense {
+        Sense::Max => "max",
+        Sense::Min => "min",
+    };
+    println!(
+        "   参数 {} 个 | 环境 {} ({} 步) | 实测 {} ({} 观测点 / {} 变量) | 目标 {sense_str} {}",
+        problem.knobs.len(),
+        driver_path.display(),
+        steps,
+        obs_path.display(),
+        n_obs,
+        observed_data.len(),
+        problem.objective.expr,
+    );
+
+    // —— 跑标定（旋钮=参数、目标=误差；与决策优化共用 run_obs）——
+    let res = optimize::run_obs(&file, &problem, &driver_map, steps, &observed_data)?;
+    let best = &res.outcome;
+
+    println!("\n✅ 标定完成");
+    println!("   拟合参数：");
+    for (k, v) in problem.knobs.iter().zip(&res.best_knobs) {
+        let unit = k.unit.as_deref().map(|u| format!(" {u}")).unwrap_or_default();
+        println!("     {:<16} = {:.6}{unit}", k.var, v);
+    }
+    match best.objective {
+        Some(e) => println!("   拟合误差（{sense_str} {}）：{e:.6}", problem.objective.expr),
+        None => println!("   ⚠️ 最优候选无法求值（{}）", best.note.clone().unwrap_or_default()),
+    }
+    if let (Some(first), Some(last)) = (res.history.first(), res.history.last()) {
+        println!("   收敛：初代 {first:.6} → 末代 {last:.6}（共 {} 代）", res.history.len() - 1);
+    }
+
+    if let Some(path) = output {
+        let json = optimize::result_json(&file, &problem, &res);
+        std::fs::write(path, serde_json::to_string_pretty(&json)?)?;
+        println!("   结果已写入 {}", path.display());
+    }
     Ok(())
 }
 

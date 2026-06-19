@@ -37,6 +37,53 @@ pub fn load_drivers_csv(path: &Path) -> Result<(usize, HashMap<String, Vec<f64>>
     Ok((rows, names.into_iter().zip(cols).collect()))
 }
 
+/// 读**实测数据** CSV（参数标定用）：首列须为 `DAT`（1 起的天数），其余列 = 观测变量。
+/// **稀疏**：空单元格表示那天没测、跳过。返回 `名 -> [(天, 值)]`（与 `optimize::ObservedData` 一致）。
+pub fn load_observed_csv(path: &Path) -> Result<HashMap<String, Vec<(usize, f64)>>, String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("读取 {} 失败: {e}", path.display()))?;
+    let mut lines = content.lines().filter(|l| !l.trim().is_empty());
+    let header = lines.next().ok_or_else(|| "实测 CSV 为空".to_string())?;
+    let names: Vec<String> = header.split(',').map(|s| s.trim().to_string()).collect();
+    let dat_col = names
+        .iter()
+        .position(|n| n.eq_ignore_ascii_case("DAT"))
+        .ok_or_else(|| "实测 CSV 首行须含 DAT 列（1 起的天数）".to_string())?;
+
+    let mut out: HashMap<String, Vec<(usize, f64)>> = HashMap::new();
+    for (i, n) in names.iter().enumerate() {
+        if i != dat_col {
+            out.insert(n.clone(), Vec::new());
+        }
+    }
+    let mut rownum = 1usize;
+    for line in lines {
+        rownum += 1;
+        let fields: Vec<&str> = line.split(',').collect();
+        if fields.len() != names.len() {
+            return Err(format!("实测 CSV 第 {rownum} 行列数与表头不符"));
+        }
+        let day: usize = fields[dat_col]
+            .trim()
+            .parse()
+            .map_err(|_| format!("实测 CSV 第 {rownum} 行 DAT 不是整数: '{}'", fields[dat_col].trim()))?;
+        for (i, f) in fields.iter().enumerate() {
+            if i == dat_col {
+                continue;
+            }
+            let cell = f.trim();
+            if cell.is_empty() {
+                continue; // 稀疏：那天没测
+            }
+            let v: f64 = cell
+                .parse()
+                .map_err(|_| format!("实测 CSV 第 {rownum} 行列 '{}' 无法解析: '{cell}'", names[i]))?;
+            out.get_mut(&names[i]).unwrap().push((day, v));
+        }
+    }
+    Ok(out)
+}
+
 /// 读参数覆盖 JSON：`{"name": value, ...}`。
 pub fn load_params_json(path: &Path) -> Result<HashMap<String, f64>, String> {
     let content = std::fs::read_to_string(path)

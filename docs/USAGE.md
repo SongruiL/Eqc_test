@@ -117,6 +117,27 @@ optimize:
 - **多目标（雏形）**：spec 再写一条 `objective2`，即进多目标模式——**单次 MO-DE**（带 Pareto 支配选择 + 拥挤度截断，~40 点）一次跑出**权衡前沿**（如「产量最大 vs CO₂ 用量最小」）。CLI 打印前沿表；Studio 画散点曲线、点选某点即叠加该点整季轨迹。
 - 草莓 S4 实测：最大化产量 → CO₂/Pd 顶界 Y=10.95 kg/m²；利润变体（CO₂ 有成本）→ 最优 CO₂≈757 ppm（内点）；带约束 `max(LAI) ≤ 10`（涌现量）→ 最优 CO₂≈681/Pd=4、Y=9.36、峰值 LAI 恰好顶到 10（约束起作用、可行）。Pd 最优与 `eqc sweep` 网格逐位一致；各最优点用独立 `eqc simulate` 复现逐位一致。
 
+### 3.5 参数标定（用实测数据反推参数）
+
+机理模型的结构（方程）来自文献，但参数常是估计值（如 S4 的 `Kc` 注明「待重标定」）。**标定 = 用田间实测反推出最吻合现实的参数**，让模型量级可信——这是「在未标定模型上优化 = 拿错模型推错决策」的解药，也是通往 GP 的桥。设计见 `docs/spec-calibration.md`。
+
+标定与决策优化是**同一外循环、共用同一评估核**，只换「旋钮=参数、目标=误差」：
+
+```yaml
+optimize:
+  objective: { expr: "(rmse Y obs_Y)", sense: min }     # 误差（可多变量加权：(add (rmse Y oY) (mul w (rmse LAI oL)))）
+  knobs:
+    - { var: LUE, kind: param, bounds: [1, 6] }
+    - { var: Kc,  kind: param, bounds: [100, 600] }
+  environment: scenario/weather_s4_400.csv               # 同期天气
+  observed: field_obs.csv                                # 实测数据 CSV（首列 DAT + 各观测列，空格=未测）
+  optimizer: { method: de, pop: 30, iters: 100, seed: 42 }
+```
+
+- **误差算子**（作用于「仿真序列 vs 实测序列」）：`rmse / mae / nse（纳什效率，max）/ bias`。实测**稀疏**（周期性取样即可）。
+- **可观测 vs 不可观测**：只能标定被观测约束住的参数。库强/LUE/分配比等模型内部量测不到、靠可观测输出（产量/生物量/LAI 的**时间序列**）反推。要时间序列（非单期末值）+ 处理梯度，并警惕「异参同效」。
+- **recover-the-params 自验**（无需真数据即可建+验）：用已知参数造一条轨迹当伪实测，标定能把参数找回。实测：S4 用 LUE=4.0 造伪实测 → `eqc calibrate` 找回 LUE=4.000000、误差 0。
+
 ## 4. CLI 命令速查
 
 ```bash
@@ -134,6 +155,7 @@ eqc sweep <模型.eq.yaml> --drivers w.csv --sensitivity --var Y [--percent 10] 
 eqc serve <模型.eq.yaml> [--drivers w.csv] [--params s.json] [--port 7878]  # EQC Studio：浏览器里看模型 + 跑仿真画轨迹
 eqc export <模型.eq.yaml> [-o model.json]                # 导出模型 JSON 契约（前端/工具消费用，可检视）
 eqc optimize <模型.eq.yaml> --spec problem.yaml [--drivers w.csv] [--prescreen] [-o result.json]  # 仿真优化：DE 搜旋钮空间求目标最优（spec 含 objective2 则多目标 Pareto；--prescreen 先剔低敏感旋钮）
+eqc calibrate <模型.eq.yaml> --spec calib.yaml [--drivers w.csv] [--observed obs.csv] [-o result.json]  # 参数标定：用实测数据反推参数（旋钮=参数、目标=预测vs实测误差）
 ```
 
 > **EQC Studio（交互式前端）**：`eqc serve <模型> --drivers w.csv` 起一个本地服务（`http://localhost:7878/`）。浏览器里左边是 Forrester 图 + 二维公式，右边是**整季仿真折线图**（勾选变量即画其轨迹，如产量 Y）。编辑模型保存即自动刷新。
