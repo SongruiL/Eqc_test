@@ -48,6 +48,9 @@ pub struct Problem {
     /// 一般约束：`expr ≤ max`，用惩罚法。
     #[serde(default)]
     pub constraints: Vec<Constraint>,
+    /// 约束惩罚权重（线性外罚 `cost += weight·Σ违反量`）。缺省见 `core::DEFAULT_PENALTY_WEIGHT`（1e9）。
+    #[serde(default)]
+    pub penalty_weight: Option<f64>,
     /// 不可控环境（驱动量时间序列 CSV）；相对 spec 文件目录解析。可缺省（用 CLI `--drivers`）。
     #[serde(default)]
     pub environment: Option<String>,

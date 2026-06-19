@@ -22,8 +22,22 @@ use super::problem::{KnobKind, Problem, Sense};
 /// （不用 `f64::INFINITY`，保持 DE 的算术良性）。
 pub const WORST_COST: f64 = 1e18;
 
-/// 约束违反的线性外罚系数（`cost += PENALTY_COEF · Σ违反量`）。
-const PENALTY_COEF: f64 = 1e9;
+/// 约束违反的默认线性外罚权重（`cost += weight · Σ违反量`）。
+/// 决策 spec 可用 `penalty_weight:` 覆盖。
+pub const DEFAULT_PENALTY_WEIGHT: f64 = 1e9;
+
+/// 单条约束的状态（约束一等公民：报告哪条满足/违反、违反多少）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstraintStatus {
+    /// 约束的 S 表达式。
+    pub expr: String,
+    /// 约束式当前求值（对轨迹归约/旋钮）。
+    pub value: f64,
+    /// 上界（约束为 `value ≤ max`）。
+    pub max: f64,
+    /// 违反量 `max(0, value − max)`（0 = 满足）。
+    pub violation: f64,
+}
 
 /// 一次目标评估的结果。
 #[derive(Debug, Clone)]
@@ -36,13 +50,22 @@ pub struct EvalOutcome {
     pub penalty: f64,
     /// 是否满足全部约束。
     pub feasible: bool,
+    /// 逐约束状态明细（与 `problem.constraints` 一一对应；垃圾候选为空）。
+    pub constraints: Vec<ConstraintStatus>,
     /// 垃圾候选/出错原因（诊断用）。
     pub note: Option<String>,
 }
 
 impl EvalOutcome {
     fn garbage(note: String) -> Self {
-        Self { cost: WORST_COST, objective: None, penalty: 0.0, feasible: false, note: Some(note) }
+        Self {
+            cost: WORST_COST,
+            objective: None,
+            penalty: 0.0,
+            feasible: false,
+            constraints: Vec::new(),
+            note: Some(note),
+        }
     }
 }
 
@@ -76,10 +99,20 @@ pub fn evaluate(
 
     // 约束 expr ≤ max：违反量 = max(0, c − max)；惩罚 = Σ 违反量。
     let mut penalty = 0.0;
+    let mut statuses = Vec::with_capacity(problem.constraints.len());
     for c in &problem.constraints {
         match eval_objective(&c.expr, &out, &bindings) {
-            Ok(cv) if cv.is_finite() => penalty += (cv - c.max).max(0.0),
-            _ => return EvalOutcome::garbage("约束求值失败/非有限".into()),
+            Ok(cv) if cv.is_finite() => {
+                let violation = (cv - c.max).max(0.0);
+                penalty += violation;
+                statuses.push(ConstraintStatus {
+                    expr: c.expr.clone(),
+                    value: cv,
+                    max: c.max,
+                    violation,
+                });
+            }
+            _ => return EvalOutcome::garbage(format!("约束求值失败/非有限: {}", c.expr)),
         }
     }
     let feasible = penalty == 0.0;
@@ -89,9 +122,10 @@ pub fn evaluate(
         Sense::Max => -obj,
         Sense::Min => obj,
     };
-    let cost = base + PENALTY_COEF * penalty;
+    let weight = problem.penalty_weight.unwrap_or(DEFAULT_PENALTY_WEIGHT);
+    let cost = base + weight * penalty;
 
-    EvalOutcome { cost, objective: Some(obj), penalty, feasible, note: None }
+    EvalOutcome { cost, objective: Some(obj), penalty, feasible, constraints: statuses, note: None }
 }
 
 /// 把旋钮值装配进 [`SimInput`]：param→参数覆盖，init→初值覆盖，driver_const→整列常数。
@@ -298,6 +332,42 @@ equations:
         assert!((e.penalty - 1.0).abs() < 1e-12);
         // cost = -6 + 1e9·1 ≈ 1e9（惩罚主导，远差于可行解）
         assert!(e.cost > 1e8);
+        // 逐约束明细：约束式 (sub (final Y) 5) 求值=6−5=1，max=0，violation=max(0,1−0)=1
+        assert_eq!(e.constraints.len(), 1);
+        assert_eq!(e.constraints[0].value, 1.0);
+        assert_eq!(e.constraints[0].max, 0.0);
+        assert!((e.constraints[0].violation - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_penalty_weight_override() {
+        let (_d, file) = model();
+        // 同上约束，但把 penalty_weight 覆盖成 10 → cost = -6 + 10·1 = 4
+        let p = parse_problem(
+            "optimize:\n  objective: { expr: (final Y), sense: max }\n  penalty_weight: 10.0\n  constraints:\n    - { expr: (sub (final Y) 5), max: 0 }\n  knobs:\n    - { var: gain, kind: param, bounds: [1, 5] }\n",
+        )
+        .unwrap();
+        let drv = drivers3();
+        let e = evaluate(&file, &p, &[2.0], &drv, 3);
+        assert!((e.cost - 4.0).abs() < 1e-9);
+        assert!(!e.feasible);
+    }
+
+    #[test]
+    fn test_feasible_constraint_reported() {
+        let (_d, file) = model();
+        // 约束 final(Y) ≤ 10；gain=2 → final Y=6 ≤ 10 → 满足，无惩罚
+        let p = parse_problem(
+            "optimize:\n  objective: { expr: (final Y), sense: max }\n  constraints:\n    - { expr: (sub (final Y) 10), max: 0 }\n  knobs:\n    - { var: gain, kind: param, bounds: [1, 5] }\n",
+        )
+        .unwrap();
+        let drv = drivers3();
+        let e = evaluate(&file, &p, &[2.0], &drv, 3);
+        assert!(e.feasible);
+        assert_eq!(e.penalty, 0.0);
+        assert_eq!(e.cost, -6.0); // 无惩罚
+        assert_eq!(e.constraints.len(), 1);
+        assert_eq!(e.constraints[0].violation, 0.0);
     }
 
     #[test]

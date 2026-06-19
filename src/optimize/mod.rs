@@ -19,7 +19,9 @@ pub mod de;
 pub mod objective;
 pub mod problem;
 
-pub use core::{evaluate, validate_problem, EvalOutcome, WORST_COST};
+pub use core::{
+    evaluate, validate_problem, ConstraintStatus, EvalOutcome, DEFAULT_PENALTY_WEIGHT, WORST_COST,
+};
 pub use de::{differential_evolution, DeConfig, DeResult};
 pub use objective::{eval_objective, ObjError, REDUCTIONS};
 pub use problem::{
