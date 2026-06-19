@@ -41,6 +41,10 @@ struct ProblemFile {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Problem {
     pub objective: Objective,
+    /// 第二目标（可选）。提供则进入**多目标模式**：输出两目标的 Pareto 权衡前沿
+    /// （`objective` 为目标 1、`objective2` 为目标 2）。雏形仅支持 2 目标。
+    #[serde(default)]
+    pub objective2: Option<Objective>,
     pub knobs: Vec<Knob>,
     /// 目标/约束方程引用的非模型标量（单价、成本系数、目标值…）。
     #[serde(default)]
@@ -156,6 +160,13 @@ impl Default for OptimizerCfg {
             iters: default_iters(),
             seed: default_seed(),
         }
+    }
+}
+
+impl Problem {
+    /// 是否多目标模式（提供了 `objective2`）。
+    pub fn is_multi(&self) -> bool {
+        self.objective2.is_some()
     }
 }
 

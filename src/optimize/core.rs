@@ -13,10 +13,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::schema::EquationFile;
-use crate::sim::{build_plan, simulate, SimInput};
+use crate::sim::{build_plan, simulate, SimInput, SimOutput};
 
 use super::objective::eval_objective;
-use super::problem::{KnobKind, Problem, Sense};
+use super::problem::{KnobKind, Objective, Problem, Sense};
 
 /// 垃圾候选（仿真发散/出错/目标无法求值/约束求值失败）的代价：一个很大的**有限**值
 /// （不用 `f64::INFINITY`，保持 DE 的算术良性）。
@@ -83,49 +83,137 @@ pub fn evaluate(
     drivers: &HashMap<String, Vec<f64>>,
     steps: usize,
 ) -> EvalOutcome {
-    let input = build_input(problem, knob_values, drivers, steps);
-    let out = match simulate(file, &input) {
-        Ok(o) => o,
-        Err(e) => return EvalOutcome::garbage(format!("仿真失败: {e}")),
+    let prep = match prepare(file, problem, knob_values, drivers, steps) {
+        Ok(p) => p,
+        Err(note) => return EvalOutcome::garbage(note),
     };
-    let bindings = build_bindings(file, problem, knob_values);
 
     // 目标值
-    let obj = match eval_objective(&problem.objective.expr, &out, &bindings) {
+    let obj = match eval_objective(&problem.objective.expr, &prep.out, &prep.bindings) {
         Ok(v) if v.is_finite() => v,
         Ok(_) => return EvalOutcome::garbage("目标值非有限（NaN/Inf）".into()),
         Err(e) => return EvalOutcome::garbage(format!("目标求值失败: {e}")),
     };
 
+    let feasible = prep.penalty == 0.0;
+    let weight = problem.penalty_weight.unwrap_or(DEFAULT_PENALTY_WEIGHT);
+    let cost = sense_cost(problem.objective.sense, obj) + weight * prep.penalty;
+
+    EvalOutcome {
+        cost,
+        objective: Some(obj),
+        penalty: prep.penalty,
+        feasible,
+        constraints: prep.constraints,
+        note: None,
+    }
+}
+
+/// 多目标一次评估的结果（雏形：2 目标）。
+#[derive(Debug, Clone)]
+pub struct MoOutcome {
+    /// 每个目标的**最小化代价**（含约束惩罚，故不可行解被可行解支配）；垃圾候选全 [`WORST_COST`]。
+    pub costs: Vec<f64>,
+    /// 每个目标的原始值（用户写的量，未经 sense/惩罚调整）；垃圾候选为 `None`。
+    pub objectives: Option<Vec<f64>>,
+    pub penalty: f64,
+    pub feasible: bool,
+    pub constraints: Vec<ConstraintStatus>,
+    pub note: Option<String>,
+}
+
+impl MoOutcome {
+    fn garbage(note: String, nobj: usize) -> Self {
+        Self {
+            costs: vec![WORST_COST; nobj],
+            objectives: None,
+            penalty: 0.0,
+            feasible: false,
+            constraints: Vec::new(),
+            note: Some(note),
+        }
+    }
+}
+
+/// 多目标评估：同一仿真 + 约束惩罚，求**两个目标**的代价向量（供 Pareto 支配比较）。
+/// 调用方须保证 `problem.objective2` 为 `Some`（多目标模式）。
+pub fn evaluate_mo(
+    file: &EquationFile,
+    problem: &Problem,
+    knob_values: &[f64],
+    drivers: &HashMap<String, Vec<f64>>,
+    steps: usize,
+) -> MoOutcome {
+    let objs: Vec<&Objective> = match &problem.objective2 {
+        Some(o2) => vec![&problem.objective, o2],
+        None => vec![&problem.objective], // 退化：单目标也可用（caller 通常已判定多目标）
+    };
+    let prep = match prepare(file, problem, knob_values, drivers, steps) {
+        Ok(p) => p,
+        Err(note) => return MoOutcome::garbage(note, objs.len()),
+    };
+
+    let mut raw = Vec::with_capacity(objs.len());
+    for o in &objs {
+        match eval_objective(&o.expr, &prep.out, &prep.bindings) {
+            Ok(v) if v.is_finite() => raw.push(v),
+            _ => return MoOutcome::garbage(format!("目标求值失败/非有限: {}", o.expr), objs.len()),
+        }
+    }
+    let weight = problem.penalty_weight.unwrap_or(DEFAULT_PENALTY_WEIGHT);
+    let feasible = prep.penalty == 0.0;
+    // 惩罚加到每个目标的代价上 → 不可行解在所有目标上都变差、被可行解支配。
+    let costs: Vec<f64> = objs
+        .iter()
+        .zip(&raw)
+        .map(|(o, &v)| sense_cost(o.sense, v) + weight * prep.penalty)
+        .collect();
+
+    MoOutcome { costs, objectives: Some(raw), penalty: prep.penalty, feasible, constraints: prep.constraints, note: None }
+}
+
+/// sense → 最小化代价：最大化目标取负、最小化目标原样。
+fn sense_cost(sense: Sense, v: f64) -> f64 {
+    match sense {
+        Sense::Max => -v,
+        Sense::Min => v,
+    }
+}
+
+/// 一个候选的「仿真 + 绑定 + 约束惩罚」公共准备（单/多目标共用）。
+/// `Err(note)` 表示垃圾候选（仿真/约束求值失败）。
+struct Prep {
+    out: SimOutput,
+    bindings: HashMap<String, f64>,
+    penalty: f64,
+    constraints: Vec<ConstraintStatus>,
+}
+
+fn prepare(
+    file: &EquationFile,
+    problem: &Problem,
+    knob_values: &[f64],
+    drivers: &HashMap<String, Vec<f64>>,
+    steps: usize,
+) -> Result<Prep, String> {
+    let input = build_input(problem, knob_values, drivers, steps);
+    let out = simulate(file, &input).map_err(|e| format!("仿真失败: {e}"))?;
+    let bindings = build_bindings(file, problem, knob_values);
+
     // 约束 expr ≤ max：违反量 = max(0, c − max)；惩罚 = Σ 违反量。
     let mut penalty = 0.0;
-    let mut statuses = Vec::with_capacity(problem.constraints.len());
+    let mut constraints = Vec::with_capacity(problem.constraints.len());
     for c in &problem.constraints {
         match eval_objective(&c.expr, &out, &bindings) {
             Ok(cv) if cv.is_finite() => {
                 let violation = (cv - c.max).max(0.0);
                 penalty += violation;
-                statuses.push(ConstraintStatus {
-                    expr: c.expr.clone(),
-                    value: cv,
-                    max: c.max,
-                    violation,
-                });
+                constraints.push(ConstraintStatus { expr: c.expr.clone(), value: cv, max: c.max, violation });
             }
-            _ => return EvalOutcome::garbage(format!("约束求值失败/非有限: {}", c.expr)),
+            _ => return Err(format!("约束求值失败/非有限: {}", c.expr)),
         }
     }
-    let feasible = penalty == 0.0;
-
-    // sense：DE 最小化 → 最大化目标取负。
-    let base = match problem.objective.sense {
-        Sense::Max => -obj,
-        Sense::Min => obj,
-    };
-    let weight = problem.penalty_weight.unwrap_or(DEFAULT_PENALTY_WEIGHT);
-    let cost = base + weight * penalty;
-
-    EvalOutcome { cost, objective: Some(obj), penalty, feasible, constraints: statuses, note: None }
+    Ok(Prep { out, bindings, penalty, constraints })
 }
 
 /// 把旋钮值装配进 [`SimInput`]：param→参数覆盖，init→初值覆盖，driver_const→整列常数。

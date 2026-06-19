@@ -9,8 +9,8 @@ use std::collections::HashMap;
 
 use crate::schema::EquationFile;
 
-use super::core::{evaluate, validate_problem, EvalOutcome};
-use super::de::{differential_evolution, DeConfig};
+use super::core::{evaluate, evaluate_mo, validate_problem, EvalOutcome};
+use super::de::{differential_evolution, differential_evolution_mo, DeConfig};
 use super::problem::{Problem, Sense};
 
 /// 一次优化的完整结果（供 CLI 打印 / serve 转 JSON 共用）。
@@ -64,6 +64,107 @@ pub fn run(
         history: res.history,
         best_cost: res.best_cost,
         config,
+    })
+}
+
+/// 多目标前沿上的一个点。
+pub struct MoFrontPoint {
+    /// 旋钮取值（与 `problem.knobs` 对应）。
+    pub knobs: Vec<f64>,
+    /// 两个目标的原始值 `[obj1, obj2]`。
+    pub objectives: Vec<f64>,
+    pub feasible: bool,
+    pub penalty: f64,
+}
+
+/// 多目标优化结果：一条近似 Pareto 前沿（按目标 1 升序）+ DE 配置。
+pub struct MoResult {
+    pub front: Vec<MoFrontPoint>,
+    pub config: DeConfig,
+}
+
+/// 跑一次**多目标**优化（MO-DE，单次运行近似整条前沿）。要求 `problem.objective2` 为 `Some`。
+pub fn run_mo(
+    file: &EquationFile,
+    problem: &Problem,
+    drivers: &HashMap<String, Vec<f64>>,
+    steps: usize,
+) -> Result<MoResult, String> {
+    validate_problem(file, problem)?;
+    if problem.optimizer.method != "de" {
+        return Err(format!("当前仅支持 method: de（收到 '{}'）", problem.optimizer.method));
+    }
+    if problem.objective2.is_none() {
+        return Err("多目标模式需要 objective2".into());
+    }
+    let config = DeConfig {
+        pop: problem.optimizer.pop,
+        iters: problem.optimizer.iters,
+        seed: problem.optimizer.seed,
+        ..Default::default()
+    };
+    let bounds: Vec<(f64, f64)> =
+        problem.knobs.iter().map(|k| (k.bounds[0], k.bounds[1])).collect();
+
+    let archive = differential_evolution_mo(&bounds, &config, |x| {
+        evaluate_mo(file, problem, x, drivers, steps).costs
+    });
+
+    // 用前沿各点重评一次，取原始目标值 + 可行性（点数少，开销小）。
+    let mut front = Vec::with_capacity(archive.len());
+    for s in &archive {
+        let mo = evaluate_mo(file, problem, &s.x, drivers, steps);
+        front.push(MoFrontPoint {
+            knobs: s.x.clone(),
+            objectives: mo.objectives.unwrap_or_default(),
+            feasible: mo.feasible,
+            penalty: mo.penalty,
+        });
+    }
+    Ok(MoResult { front, config })
+}
+
+/// 多目标结果 JSON（CLI 写文件 / serve 端点返回，同一份结构）。
+pub fn mo_result_json(
+    file: &EquationFile,
+    problem: &Problem,
+    r: &MoResult,
+) -> serde_json::Value {
+    let sense = |o: &super::problem::Objective| match o.sense {
+        Sense::Max => "max",
+        Sense::Min => "min",
+    };
+    let o2 = problem.objective2.as_ref();
+    let objectives = serde_json::json!([
+        { "expr": problem.objective.expr, "sense": sense(&problem.objective) },
+        o2.map(|o| serde_json::json!({ "expr": o.expr, "sense": sense(o) })).unwrap_or(serde_json::Value::Null),
+    ]);
+    let front: Vec<serde_json::Value> = r
+        .front
+        .iter()
+        .map(|p| {
+            let knobs: Vec<serde_json::Value> = problem
+                .knobs
+                .iter()
+                .zip(&p.knobs)
+                .map(|(k, v)| {
+                    serde_json::json!({ "var": k.var, "kind": k.kind.as_str(), "value": v, "unit": k.unit })
+                })
+                .collect();
+            serde_json::json!({
+                "knobs": knobs,
+                "objectives": p.objectives,
+                "feasible": p.feasible,
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "model": file.meta.id,
+        "multi_objective": true,
+        "objectives": objectives,
+        "knob_names": problem.knobs.iter().map(|k| k.var.clone()).collect::<Vec<_>>(),
+        "front": front,
+        "optimizer": { "method": "de", "pop": r.config.pop, "iters": r.config.iters, "seed": r.config.seed },
     })
 }
 

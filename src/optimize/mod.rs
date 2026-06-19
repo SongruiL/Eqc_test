@@ -21,10 +21,13 @@ pub mod problem;
 pub mod run;
 
 pub use core::{
-    evaluate, validate_problem, ConstraintStatus, EvalOutcome, DEFAULT_PENALTY_WEIGHT, WORST_COST,
+    evaluate, evaluate_mo, validate_problem, ConstraintStatus, EvalOutcome, MoOutcome,
+    DEFAULT_PENALTY_WEIGHT, WORST_COST,
 };
-pub use de::{differential_evolution, DeConfig, DeResult};
-pub use run::{result_json, run, OptimizeResult};
+pub use de::{differential_evolution, differential_evolution_mo, DeConfig, DeResult, MoSolution};
+pub use run::{
+    mo_result_json, result_json, run, run_mo, MoFrontPoint, MoResult, OptimizeResult,
+};
 pub use objective::{eval_objective, ObjError, REDUCTIONS};
 pub use problem::{
     load_problem, parse_problem, Constraint, Knob, KnobKind, Objective, OptimizerCfg, Problem, Sense,

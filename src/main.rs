@@ -644,10 +644,50 @@ fn run_optimize(
     let (rows, driver_map) = load_drivers_csv(&driver_path)?;
     let steps = steps.unwrap_or(rows);
 
-    let sense_str = match problem.objective.sense {
+    let sense_of = |o: &equation_compiler::optimize::Objective| match o.sense {
         Sense::Max => "max",
         Sense::Min => "min",
     };
+
+    // —— 多目标模式（提供了 objective2）：MO-DE 一次跑出 Pareto 权衡前沿 ——
+    if problem.is_multi() {
+        let o2 = problem.objective2.as_ref().unwrap();
+        println!(
+            "   旋钮 {} 个 | 环境 {} ({} 步) | MO-DE pop={} iters={} seed={}",
+            problem.knobs.len(),
+            driver_path.display(),
+            steps,
+            problem.optimizer.pop,
+            problem.optimizer.iters,
+            problem.optimizer.seed,
+        );
+        println!("   目标1 {} {}", sense_of(&problem.objective), problem.objective.expr);
+        println!("   目标2 {} {}", sense_of(o2), o2.expr);
+
+        let mr = optimize::run_mo(&file, &problem, &driver_map, steps)?;
+        println!("\n✅ 多目标优化完成：Pareto 前沿 {} 点", mr.front.len());
+        let names: Vec<&str> = problem.knobs.iter().map(|k| k.var.as_str()).collect();
+        println!("   {:>13} {:>13}   旋钮({})", "目标1", "目标2", names.join(", "));
+        for p in &mr.front {
+            let objs = p
+                .objectives
+                .iter()
+                .map(|v| format!("{v:>13.4}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let knobs = p.knobs.iter().map(|v| format!("{v:.4}")).collect::<Vec<_>>().join(", ");
+            let feas = if p.feasible { "" } else { "  (违反约束)" };
+            println!("   {objs}   [{knobs}]{feas}");
+        }
+        if let Some(path) = output {
+            let json = optimize::mo_result_json(&file, &problem, &mr);
+            std::fs::write(path, serde_json::to_string_pretty(&json)?)?;
+            println!("   结果已写入 {}", path.display());
+        }
+        return Ok(());
+    }
+
+    let sense_str = sense_of(&problem.objective);
     println!(
         "   旋钮 {} 个 | 环境 {} ({} 步) | DE pop={} iters={} seed={} | 目标 {sense_str} {}",
         problem.knobs.len(),
