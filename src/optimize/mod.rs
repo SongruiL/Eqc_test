@@ -18,11 +18,13 @@ pub mod core;
 pub mod de;
 pub mod objective;
 pub mod problem;
+pub mod run;
 
 pub use core::{
     evaluate, validate_problem, ConstraintStatus, EvalOutcome, DEFAULT_PENALTY_WEIGHT, WORST_COST,
 };
 pub use de::{differential_evolution, DeConfig, DeResult};
+pub use run::{result_json, run, OptimizeResult};
 pub use objective::{eval_objective, ObjError, REDUCTIONS};
 pub use problem::{
     load_problem, parse_problem, Constraint, Knob, KnobKind, Objective, OptimizerCfg, Problem, Sense,

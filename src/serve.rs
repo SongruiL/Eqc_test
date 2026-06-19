@@ -11,6 +11,7 @@
 //! - `/api/report`     → 自包含 HTML 报告（Forrester 图 + 二维公式）
 //! - `/api/simulate`   → 逐日仿真轨迹 JSON（需 `--drivers`）
 //! - `/api/chart.svg?vars=Y,TDM` → 轨迹折线图 SVG（需 `--drivers`）
+//! - `/api/optimize?spec=problem.yaml` → 跑优化，返回最优旋钮+收敛轨迹 JSON（与 `eqc optimize` 同结构）
 //! - `/__version`      → 版本号（前端轮询，文件改动即整页刷新）
 //!
 //! 用极小的手写 HTTP（`std::net`，零新依赖）。监听模型文件 mtime，存盘即 +版本 → 自动刷新。
@@ -159,6 +160,10 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
             };
             ("200 OK", "image/svg+xml; charset=utf-8", svg)
         }
+        "/api/optimize" => match run_optimize(ctx, query) {
+            Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
+            Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
+        },
         _ => ("404 Not Found", "text/plain; charset=utf-8", "Not Found".to_string()),
     };
 
@@ -264,6 +269,64 @@ fn run_sim(
     }
     input.init_overrides = init_ov.clone();
     simulate(file, &input).map_err(|e| format!("仿真失败: {e}"))
+}
+
+/// `/api/optimize?spec=<路径>`：读决策 spec，跑优化，返回与 CLI 同一份结果 JSON。
+/// spec 路径相对模型所在目录解析；环境驱动量取 spec 的 `environment:`（相对 spec 目录），
+/// 缺省回退到启动级 `--drivers`。
+fn run_optimize(ctx: &Ctx, query: &str) -> Result<String, String> {
+    use crate::optimize::{self, load_problem};
+
+    let spec_arg = parse_spec(query)
+        .ok_or_else(|| "缺少 spec 参数（/api/optimize?spec=problem.yaml）".to_string())?;
+    // spec 路径：绝对直接用，否则相对模型所在目录
+    let model_dir: PathBuf = if ctx.path.is_dir() {
+        ctx.path.clone()
+    } else {
+        ctx.path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."))
+    };
+    let spec_path = {
+        let p = PathBuf::from(&spec_arg);
+        if p.is_absolute() {
+            p
+        } else {
+            model_dir.join(&spec_arg)
+        }
+    };
+
+    let problem = load_problem(&spec_path)?;
+    let files = load_files(&ctx.path)?;
+    let file = files.first().ok_or_else(|| "无模型".to_string())?;
+
+    // 环境驱动量：spec 的 environment（相对 spec 目录）优先，否则启动级 --drivers
+    let (steps, driver_map) = match &problem.environment {
+        Some(env) => {
+            let spec_dir = spec_path.parent().unwrap_or_else(|| Path::new("."));
+            crate::scenario::load_drivers_csv(&spec_dir.join(env))?
+        }
+        None => match &ctx.drivers {
+            Some((rows, map)) => (*rows, map.clone()),
+            None => {
+                return Err("决策 spec 无 environment 且启动时未提供 --drivers——无环境驱动量".into())
+            }
+        },
+    };
+
+    let res = optimize::run(file, &problem, &driver_map, steps)?;
+    Ok(optimize::result_json(file, &problem, &res).to_string())
+}
+
+/// `?spec=problem.yaml` → 路径串（url 解码）。
+fn parse_spec(query: &str) -> Option<String> {
+    for kv in query.split('&') {
+        if let Some(v) = kv.strip_prefix("spec=") {
+            let s = url_decode(v);
+            if !s.is_empty() {
+                return Some(s);
+            }
+        }
+    }
+    None
 }
 
 /// 解析 `key=name:val,name2:val2`（url 解码后），用于 `p=`（参数）/`init=`（初值）覆盖。
@@ -381,6 +444,14 @@ mod tests {
         assert_eq!(i.get("DF"), Some(&1.5));
         assert!(parse_overrides("vars=Y", "p").is_empty());
         assert!(parse_overrides("p=bad:xx", "p").is_empty()); // 非数值忽略
+    }
+
+    #[test]
+    fn test_parse_spec() {
+        assert_eq!(parse_spec("spec=opt.yaml&_=1").as_deref(), Some("opt.yaml"));
+        assert_eq!(parse_spec("spec=sub%2Fp.yaml").as_deref(), Some("sub/p.yaml"));
+        assert!(parse_spec("vars=Y").is_none());
+        assert!(parse_spec("spec=").is_none());
     }
 
     #[test]

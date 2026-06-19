@@ -623,16 +623,13 @@ fn run_optimize(
     steps: Option<usize>,
     output: Option<&PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use equation_compiler::optimize::{
-        differential_evolution, evaluate, load_problem, validate_problem, DeConfig, Sense,
-    };
+    use equation_compiler::optimize::{self, load_problem, Sense};
     use equation_compiler::parse_file;
     use equation_compiler::scenario::load_drivers_csv;
 
     println!("🎯 优化模型: {}", input.display());
     let file = parse_file(input)?;
     let problem = load_problem(spec)?;
-    validate_problem(&file, &problem)?;
 
     // —— 解析环境驱动量：--drivers 优先，否则用 spec 里的 environment（相对 spec 目录解析）——
     let driver_path: PathBuf = match drivers {
@@ -647,22 +644,6 @@ fn run_optimize(
     let (rows, driver_map) = load_drivers_csv(&driver_path)?;
     let steps = steps.unwrap_or(rows);
 
-    // —— 优化器配置（阶段 1 仅 DE）——
-    if problem.optimizer.method != "de" {
-        return Err(format!(
-            "阶段 1 仅支持 method: de（收到 '{}'）",
-            problem.optimizer.method
-        )
-        .into());
-    }
-    let cfg = DeConfig {
-        pop: problem.optimizer.pop,
-        iters: problem.optimizer.iters,
-        seed: problem.optimizer.seed,
-        ..Default::default()
-    };
-    let bounds: Vec<(f64, f64)> = problem.knobs.iter().map(|k| (k.bounds[0], k.bounds[1])).collect();
-
     let sense_str = match problem.objective.sense {
         Sense::Max => "max",
         Sense::Min => "min",
@@ -672,29 +653,28 @@ fn run_optimize(
         problem.knobs.len(),
         driver_path.display(),
         steps,
-        cfg.pop,
-        cfg.iters,
-        cfg.seed,
+        problem.optimizer.pop,
+        problem.optimizer.iters,
+        problem.optimizer.seed,
         problem.objective.expr,
     );
 
-    // —— 跑 DE：代价 = 目标评估核的 cost ——
-    let res = differential_evolution(&bounds, &cfg, |x| {
-        evaluate(&file, &problem, x, &driver_map, steps).cost
-    });
-
-    // —— 用最优旋钮再评一次，拿到完整结果（目标值/可行性/惩罚）——
-    let best = evaluate(&file, &problem, &res.best_x, &driver_map, steps);
+    // —— 校验 + 跑优化（与 serve 的 /api/optimize 共用 optimize::run）——
+    let res = optimize::run(&file, &problem, &driver_map, steps)?;
+    let best = &res.outcome;
 
     println!("\n✅ 优化完成");
     println!("   最优旋钮：");
-    for (k, v) in problem.knobs.iter().zip(&res.best_x) {
+    for (k, v) in problem.knobs.iter().zip(&res.best_knobs) {
         let unit = k.unit.as_deref().map(|u| format!(" {u}")).unwrap_or_default();
         println!("     {:<16} = {:.6}{unit}   [{}]", k.var, v, k.kind.as_str());
     }
     match best.objective {
         Some(obj) => println!("   目标值（{sense_str}）：{obj:.6}"),
-        None => println!("   目标值：⚠️ 最优候选仍无法求值（{}）", best.note.unwrap_or_default()),
+        None => println!(
+            "   目标值：⚠️ 最优候选仍无法求值（{}）",
+            best.note.clone().unwrap_or_default()
+        ),
     }
     if !problem.constraints.is_empty() {
         println!(
@@ -716,48 +696,10 @@ fn run_optimize(
         println!("   收敛：初代代价 {first:.6} → 末代 {last:.6}（共 {} 代）", res.history.len() - 1);
     }
 
-    // —— 写结果 JSON ——
+    // —— 写结果 JSON（与 serve 同一份结构）——
     if let Some(path) = output {
-        let knobs_json: Vec<serde_json::Value> = problem
-            .knobs
-            .iter()
-            .zip(&res.best_x)
-            .map(|(k, v)| {
-                serde_json::json!({
-                    "var": k.var,
-                    "kind": k.kind.as_str(),
-                    "value": v,
-                    "unit": k.unit,
-                    "bounds": [k.bounds[0], k.bounds[1]],
-                })
-            })
-            .collect();
-        let constraints_json: Vec<serde_json::Value> = best
-            .constraints
-            .iter()
-            .map(|cs| {
-                serde_json::json!({
-                    "expr": cs.expr,
-                    "value": cs.value,
-                    "max": cs.max,
-                    "violation": cs.violation,
-                    "satisfied": cs.violation == 0.0,
-                })
-            })
-            .collect();
-        let result = serde_json::json!({
-            "model": file.meta.id,
-            "objective": { "expr": problem.objective.expr, "sense": sense_str },
-            "best_knobs": knobs_json,
-            "objective_value": best.objective,
-            "feasible": best.feasible,
-            "penalty": best.penalty,
-            "constraints": constraints_json,
-            "best_cost": res.best_cost,
-            "optimizer": { "method": "de", "pop": cfg.pop, "iters": cfg.iters, "seed": cfg.seed },
-            "history": res.history,
-        });
-        std::fs::write(path, serde_json::to_string_pretty(&result)?)?;
+        let json = optimize::result_json(&file, &problem, &res);
+        std::fs::write(path, serde_json::to_string_pretty(&json)?)?;
         println!("   结果已写入 {}", path.display());
     }
 
