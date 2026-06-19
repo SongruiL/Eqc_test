@@ -150,6 +150,20 @@ impl Env {
         self
     }
 
+    /// 覆盖变量值（**键已存在时复用、不重新分配 String**）——热路径跨步复用同一 `Env` 用。
+    ///
+    /// [`set`](Self::set) 的 `name.into()` 即便键已存在也会分配新 `String`；逐日仿真每步给
+    /// ~上百个变量赋值时这是大量分配。`put` 先 `get_mut`，仅在键缺失时才分配。
+    pub fn put(&mut self, name: &str, val: impl Into<Value>) {
+        let v = val.into();
+        match self.vars.get_mut(name) {
+            Some(slot) => *slot = v,
+            None => {
+                self.vars.insert(name.to_string(), v);
+            }
+        }
+    }
+
     /// 从 (名称, 标量值) 列表构造环境。
     pub fn from_pairs(pairs: &[(&str, f64)]) -> Self {
         let mut env = Self::new();

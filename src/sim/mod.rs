@@ -270,17 +270,19 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
     // 上一步各声明变量的完整 Value（积分/延迟跨步读取）。
     let mut prev: HashMap<String, Value> = HashMap::new();
 
+    // 跨步复用同一 env（键只在首步分配、之后 `put` 复用）——省去每步重建 env 的大量 String 分配。
+    // 每步给所有变量（DAT/驱动/延迟/方程/积分）重新赋值，无残留；参数恒定故只设一次。
+    let mut env = Env::new();
+    for (pname, v) in &params {
+        env.put(pname, v.clone());
+    }
+
     for n in 0..input.steps {
-        let mut env = Env::new();
         // 4a-0. 内置只读变量 DAT = 第几天（1 起）。供物候/开花门控直接引用，无需手填驱动量。
-        env.set("DAT", (n + 1) as f64);
-        // 4a. 参数
-        for (pname, v) in &params {
-            env.set(*pname, v.clone());
-        }
+        env.put("DAT", (n + 1) as f64);
         // 4b. 驱动量（标量逐日序列）
         for &d in &plan.drivers {
-            env.set(d, input.drivers[d][n]);
+            env.put(d, input.drivers[d][n]);
         }
         // 4c. 延迟寄存器：X[n] = src[n-1]（首步用 init 标量广播；init 可被 init_overrides 覆盖）
         for &(name, src, init) in &plan.delays {
@@ -293,7 +295,7 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
                     .or_else(|| params.get(src).cloned())
                     .ok_or_else(|| SimError::Unresolved(name.to_string()))?
             };
-            env.set(name, v);
+            env.put(name, v);
         }
         // 4d. 按拓扑序求值方程与积分状态量（Value 级）
         for &step in &plan.steps {
@@ -304,7 +306,7 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
                     let v = expr
                         .eval_in(&mut env)
                         .map_err(|err| SimError::Eval { var: name.to_string(), err })?;
-                    env.set(name, v);
+                    env.put(name, v);
                 }
                 PlanStep::Integrator { name, rate, init } => {
                     // X[n] = X[n-1] + rate[n]（逐元素广播；首步 X[n-1]=init 标量广播）
@@ -319,7 +321,7 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
                         .ok_or_else(|| SimError::Unresolved(rate.to_string()))?;
                     let x = value_binop(&prev_val, &rate_val, |a, b| a + b)
                         .map_err(|err| SimError::Eval { var: name.to_string(), err })?;
-                    env.set(name, x);
+                    env.put(name, x);
                 }
             }
         }
@@ -332,7 +334,7 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
                 if let Some(src_val) = env.get(src) {
                     let shaped = value_binop(&Value::Scalar(init0), &src_val, |a, _| a)
                         .map_err(|err| SimError::Eval { var: name.to_string(), err })?;
-                    env.set(name, shaped);
+                    env.put(name, shaped);
                 }
             }
         }
