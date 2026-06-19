@@ -268,6 +268,10 @@ enum Commands {
         #[arg(long)]
         steps: Option<usize>,
 
+        /// 优化前做敏感性预筛：把对目标几乎无影响的旋钮固定在基线、只搜索敏感旋钮（单目标）
+        #[arg(long)]
+        prescreen: bool,
+
         /// 输出结果 JSON（最优旋钮 + 目标值 + 收敛轨迹），缺省只打印到控制台
         #[arg(short, long)]
         output: Option<PathBuf>,
@@ -304,8 +308,8 @@ fn main() {
             equation_compiler::serve::serve(&input, port, drivers.as_ref(), params.as_ref())
         }
         Commands::Export { input, output } => run_export(&input, output.as_ref()),
-        Commands::Optimize { input, spec, drivers, steps, output } => {
-            run_optimize(&input, &spec, drivers.as_ref(), steps, output.as_ref())
+        Commands::Optimize { input, spec, drivers, steps, prescreen, output } => {
+            run_optimize(&input, &spec, drivers.as_ref(), steps, prescreen, output.as_ref())
         }
     };
 
@@ -616,11 +620,13 @@ fn run_export(input: &PathBuf, output: Option<&PathBuf>) -> Result<(), Box<dyn s
 }
 
 #[cfg(feature = "cli")]
+#[allow(clippy::too_many_arguments)]
 fn run_optimize(
     input: &PathBuf,
     spec: &PathBuf,
     drivers: Option<&PathBuf>,
     steps: Option<usize>,
+    prescreen: bool,
     output: Option<&PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use equation_compiler::optimize::{self, load_problem, Sense};
@@ -629,7 +635,7 @@ fn run_optimize(
 
     println!("🎯 优化模型: {}", input.display());
     let file = parse_file(input)?;
-    let problem = load_problem(spec)?;
+    let mut problem = load_problem(spec)?;
 
     // —— 解析环境驱动量：--drivers 优先，否则用 spec 里的 environment（相对 spec 目录解析）——
     let driver_path: PathBuf = match drivers {
@@ -648,6 +654,37 @@ fn run_optimize(
         Sense::Max => "max",
         Sense::Min => "min",
     };
+
+    // —— 敏感性预筛（单目标）：把对目标几乎无影响的旋钮固定在基线、缩小搜索 ——
+    if prescreen {
+        if problem.is_multi() {
+            println!("   ⚠️ 预筛仅用于单目标，本 spec 为多目标 → 跳过预筛");
+        } else {
+            let pr = optimize::prescreen(&file, &problem, &driver_map, steps, 10.0, 0.01)?;
+            let maxd = pr.deltas.iter().cloned().fold(0.0_f64, f64::max);
+            println!("   🔬 敏感性预筛（±10%，目标 {}）：", problem.objective.expr);
+            // 按敏感性降序打印
+            let mut idx: Vec<usize> = (0..problem.knobs.len()).collect();
+            idx.sort_by(|&a, &b| pr.deltas[b].partial_cmp(&pr.deltas[a]).unwrap_or(std::cmp::Ordering::Equal));
+            for i in idx {
+                let mark = if pr.kept.contains(&i) { "保留" } else { "固定" };
+                let rel = if maxd > 0.0 { pr.deltas[i] / maxd } else { 0.0 };
+                println!(
+                    "     [{mark}] {:<16} |Δ目标|={:.6}（相对 {:.3}）",
+                    problem.knobs[i].var, pr.deltas[i], rel
+                );
+            }
+            // 把被剔除的旋钮边界收拢到基线（固定）→ 仅搜索保留旋钮
+            for &i in &pr.dropped {
+                problem.knobs[i].bounds = [pr.baseline[i], pr.baseline[i]];
+            }
+            if !pr.dropped.is_empty() {
+                let names: Vec<&str> =
+                    pr.dropped.iter().map(|&i| problem.knobs[i].var.as_str()).collect();
+                println!("     → 固定 {} 个低敏感旋钮于基线：{}", pr.dropped.len(), names.join(", "));
+            }
+        }
+    }
 
     // —— 多目标模式（提供了 objective2）：MO-DE 一次跑出 Pareto 权衡前沿 ——
     if problem.is_multi() {

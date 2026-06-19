@@ -67,6 +67,77 @@ pub fn run(
     })
 }
 
+/// 敏感性预筛结果：在搜索前用 OAT 扰动判定哪些旋钮对目标几乎无影响、可固定。
+pub struct PrescreenResult {
+    /// 每旋钮基线（边界中点）。
+    pub baseline: Vec<f64>,
+    /// 每旋钮 `|obj(基线+h) − obj(基线−h)|`（h = `percent%` × 边界宽）。
+    pub deltas: Vec<f64>,
+    /// 值得搜索的旋钮下标（敏感）。
+    pub kept: Vec<usize>,
+    /// 被判低敏感、将固定在基线的旋钮下标。
+    pub dropped: Vec<usize>,
+}
+
+/// **敏感性预筛**（优化前）：每个旋钮在基线（边界中点）附近 ±`percent`% 各扰动一次，
+/// 看**目标**的变化 `|Δobj|`；变化 < `rel` × 最大变化的旋钮判为低敏感、建议固定。
+/// 与 `eqc sweep --sensitivity` 同思路，但作用于**旋钮**（含 init/driver_const）+ **目标**。
+/// 单目标用 `problem.objective`。基线候选须可求值，否则报错（无法预筛）。
+pub fn prescreen(
+    file: &EquationFile,
+    problem: &Problem,
+    drivers: &HashMap<String, Vec<f64>>,
+    steps: usize,
+    percent: f64,
+    rel: f64,
+) -> Result<PrescreenResult, String> {
+    let nk = problem.knobs.len();
+    let baseline: Vec<f64> =
+        problem.knobs.iter().map(|k| 0.5 * (k.bounds[0] + k.bounds[1])).collect();
+
+    let base = evaluate(file, problem, &baseline, drivers, steps);
+    if base.objective.is_none() {
+        return Err(format!("预筛基线候选无法求值：{}", base.note.unwrap_or_default()));
+    }
+
+    let mut deltas = vec![0.0_f64; nk];
+    for i in 0..nk {
+        let (lo, hi) = (problem.knobs[i].bounds[0], problem.knobs[i].bounds[1]);
+        let h = (percent / 100.0) * (hi - lo);
+        if h <= 0.0 {
+            continue; // 退化旋钮（边界已收拢）→ 视为零敏感
+        }
+        let mut xm = baseline.clone();
+        xm[i] = (baseline[i] - h).max(lo);
+        let mut xp = baseline.clone();
+        xp[i] = (baseline[i] + h).min(hi);
+        let om = evaluate(file, problem, &xm, drivers, steps).objective;
+        let op = evaluate(file, problem, &xp, drivers, steps).objective;
+        deltas[i] = match (om, op) {
+            (Some(a), Some(b)) => (b - a).abs(),
+            _ => 0.0,
+        };
+    }
+
+    let maxd = deltas.iter().cloned().fold(0.0_f64, f64::max);
+    let thresh = rel * maxd;
+    let mut kept = Vec::new();
+    let mut dropped = Vec::new();
+    for (i, &d) in deltas.iter().enumerate() {
+        if maxd > 0.0 && d > 0.0 && d >= thresh {
+            kept.push(i);
+        } else {
+            dropped.push(i);
+        }
+    }
+    // 保险：全被判低敏感（如 maxd=0）→ 全保留，避免空搜索。
+    if kept.is_empty() {
+        kept = (0..nk).collect();
+        dropped.clear();
+    }
+    Ok(PrescreenResult { baseline, deltas, kept, dropped })
+}
+
 /// 多目标前沿上的一个点。
 pub struct MoFrontPoint {
     /// 旋钮取值（与 `problem.knobs` 对应）。
@@ -303,5 +374,44 @@ equations:
         )
         .unwrap();
         assert!(run(&file, &p, &drivers3(), 3).is_err());
+    }
+
+    /// 带一个对目标无影响的参数 noise（只进入 Z，不进入 Y）的模型。
+    fn model_with_inert() -> (TempDir, EquationFile) {
+        let yaml = r#"
+meta: { id: OPT2, model: Opt2, name_cn: 预筛测试 }
+parameters:
+  gain:  { name_cn: 增益, default: 2.0 }
+  noise: { name_cn: 无关量, default: 1.0 }
+variables:
+  drive: { type: input, class: driving }
+  Y: { type: output, class: state, init: 0.0, rate: r }
+  r: { type: intermediate, class: rate }
+  Z: { type: output }
+equations:
+  - { id: E1, name: 速率, output: r, expression: { op: mul, args: [ {ref: drive}, {ref: gain} ] } }
+  - { id: E2, name: 旁路, output: Z, expression: { op: mul, args: [ {ref: drive}, {ref: noise} ] } }
+"#;
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("m.eq.yaml");
+        std::fs::File::create(&path).unwrap().write_all(yaml.as_bytes()).unwrap();
+        (dir, parse_file(&path).unwrap())
+    }
+
+    #[test]
+    fn test_prescreen_drops_inert_knob() {
+        let (_d, file) = model_with_inert();
+        // 目标 (final Y) 只受 gain 影响；noise 只进 Z → 应被预筛剔除
+        let p = parse_problem(
+            "optimize:\n  objective: { expr: (final Y), sense: max }\n  knobs:\n    - { var: gain,  kind: param, bounds: [1, 5] }\n    - { var: noise, kind: param, bounds: [0, 10] }\n",
+        )
+        .unwrap();
+        let pr = prescreen(&file, &p, &drivers3(), 3, 10.0, 0.01).unwrap();
+        assert!(pr.deltas[0] > 0.0, "gain 应有敏感性");
+        assert_eq!(pr.deltas[1], 0.0, "noise 对 Y 零影响");
+        assert_eq!(pr.kept, vec![0], "只保留 gain");
+        assert_eq!(pr.dropped, vec![1], "剔除 noise");
+        // 基线 = 边界中点
+        assert_eq!(pr.baseline, vec![3.0, 5.0]);
     }
 }

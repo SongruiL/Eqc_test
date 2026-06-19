@@ -112,7 +112,8 @@ optimize:
 
 - **旋钮（决策变量）** = 模型的**外部输入**（EQC 能自动列：参数/状态初值/驱动）。三种 `kind`（阶段 1 仅标量）：`param`（覆盖参数）/ `init`（覆盖状态量初值）/ `driver_const`（把某驱动整列设成常数）。可行域 `bounds`、单位、代价由人在 spec 里声明。
 - **目标/约束 = S 表达式**，复用解释器，领域无关。其「变量」是对整段轨迹的**时间归约**：`final/at/max/min/mean/total`（区别于逐日算子与 `vsum`）；还能引用旋钮值与常量（成本项要用）。约束 `expr ≤ max` 用**惩罚法**（线性外罚，权重可经 spec 的 `penalty_weight:` 覆盖）；`eqc optimize` 会**逐约束报告**满足/违反与违反量、并标记整体可行性。
-- **优化器**：差分进化 **DE**（免导数、对非光滑/阈值/多峰鲁棒、定种子可复现；垃圾候选给最差值不崩）。用 `eqc sweep --sensitivity` 作优化前预筛（哪些旋钮值得纳入）。
+- **优化器**：差分进化 **DE**（免导数、对非光滑/阈值/多峰鲁棒、定种子可复现；垃圾候选给最差值不崩）。
+- **敏感性预筛**：`eqc optimize --prescreen`（单目标）在搜索前对每个旋钮 ±10% 扰动看**目标**变化，把近零影响的旋钮**固定在基线**、只搜敏感旋钮（缩小维度）。例：S4 上 Pd 对产量 |Δ|≈0.0003（相对 CO₂ 的 0.0005）→ 自动固定，最优产量几乎不变。（`eqc sweep --sensitivity` 也可做手动预筛，但作用于参数对单变量。）
 - **多目标（雏形）**：spec 再写一条 `objective2`，即进多目标模式——**单次 MO-DE**（带 Pareto 支配选择 + 拥挤度截断，~40 点）一次跑出**权衡前沿**（如「产量最大 vs CO₂ 用量最小」）。CLI 打印前沿表；Studio 画散点曲线、点选某点即叠加该点整季轨迹。
 - 草莓 S4 实测：最大化产量 → CO₂/Pd 顶界 Y=10.95 kg/m²；利润变体（CO₂ 有成本）→ 最优 CO₂≈757 ppm（内点）；带约束 `max(LAI) ≤ 10`（涌现量）→ 最优 CO₂≈681/Pd=4、Y=9.36、峰值 LAI 恰好顶到 10（约束起作用、可行）。Pd 最优与 `eqc sweep` 网格逐位一致；各最优点用独立 `eqc simulate` 复现逐位一致。
 
@@ -132,7 +133,7 @@ eqc sweep <模型.eq.yaml> --drivers w.csv --param LUE --range 1:5:9 --var Y [--
 eqc sweep <模型.eq.yaml> --drivers w.csv --sensitivity --var Y [--percent 10]  # 全局敏感性：各标量参数对 Y 的影响排序
 eqc serve <模型.eq.yaml> [--drivers w.csv] [--params s.json] [--port 7878]  # EQC Studio：浏览器里看模型 + 跑仿真画轨迹
 eqc export <模型.eq.yaml> [-o model.json]                # 导出模型 JSON 契约（前端/工具消费用，可检视）
-eqc optimize <模型.eq.yaml> --spec problem.yaml [--drivers w.csv] [-o result.json]  # 仿真优化：DE 搜旋钮空间求目标最优
+eqc optimize <模型.eq.yaml> --spec problem.yaml [--drivers w.csv] [--prescreen] [-o result.json]  # 仿真优化：DE 搜旋钮空间求目标最优（spec 含 objective2 则多目标 Pareto；--prescreen 先剔低敏感旋钮）
 ```
 
 > **EQC Studio（交互式前端）**：`eqc serve <模型> --drivers w.csv` 起一个本地服务（`http://localhost:7878/`）。浏览器里左边是 Forrester 图 + 二维公式，右边是**整季仿真折线图**（勾选变量即画其轨迹，如产量 Y）。编辑模型保存即自动刷新。

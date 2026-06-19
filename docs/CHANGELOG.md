@@ -127,10 +127,12 @@
 - **阶段 2-B Studio 可视化优化**（B1 `0603623` + 本次）：抽 `optimize::run` + `result_json` 库函数（CLI 与 serve **共用同一计算与 JSON**）；serve 新增 `/api/optimize?spec=` 端点。`chart.rs` 加 `convergence_chart_svg`（代价 vs 代数，EQC 自生成 SVG），端点响应注入 `convergence_svg`（CLI 写文件的 result_json 保持纯数据）。`/api/chart.svg`/`/api/simulate` 加 `d=name:val` **驱动常量覆盖**（driver_const 旋钮的最优轨迹靠它叠加）。Studio 底部「决策优化」面板：填 spec → 转圈跑 DE → 显示最优旋钮/目标/可行性/逐约束 + 收敛曲线 → 「叠加最优旋钮到曲线」把最优喂回情景画最优整季轨迹。性能记录：S4 spec debug 107s / release 32.5s（解释器为瓶颈，提速作为独立后续）；UX 按「触发→转圈→出结果」。
 - **解释器提速**（`2fabf2c` P1 + `735fc00` P2）：P1 去掉热路径每次求值的 `env.clone()`（新增 `Expr::eval_in` 就地求值，sim 逐方程改用它）→ **optimize 32.5s→15.8s（~2×）**，惠及 sim/sweep/optimize/未来 GP-fitness。P2 sim 跨步复用 env（`Env::put` get_mut 避免键重分配）→ ~4%（噪声内，String 分配并非次瓶颈，剩余开销在树遍历本身）。草莓 Y 逐位不变。
 - **阶段 2-D 多目标雏形**（D1 `e8557b3` + 本次 D2/D3）：spec 加可选 `objective2` → 多目标模式。`evaluate_mo`（双目标代价向量，惩罚加到每目标）；`differential_evolution_mo`——**单次 MO-DE** = DE/rand/1/bin + Pareto 支配选择 + 非支配存档 + 拥挤度截断到 40 点（解决单调权衡下存档无界膨胀），一次运行近似整条前沿、确定性。`run_mo`/`mo_result_json`；CLI 检测 `objective2` 打印前沿表。`chart.rs` 加 `pareto_chart_svg`（散点+连线，每点 `data-i` 可点选）；serve `/api/optimize` 多目标分支注入 `pareto_svg`；Studio 优化面板画前沿、点选某点即叠加该点整季轨迹（复用 `applyBestKnobs`）。S4 实测（产量最大 vs CO₂ 用量最小）：40 点光滑前沿，(Y10.95,CO₂用量288000)@1200 → (Y7.56,96000)@400，Pd 全程 12。
-- **后置**（spec §8 阶段 2 余下）：`--sensitivity` 自动预筛接入（工作流 C，价值较低）。阶段 3+：曲线参数化时变控制、离散旋钮、**参数标定（接田间数据）**、其它优化器（CMA-ES/贝叶斯）；解释器进一步提速（换更快哈希/编译成扁平形式）；更远是 GP 约束进化层（复用本评估核当 fitness 引擎）。
+- **阶段 2-C 敏感性自动预筛**（本次）：`optimize::prescreen`——优化前对每个旋钮在基线（边界中点）±10% 各扰动一次、看**目标** `|Δobj|`，< `rel`×最大变化者判低敏感。`eqc optimize --prescreen`（单目标）把低敏感旋钮**固定在基线**（边界收拢）、只搜敏感旋钮。与 `eqc sweep --sensitivity` 同思路但作用于旋钮（含 init/driver_const）+ 目标。S4 实测：Pd 对产量 |Δ|=0.000271（相对 CO₂ 的 0.0005）→ 自动固定于基线 8，最优 Y=10.94998 vs 不预筛 10.95027（差 0.003%）。
+- **阶段 2 完成（A 约束 + B 可视化 + 解释器提速 + D 多目标 + C 预筛）。**
+- **后置**（spec §8 阶段 3+）：曲线参数化时变控制、离散旋钮、**参数标定（接田间数据）**、其它优化器（CMA-ES/贝叶斯）；解释器进一步提速（换更快哈希/编译成扁平形式）；更远是 GP 约束进化层（复用本评估核当 fitness 引擎）。
 
 ## 工程基线
-- 测试：190 lib + 2 bin + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
+- 测试：191 lib + 2 bin + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
 - 远程：github.com/SongruiL/Eqc_test，SSH 推送。
 - 文档：见 `docs/USAGE.md`（架构与模块地图）、`docs/spec-*.md`（设计规格）。
 

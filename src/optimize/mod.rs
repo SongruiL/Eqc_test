@@ -26,7 +26,8 @@ pub use core::{
 };
 pub use de::{differential_evolution, differential_evolution_mo, DeConfig, DeResult, MoSolution};
 pub use run::{
-    mo_result_json, result_json, run, run_mo, MoFrontPoint, MoResult, OptimizeResult,
+    mo_result_json, prescreen, result_json, run, run_mo, MoFrontPoint, MoResult, OptimizeResult,
+    PrescreenResult,
 };
 pub use objective::{eval_objective, ObjError, REDUCTIONS};
 pub use problem::{
