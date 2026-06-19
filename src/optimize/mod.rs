@@ -12,13 +12,15 @@
 //! - [`objective`]：**时间归约词汇** + 目标/约束 S 表达式 → 标量。
 //! - [`problem`]：**决策 spec**（与模型分离的独立产物：目标 + 旋钮 + 常量 + 约束 + 优化器）。
 //! - [`core`]：**目标评估核**（候选旋钮赋值 → 代价；垃圾候选给最差值不崩）。
-//! - DE 优化器：后续步骤。
+//! - [`de`]：**差分进化优化器**（确定性、免导数）。
 
 pub mod core;
+pub mod de;
 pub mod objective;
 pub mod problem;
 
 pub use core::{evaluate, validate_problem, EvalOutcome, WORST_COST};
+pub use de::{differential_evolution, DeConfig, DeResult};
 pub use objective::{eval_objective, ObjError, REDUCTIONS};
 pub use problem::{
     load_problem, parse_problem, Constraint, Knob, KnobKind, Objective, OptimizerCfg, Problem, Sense,
