@@ -177,6 +177,52 @@ enum Commands {
         output: PathBuf,
     },
 
+    /// 参数敏感性扫描：把一个标量参数在区间内取 N 点各跑一次仿真，输出对某变量的响应 CSV
+    Sweep {
+        /// 模型文件（单个 .eq.yaml）
+        input: PathBuf,
+
+        /// 驱动量 CSV
+        #[arg(short, long)]
+        drivers: PathBuf,
+
+        /// 【单参数模式】要扫描的标量参数名（与 --sensitivity 二选一）
+        #[arg(long)]
+        param: Option<String>,
+
+        /// 【单参数模式】扫描区间 a:b:n —— 从 a 到 b 取 n 个点（如 1.0:5.0:9）
+        #[arg(long)]
+        range: Option<String>,
+
+        /// 【敏感性模式】对所有标量参数各 ±percent% 各跑一遍，按对 --var 的影响排序
+        #[arg(long)]
+        sensitivity: bool,
+
+        /// 敏感性模式的扰动幅度（百分比，默认 10）
+        #[arg(long, default_value_t = 10.0)]
+        percent: f64,
+
+        /// 关注的输出变量名（轨迹键；向量变量用 “名[1]” 形式）
+        #[arg(long)]
+        var: String,
+
+        /// 对该输出的归约：final（末值，默认）/ max / mean / min
+        #[arg(long, default_value = "final")]
+        reduce: String,
+
+        /// 基准参数覆盖 JSON（扫描参数以外的其它覆盖），可选
+        #[arg(long)]
+        params: Option<PathBuf>,
+
+        /// 步数（默认取驱动量 CSV 行数）
+        #[arg(long)]
+        steps: Option<usize>,
+
+        /// 输出扫描结果 CSV
+        #[arg(short, long, default_value = "sweep.csv")]
+        output: PathBuf,
+    },
+
     /// 本地预览服务（EQC Studio）：监听模型文件，存盘即刷新；可跑仿真画轨迹
     Serve {
         /// 模型文件（.eq.yaml）或目录
@@ -228,6 +274,9 @@ fn main() {
         Commands::Report { input, output, layout } => run_report(&input, &output, &layout),
         Commands::Simulate { input, drivers, params, steps, output } => {
             run_simulate(&input, &drivers, params.as_ref(), steps, &output)
+        }
+        Commands::Sweep { input, drivers, param, range, sensitivity, percent, var, reduce, params, steps, output } => {
+            run_sweep(&input, &drivers, param.as_deref(), range.as_deref(), sensitivity, percent, &var, &reduce, params.as_ref(), steps, &output)
         }
         Commands::Serve { input, port, drivers, params } => {
             equation_compiler::serve::serve(&input, port, drivers.as_ref(), params.as_ref())
@@ -363,6 +412,160 @@ fn run_simulate(
                 println!("     {name} = {v}");
             }
         }
+    }
+    Ok(())
+}
+
+/// 解析扫描区间 `a:b:n` → (起, 止, 点数)。
+#[cfg(feature = "cli")]
+fn parse_range(s: &str) -> Result<(f64, f64, usize), String> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 3 {
+        return Err(format!("--range 须为 a:b:n（如 1.0:5.0:9），收到 '{s}'"));
+    }
+    let a: f64 = parts[0].trim().parse().map_err(|_| "range 起点不是数值".to_string())?;
+    let b: f64 = parts[1].trim().parse().map_err(|_| "range 终点不是数值".to_string())?;
+    let n: usize = parts[2].trim().parse().map_err(|_| "range 点数不是整数".to_string())?;
+    if n == 0 {
+        return Err("range 点数须 ≥ 1".to_string());
+    }
+    Ok((a, b, n))
+}
+
+/// 对一条轨迹做归约。
+#[cfg(feature = "cli")]
+fn reduce_series(s: &[f64], how: &str) -> Result<f64, String> {
+    if s.is_empty() {
+        return Err("空轨迹".to_string());
+    }
+    Ok(match how {
+        "final" => *s.last().unwrap(),
+        "max" => s.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+        "min" => s.iter().copied().fold(f64::INFINITY, f64::min),
+        "mean" => s.iter().sum::<f64>() / s.len() as f64,
+        other => return Err(format!("未知 --reduce '{other}'（应为 final/max/mean/min）")),
+    })
+}
+
+#[cfg(feature = "cli")]
+#[allow(clippy::too_many_arguments)]
+fn run_sweep(
+    input: &PathBuf,
+    drivers: &PathBuf,
+    param: Option<&str>,
+    range: Option<&str>,
+    sensitivity: bool,
+    percent: f64,
+    var: &str,
+    reduce: &str,
+    params: Option<&PathBuf>,
+    steps: Option<usize>,
+    output: &PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use equation_compiler::scenario::{load_drivers_csv, load_params_json};
+    use equation_compiler::{parse_file, simulate, SimInput};
+    use std::collections::HashMap;
+
+    let file = parse_file(input)?;
+    let (rows, driver_map) = load_drivers_csv(drivers)?;
+    let steps = steps.unwrap_or(rows);
+    let base: HashMap<String, f64> = match params {
+        Some(p) => load_params_json(p)?,
+        None => HashMap::new(),
+    };
+
+    // 用给定覆盖跑一次仿真、取 --var 的归约值
+    let metric = |overrides: &HashMap<String, f64>| -> Result<f64, String> {
+        let mut sim_in = SimInput::new(steps);
+        sim_in.drivers = driver_map.clone();
+        sim_in.param_overrides = overrides.clone();
+        let out = simulate(&file, &sim_in).map_err(|e| format!("仿真失败: {e}"))?;
+        let series = out
+            .trajectories
+            .get(var)
+            .ok_or_else(|| format!("输出 '{var}' 不在轨迹里（向量变量请用 “{var}[1]” 形式）"))?;
+        reduce_series(series, reduce)
+    };
+
+    if sensitivity {
+        // —— OAT 全局敏感性：每个标量参数各 ±percent%，按对 var 的影响排序 ——
+        let y0 = metric(&base)?;
+        let pct = percent / 100.0;
+        // (param, default, low, high, dVar, elasticity)
+        let mut rows_out: Vec<(String, f64, f64, f64, f64, f64)> = Vec::new();
+        let mut skipped: Vec<String> = Vec::new();
+        for (pname, p) in &file.parameters {
+            if p.values.is_some() {
+                continue; // 向量参数不参与
+            }
+            let d = base.get(pname).copied().unwrap_or(p.default);
+            if d == 0.0 {
+                skipped.push(pname.clone()); // 默认 0 无法相对扰动
+                continue;
+            }
+            let mut lo = base.clone();
+            lo.insert(pname.clone(), d * (1.0 - pct));
+            let mut hi = base.clone();
+            hi.insert(pname.clone(), d * (1.0 + pct));
+            let ylo = metric(&lo).map_err(|e| format!("{pname}-: {e}"))?;
+            let yhi = metric(&hi).map_err(|e| format!("{pname}+: {e}"))?;
+            let dvar = yhi - ylo;
+            let elasticity = if y0 != 0.0 { (dvar / y0) / (2.0 * pct) } else { f64::NAN };
+            rows_out.push((pname.clone(), d, ylo, yhi, dvar, elasticity));
+        }
+        // 按对 var 的绝对影响从大到小
+        rows_out.sort_by(|a, b| b.4.abs().partial_cmp(&a.4.abs()).unwrap_or(std::cmp::Ordering::Equal));
+
+        let mut csv = format!("param,default,{var}_low,{var}_high,d{var},elasticity\n");
+        for (p, d, ylo, yhi, dvar, el) in &rows_out {
+            csv.push_str(&format!("{p},{d},{ylo},{yhi},{dvar},{el}\n"));
+        }
+        std::fs::write(output, csv)?;
+
+        println!("✅ 敏感性扫描（每参数 ±{percent}%，基线 {var}({reduce})={y0:.6}）→ {}", output.display());
+        println!("   对 {var} 的影响从大到小：");
+        for (p, _, _, _, dvar, el) in rows_out.iter().take(12) {
+            println!("     {p:<14} Δ{var}={dvar:+.6}   弹性={el:+.4}");
+        }
+        if !skipped.is_empty() {
+            println!("   （默认值为 0、无法相对扰动而跳过：{}）", skipped.join(", "));
+        }
+        return Ok(());
+    }
+
+    // —— 单参数扫描 ——
+    let param = param.ok_or("非 --sensitivity 模式须提供 --param（或加 --sensitivity 做全局敏感性）")?;
+    let range = range.ok_or("非 --sensitivity 模式须提供 --range a:b:n")?;
+    match file.parameters.get(param) {
+        None => return Err(format!("参数 '{param}' 不在模型的 parameters 中").into()),
+        Some(p) if p.values.is_some() => {
+            return Err(format!("'{param}' 是向量参数（cohort 种子），不能用标量扫描").into())
+        }
+        _ => {}
+    }
+    let (a, b, npts) = parse_range(range)?;
+
+    println!("🔬 扫描 {param} ∈ [{a}, {b}]（{npts} 点），输出 {var}（{reduce}）……");
+    let mut csv = format!("{param},{var}_{reduce}\n");
+    let mut results: Vec<(f64, f64)> = Vec::with_capacity(npts);
+    for i in 0..npts {
+        let v = if npts <= 1 { a } else { a + (b - a) * (i as f64) / ((npts - 1) as f64) };
+        let mut ov = base.clone();
+        ov.insert(param.to_string(), v);
+        let r = metric(&ov).map_err(|e| format!("{param}={v}: {e}"))?;
+        csv.push_str(&format!("{v},{r}\n"));
+        results.push((v, r));
+    }
+    std::fs::write(output, csv)?;
+
+    let lo = results.iter().copied().reduce(|x, y| if x.1 <= y.1 { x } else { y });
+    let hi = results.iter().copied().reduce(|x, y| if x.1 >= y.1 { x } else { y });
+    println!("✅ 扫描完成，结果写入 {}", output.display());
+    if let (Some(lo), Some(hi)) = (lo, hi) {
+        println!(
+            "   {var}（{reduce}）范围 [{:.6}, {:.6}]；最小 @ {param}={}，最大 @ {param}={}",
+            lo.1, hi.1, lo.0, hi.0
+        );
     }
     Ok(())
 }
@@ -808,4 +1011,29 @@ fn main() {
     eprintln!("CLI 功能未启用。请使用 --features cli 编译。");
     eprintln!("示例: cargo run --features cli -- build --input ./equations --output ./generated");
     std::process::exit(1);
+}
+
+#[cfg(all(test, feature = "cli"))]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_range() {
+        assert_eq!(parse_range("1.0:5.0:9").unwrap(), (1.0, 5.0, 9));
+        assert_eq!(parse_range("0:10:1").unwrap(), (0.0, 10.0, 1));
+        assert!(parse_range("1:5").is_err()); // 缺点数
+        assert!(parse_range("a:5:3").is_err()); // 非数值
+        assert!(parse_range("1:5:0").is_err()); // 点数为 0
+    }
+
+    #[test]
+    fn test_reduce_series() {
+        let s = [1.0, 3.0, 2.0];
+        assert_eq!(reduce_series(&s, "final").unwrap(), 2.0);
+        assert_eq!(reduce_series(&s, "max").unwrap(), 3.0);
+        assert_eq!(reduce_series(&s, "min").unwrap(), 1.0);
+        assert!((reduce_series(&s, "mean").unwrap() - 2.0).abs() < 1e-9);
+        assert!(reduce_series(&s, "bogus").is_err());
+        assert!(reduce_series(&[], "final").is_err());
+    }
 }

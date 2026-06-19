@@ -93,8 +93,16 @@
 - **轻点节点 = 选中**（高亮 + 画轨迹），不动就不算拖。
 - 实现：Rust 给节点 `<g>` 加 `data-id`/`data-cx,cy,hw,hh`、边 `<path>` 加 `data-from`/`data-to`（报告仍零 JS）；Studio 用 SVG `getScreenCTM` 把屏幕位移换算成用户坐标（兼容缩放），拖动时重算该节点的连线（中心到框边 + 微弯，与 Rust 自由布局一致）。
 
+### CLI `eqc sweep`：参数扫描 + 全局敏感性
+让科学家直接问"参数怎么影响输出"，也是 GP/优化的铺路石（fitness = 跑仿真看输出）。纯复用 `sim::simulate`。
+- **单参数扫描**：`eqc sweep <模型> --drivers w.csv --param LUE --range 1.0:5.0:9 --var Y [--reduce final|max|mean|min] [--params base.json] [--steps N] -o sweep.csv` —— 把参数在区间取 N 点各跑一次，输出对某变量的响应 CSV；结尾打印响应范围 + 最大值位置。
+- **全局敏感性（OAT）**：`--sensitivity --var Y [--percent 10]` —— 每个标量参数各 ±percent% 各跑一遍，按对 `var` 的影响（Δvar + 归一化弹性）从大到小排序输出 CSV，一眼看出"哪个参数最关键"。向量参数（cohort 种子）与默认值为 0 的参数自动跳过。
+- 校验：扫描的参数须是标量参数（向量参数报错并提示）；输出变量须在轨迹里（向量用 `名[1]`）。
+- 草莓 S4 实测：LUE（弹性 +1.03）、DMC（−1.01）主导产量；Kc 在当前工况下对 Y 无影响。
+- 新增 `parse_range`/`reduce_series` 单测（main bin）。
+
 ## 工程基线
-- 测试：154 lib + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
+- 测试：154 lib + 2 bin + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
 - 远程：github.com/SongruiL/Eqc_test，SSH 推送。
 - 文档：见 `docs/USAGE.md`（架构与模块地图）、`docs/spec-*.md`（设计规格）。
 

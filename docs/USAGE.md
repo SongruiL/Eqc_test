@@ -103,6 +103,8 @@ eqc workflow <注解sexpr> -o <目录> --operators           # 注解 sexpr -> w
 eqc check-dims <目录> [--strict]                         # 量纲一致性 + 跨模块耦合单位检查
 eqc report <小目录> -o model.html [--layout layered|force|forrester]  # 自包含 HTML 报告（Forrester 库存-流量图 + DAG + 二维公式）；--layout 选结构图布局
 eqc simulate <模型.eq.yaml> --drivers w.csv [--params s.json] -o out.csv  # 逐日仿真动态模型，输出轨迹 CSV
+eqc sweep <模型.eq.yaml> --drivers w.csv --param LUE --range 1:5:9 --var Y [--reduce final] -o sweep.csv  # 扫一个参数看输出响应
+eqc sweep <模型.eq.yaml> --drivers w.csv --sensitivity --var Y [--percent 10]  # 全局敏感性：各标量参数对 Y 的影响排序
 eqc serve <模型.eq.yaml> [--drivers w.csv] [--params s.json] [--port 7878]  # EQC Studio：浏览器里看模型 + 跑仿真画轨迹
 eqc export <模型.eq.yaml> [-o model.json]                # 导出模型 JSON 契约（前端/工具消费用，可检视）
 ```
