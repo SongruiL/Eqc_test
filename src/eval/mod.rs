@@ -218,6 +218,25 @@ impl Expr {
     pub fn eval_scalar_with(&self, env: &Env, mode: EvalMode) -> Result<f64, EvalError> {
         self.eval_with(env, mode)?.as_scalar()
     }
+
+    /// **就地求值（不克隆 env）**——热路径专用（如逐日仿真每步每方程）。
+    ///
+    /// [`eval_with`] 为隔离调用方而克隆整个 `Env`（含 ~上百项 HashMap、String 键），逐方程
+    /// 逐步调用时是主要开销。此方法直接在调用方的 `&mut Env` 上求值，省掉克隆。
+    ///
+    /// **安全性**：`ev` 对 `sum`/`product` 循环变量的作用域 push/pop 是**成对平衡**的——
+    /// 成功返回后 `env` 的作用域栈恢复原状（与调用前一致）；若求值**出错**，调用方（如
+    /// [`crate::sim::simulate`]）会中止整次运行并丢弃该 `env`，故出错时即便残留一个作用域
+    /// 也不会污染后续求值。需要保证调用方 `env` 绝对不被触碰的场景（如目标表达式求值）仍用
+    /// [`eval`](Self::eval)。
+    pub fn eval_in(&self, env: &mut Env) -> Result<Value, EvalError> {
+        ev(self, env, EvalMode::default())
+    }
+
+    /// 指定模式的就地求值（不克隆）。见 [`eval_in`](Self::eval_in)。
+    pub fn eval_in_with(&self, env: &mut Env, mode: EvalMode) -> Result<Value, EvalError> {
+        ev(self, env, mode)
+    }
 }
 
 /// 递归求值，返回 [`Value`]（标量/向量/矩阵）。

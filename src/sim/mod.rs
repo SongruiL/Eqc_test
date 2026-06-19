@@ -299,8 +299,10 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
         for &step in &plan.steps {
             match step {
                 PlanStep::Equation { name, expr } => {
+                    // 热路径：就地求值（不克隆 env）。作用域 push/pop 平衡、出错即中止，
+                    // 故复用同一 env 安全。见 Expr::eval_in。
                     let v = expr
-                        .eval(&env)
+                        .eval_in(&mut env)
                         .map_err(|err| SimError::Eval { var: name.to_string(), err })?;
                     env.set(name, v);
                 }
