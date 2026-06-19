@@ -247,7 +247,10 @@ fn dag_svg(dag: &Dag, kind: LayoutKind) -> String {
     for e in &dag.edges {
         if let (Some(&(x1, y1)), Some(&(x2, y2))) = (pos.get(e.from.as_str()), pos.get(e.to.as_str())) {
             let d = edge_path(x1, y1, x2, y2, bw, bh, kind);
-            s.push_str(&format!("<path d=\"{d}\" class=\"edge\" marker-end=\"url(#arrow)\"/>"));
+            s.push_str(&format!(
+                "<path d=\"{d}\" class=\"edge\" data-from=\"{}\" data-to=\"{}\" marker-end=\"url(#arrow)\"/>",
+                xml(&e.from), xml(&e.to)
+            ));
         }
     }
     // 节点
@@ -261,9 +264,15 @@ fn dag_svg(dag: &Dag, kind: LayoutKind) -> String {
             n.id.clone()
         };
         s.push_str(&format!(
-            "<g class=\"node {cls}\" data-var=\"{dv}\"><rect x=\"{x:.0}\" y=\"{y:.0}\" width=\"{bw:.0}\" height=\"{bh:.0}\" rx=\"7\"/>\
+            "<g class=\"node {cls}\" data-var=\"{dv}\" data-id=\"{did}\" data-cx=\"{cx:.0}\" data-cy=\"{cy:.0}\" data-hw=\"{hw:.0}\" data-hh=\"{hh:.0}\">\
+             <rect x=\"{x:.0}\" y=\"{y:.0}\" width=\"{bw:.0}\" height=\"{bh:.0}\" rx=\"7\"/>\
              <text x=\"{tx:.0}\" y=\"{ty:.0}\">{lbl}</text></g>",
             dv = xml(short),
+            did = xml(&n.id),
+            cx = x + bw / 2.0,
+            cy = y + bh / 2.0,
+            hw = bw / 2.0,
+            hh = bh / 2.0,
             tx = x + bw / 2.0,
             ty = y + bh / 2.0 + 5.0,
             lbl = xml(&label),
@@ -420,7 +429,8 @@ fn forrester_svg(files: &[EquationFile], dag: &Dag, kind: LayoutKind) -> String 
             let d = edge_path(x1, y1, x2, y2, bw, bh, kind);
             let (cls, mk) = if *mat { ("material", "fmat") } else { ("info", "farrow") };
             s.push_str(&format!(
-                "<path d=\"{d}\" class=\"fedge {cls}\" marker-end=\"url(#{mk})\"/>"
+                "<path d=\"{d}\" class=\"fedge {cls}\" data-from=\"{}\" data-to=\"{}\" marker-end=\"url(#{mk})\"/>",
+                xml(a), xml(b)
             ));
         }
     }
@@ -434,7 +444,10 @@ fn forrester_svg(files: &[EquationFile], dag: &Dag, kind: LayoutKind) -> String 
         } else {
             short.to_string()
         };
-        s.push_str(&format!("<g class=\"fnode {}\" data-var=\"{}\">", fclass_css(c), xml(short)));
+        s.push_str(&format!(
+            "<g class=\"fnode {}\" data-var=\"{}\" data-id=\"{}\" data-cx=\"{:.0}\" data-cy=\"{:.0}\" data-hw=\"{:.0}\" data-hh=\"{:.0}\">",
+            fclass_css(c), xml(short), xml(&n.id), x + bw / 2.0, y + bh / 2.0, bw / 2.0, bh / 2.0
+        ));
         s.push_str(&fnode_shape(c, x, y, bw, bh));
         // 分类代号角标
         s.push_str(&format!(
@@ -483,7 +496,7 @@ h1 { font-size:22px; padding:20px 28px; margin:0; border-bottom:1px solid var(--
 h2 { font-size:17px; margin:28px 28px 12px; }
 h2 .sub { color:var(--sub); font-weight:400; font-size:13px; margin-left:8px; }
 .wrap { max-width:1100px; margin:0 auto; padding:0 8px; }
-.dag { overflow-x:auto; background:var(--card); border:1px solid var(--line); border-radius:10px; margin:0 28px; padding:12px; }
+.dag { overflow-x:auto; background:var(--card); border:1px solid var(--line); border-radius:10px; margin:0 28px; padding:12px; cursor:grab; }
 .dag-svg { min-width:100%; }
 .dag-svg.natural { min-width:0; }  /* Forrester 学术风：原始尺寸，靠容器横向滚动 */
 .dag-svg .edge { fill:none; stroke:#aab; stroke-width:1.5; }

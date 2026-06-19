@@ -367,8 +367,78 @@ function wireNodeClicks(){
       showTip(name, fr.left + nr.right, fr.top + nr.top);
     });
     g.addEventListener('mouseleave', hideTip);
-    g.addEventListener('click', ()=> selectVar(name));
+    g.addEventListener('click', ()=>{ if(doc._suppressClick) return; selectVar(name); });
   });
+  wirePan(doc);
+}
+
+// 交互：拖**背景**=平移画布（横向滚 .dag、纵向滚 iframe 窗口）；拖**节点方框**=移动它、连线跟随
+// （会话内有效，刷新/换布局复位——相当于临时手动错开遮挡）。拖动超阈值则抑制随后的点击（避免误选）。
+function wirePan(doc){
+  if(doc._panWired) return; doc._panWired = true;
+  const win = document.getElementById('report').contentWindow;
+  let mode=null, sx=0, sy=0, dag=null, moved=false;
+  let node=null, svg=null, startTx=0, startTy=0, startU=null;
+
+  const userPt = (s,e)=>{ const pt=s.createSVGPoint(); pt.x=e.clientX; pt.y=e.clientY;
+    const m=s.getScreenCTM(); return m? pt.matrixTransform(m.inverse()) : {x:e.clientX,y:e.clientY}; };
+  const center = (g)=>({ cx:+g.dataset.cx+(+g.dataset.tx||0), cy:+g.dataset.cy+(+g.dataset.ty||0),
+    hw:+g.dataset.hw||60, hh:+g.dataset.hh||20 });
+  const boxExit = (c,tx,ty)=>{ const dx=tx-c.cx, dy=ty-c.cy;
+    if(Math.abs(dx)<1e-6 && Math.abs(dy)<1e-6) return [c.cx,c.cy];
+    const ex=Math.abs(dx)<1e-6?Infinity:c.hw/Math.abs(dx), ey=Math.abs(dy)<1e-6?Infinity:c.hh/Math.abs(dy);
+    const t=Math.min(ex,ey); return [c.cx+dx*t, c.cy+dy*t]; };
+  // 重算与某节点相连的边（中心到框边 + 微弯，与 Rust 自由布局一致）
+  function reEdges(g){
+    const id=(g.dataset.id||'').replace(/"/g,''), s=g.ownerSVGElement; if(!id||!s) return;
+    s.querySelectorAll('[data-from="'+id+'"],[data-to="'+id+'"]').forEach(p=>{
+      const a=s.querySelector('[data-id="'+(p.dataset.from||'').replace(/"/g,'')+'"]');
+      const b=s.querySelector('[data-id="'+(p.dataset.to||'').replace(/"/g,'')+'"]');
+      if(!a||!b) return;
+      const ca=center(a), cb=center(b);
+      const [x1,y1]=boxExit(ca,cb.cx,cb.cy), [x2,y2]=boxExit(cb,ca.cx,ca.cy);
+      const dx=x2-x1, dy=y2-y1, len=Math.max(1,Math.hypot(dx,dy));
+      const nx=-dy/len, ny=dx/len, bow=Math.min(26,len*0.12);
+      const mx=(x1+x2)/2+nx*bow, my=(y1+y2)/2+ny*bow;
+      p.setAttribute('d','M'+x1.toFixed(0)+','+y1.toFixed(0)+' Q'+mx.toFixed(0)+','+my.toFixed(0)+' '+x2.toFixed(0)+','+y2.toFixed(0));
+    });
+  }
+
+  doc.addEventListener('mousedown', (e)=>{
+    if(e.button!==0) return;
+    moved=false; sx=e.clientX; sy=e.clientY;
+    const g = e.target.closest ? e.target.closest('[data-var]') : null;
+    if(g){                                  // 拖节点
+      mode='node'; node=g; svg=g.ownerSVGElement;
+      startTx=+g.dataset.tx||0; startTy=+g.dataset.ty||0; startU=userPt(svg,e);
+      hideTip(); doc.body.style.cursor='grabbing'; e.preventDefault();
+    } else {                                // 拖背景=平移
+      mode='pan'; dag = e.target.closest ? e.target.closest('.dag') : null;
+      if(dag){ doc.body.style.cursor='grabbing'; e.preventDefault(); }
+    }
+  });
+  doc.addEventListener('mousemove', (e)=>{
+    if(!mode) return;
+    if(Math.abs(e.clientX-sx)+Math.abs(e.clientY-sy)>4) moved=true;
+    if(mode==='node'){
+      const u=userPt(svg,e);
+      node.dataset.tx = startTx + (u.x-startU.x);
+      node.dataset.ty = startTy + (u.y-startU.y);
+      node.setAttribute('transform','translate('+(+node.dataset.tx)+','+(+node.dataset.ty)+')');
+      reEdges(node);
+    } else {
+      if(dag) dag.scrollLeft -= (e.clientX-sx);
+      win.scrollBy(0, -(e.clientY-sy));
+      sx=e.clientX; sy=e.clientY;
+    }
+  });
+  const end=()=>{
+    if(!mode) return;
+    mode=null; node=null; svg=null; doc.body.style.cursor='';
+    if(moved){ doc._suppressClick=true; setTimeout(()=>{ doc._suppressClick=false; }, 0); }
+  };
+  doc.addEventListener('mouseup', end);
+  doc.addEventListener('mouseleave', end);
 }
 
 // iframe 每次加载（含切布局）后：重新适配 + 重新挂点击 + 同步高亮 + 收起注释；窗口尺寸变化时重新适配。
