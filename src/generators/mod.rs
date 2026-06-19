@@ -3,6 +3,7 @@
 mod latex;
 mod markdown;
 mod python;
+mod python_sim;
 mod rust_operator;
 mod workflow_json;
 

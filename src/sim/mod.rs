@@ -143,12 +143,30 @@ enum Node<'a> {
     Integrator { rate: &'a str, init: f64 },
 }
 
-/// 对一个动态模型做逐日仿真。
-///
-/// 单模块求值：跨模块 `source` 耦合不在此处展开——任何未被方程产生、非跨步的
-/// 输入变量都必须由 [`SimInput::drivers`] 提供。
-pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimError> {
-    // —— 1. 归类变量 ——
+/// 一条「步内计算」（带变量名），拓扑序排列。供 [`simulate`] 与 `eqc build` 代码生成器共用。
+#[derive(Clone, Copy)]
+pub enum PlanStep<'a> {
+    /// 方程：`name = expr`。
+    Equation { name: &'a str, expr: &'a crate::ast::Expr },
+    /// 积分状态量：`X[n] = X[n-1] + rate[n]`，首步 `X[n-1] = init`。
+    Integrator { name: &'a str, rate: &'a str, init: f64 },
+}
+
+/// **步进计划**：把动态模型编译成「逐日时间步进要做的事」——拓扑序的步内计算、
+/// 延迟寄存器、驱动量清单。是 [`simulate`]（树遍历引擎）与 `eqc build`（生成独立仿真器）
+/// 之间的**单一真相源**：两者消费同一份计划 → 生成的代码与引擎逐步一致。
+pub struct SimPlan<'a> {
+    /// 拓扑序的步内计算（方程 + 积分状态量）。
+    pub steps: Vec<PlanStep<'a>>,
+    /// 延迟寄存器：`(name, 来源, init)`，`X[n] = src[n-1]`，首步 = `init`。
+    pub delays: Vec<(&'a str, &'a str, f64)>,
+    /// 驱动量名（无方程、非跨步的输入；须由外部按步提供时间序列）。
+    pub drivers: Vec<&'a str>,
+}
+
+/// 把模型编译成步进计划：归类变量（积分/延迟/方程/驱动）+ 步内拓扑排序。
+/// `init` 取自变量上的 `init:`（运行期可再被 [`SimInput::init_overrides`] 覆盖）。
+pub fn build_plan(file: &EquationFile) -> Result<SimPlan<'_>, SimError> {
     // 方程输出 -> 表达式
     let mut eq_of: HashMap<&str, &crate::ast::Expr> = HashMap::new();
     for eq in &file.equations {
@@ -158,18 +176,15 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
         eq_of.insert(eq.output.as_str(), &eq.expression);
     }
 
-    // 步内可计算节点：方程输出 ∪ 积分状态量。延迟寄存器/驱动/参数为「源」，步首预置。
-    // 用 Vec 保持声明顺序；拓扑排序按下标进行。
+    // 步内可计算节点：方程输出 ∪ 积分状态量。延迟寄存器/驱动/参数为「源」。
     let mut nodes: Vec<(&str, Node)> = Vec::new();
     let mut node_idx: HashMap<&str, usize> = HashMap::new();
-    // 延迟寄存器：(name, prev_src, init)
     let mut delays: Vec<(&str, &str, f64)> = Vec::new();
-
     for (name, var) in &file.variables {
         let n = name.as_str();
         if var.is_integrator() {
             let rate = var.rate.as_deref().unwrap();
-            let init = input.init_overrides.get(n).copied().or(var.init).ok_or_else(|| SimError::MissingInit(name.clone()))?;
+            let init = var.init.ok_or_else(|| SimError::MissingInit(name.clone()))?;
             if !file.variables.contains_key(rate) && !file.parameters.contains_key(rate) {
                 return Err(SimError::UndefinedSource { var: name.clone(), source: rate.to_string() });
             }
@@ -177,7 +192,7 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
             nodes.push((n, Node::Integrator { rate, init }));
         } else if var.is_delay() {
             let src = var.prev.as_deref().unwrap();
-            let init = input.init_overrides.get(n).copied().or(var.init).ok_or_else(|| SimError::MissingInit(name.clone()))?;
+            let init = var.init.ok_or_else(|| SimError::MissingInit(name.clone()))?;
             if !file.variables.contains_key(src) && !file.parameters.contains_key(src) {
                 return Err(SimError::UndefinedSource { var: name.clone(), source: src.to_string() });
             }
@@ -186,25 +201,51 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
             node_idx.insert(n, nodes.len());
             nodes.push((n, Node::Equation(expr)));
         }
-        // 其余（无方程、非跨步）= 驱动量，留待步首从 drivers 取。
+        // 其余 = 驱动量
     }
 
-    // —— 2. 校验驱动量 ——
-    // 驱动量 = 变量里既无方程、又非跨步者。
+    // 驱动量 = 既无方程、又非跨步者
     let delay_names: HashSet<&str> = delays.iter().map(|(n, _, _)| *n).collect();
-    let mut driver_names: Vec<&str> = Vec::new();
+    let mut drivers: Vec<&str> = Vec::new();
     for (name, _var) in &file.variables {
         let n = name.as_str();
-        if node_idx.contains_key(n) || delay_names.contains(n) {
-            continue;
+        if !node_idx.contains_key(n) && !delay_names.contains(n) {
+            drivers.push(n);
         }
-        // 是驱动量：必须有时间序列
-        driver_names.push(n);
-        match input.drivers.get(n) {
-            None => return Err(SimError::MissingDriver(name.clone())),
+    }
+
+    let order = topo_order(&nodes, &node_idx)?;
+    let steps = order
+        .iter()
+        .map(|&i| {
+            let name = nodes[i].0;
+            match &nodes[i].1 {
+                Node::Equation(expr) => PlanStep::Equation { name, expr: *expr },
+                Node::Integrator { rate, init } => {
+                    PlanStep::Integrator { name, rate: *rate, init: *init }
+                }
+            }
+        })
+        .collect();
+
+    Ok(SimPlan { steps, delays, drivers })
+}
+
+/// 对一个动态模型做逐日仿真。
+///
+/// 单模块求值：跨模块 `source` 耦合不在此处展开——任何未被方程产生、非跨步的
+/// 输入变量都必须由 [`SimInput::drivers`] 提供。
+pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimError> {
+    // —— 1. 编译步进计划（与 eqc build 代码生成器共用，保证生成器与引擎逐步一致）——
+    let plan = build_plan(file)?;
+
+    // —— 2. 校验驱动量：每个驱动量须有长度=steps 的时间序列 ——
+    for &dn in &plan.drivers {
+        match input.drivers.get(dn) {
+            None => return Err(SimError::MissingDriver(dn.to_string())),
             Some(series) if series.len() != input.steps => {
                 return Err(SimError::DriverLengthMismatch {
-                    name: name.clone(),
+                    name: dn.to_string(),
                     expected: input.steps,
                     found: series.len(),
                 })
@@ -213,12 +254,7 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
         }
     }
 
-    // —— 3. 步内拓扑排序（Kahn）——
-    // 依赖：方程节点依赖其表达式里属于「可计算节点」的变量引用；
-    //       积分节点依赖其 rate（若 rate 也是可计算节点）。
-    let order = topo_order(&nodes, &node_idx)?;
-
-    // —— 4. 逐步求值（V2：Value 级，支持向量）——
+    // —— 3. 逐步求值（Value 级，支持向量）——
     // 参数值表（常量，每步相同）：有 values 的为向量，否则标量（可被标量覆盖）。
     let mut params: HashMap<&str, Value> = HashMap::new();
     for (pname, p) in &file.parameters {
@@ -243,44 +279,45 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
             env.set(*pname, v.clone());
         }
         // 4b. 驱动量（标量逐日序列）
-        for d in &driver_names {
-            env.set(*d, input.drivers[*d][n]);
+        for &d in &plan.drivers {
+            env.set(d, input.drivers[d][n]);
         }
-        // 4c. 延迟寄存器：X[n] = src[n-1]（首步用 init 标量广播）
-        for (name, src, init) in &delays {
+        // 4c. 延迟寄存器：X[n] = src[n-1]（首步用 init 标量广播；init 可被 init_overrides 覆盖）
+        for &(name, src, init) in &plan.delays {
+            let init0 = input.init_overrides.get(name).copied().unwrap_or(init);
             let v = if n == 0 {
-                Value::Scalar(*init)
+                Value::Scalar(init0)
             } else {
-                prev.get(*src)
+                prev.get(src)
                     .cloned()
-                    .or_else(|| params.get(*src).cloned())
-                    .ok_or_else(|| SimError::Unresolved((*name).to_string()))?
+                    .or_else(|| params.get(src).cloned())
+                    .ok_or_else(|| SimError::Unresolved(name.to_string()))?
             };
-            env.set(*name, v);
+            env.set(name, v);
         }
         // 4d. 按拓扑序求值方程与积分状态量（Value 级）
-        for &idx in &order {
-            let (name, node) = &nodes[idx];
-            match node {
-                Node::Equation(expr) => {
+        for &step in &plan.steps {
+            match step {
+                PlanStep::Equation { name, expr } => {
                     let v = expr
                         .eval(&env)
-                        .map_err(|err| SimError::Eval { var: (*name).to_string(), err })?;
-                    env.set(*name, v);
+                        .map_err(|err| SimError::Eval { var: name.to_string(), err })?;
+                    env.set(name, v);
                 }
-                Node::Integrator { rate, init } => {
+                PlanStep::Integrator { name, rate, init } => {
                     // X[n] = X[n-1] + rate[n]（逐元素广播；首步 X[n-1]=init 标量广播）
+                    let init0 = input.init_overrides.get(name).copied().unwrap_or(init);
                     let prev_val = if n == 0 {
-                        Value::Scalar(*init)
+                        Value::Scalar(init0)
                     } else {
-                        prev.get(*name).cloned().ok_or_else(|| SimError::Unresolved((*name).to_string()))?
+                        prev.get(name).cloned().ok_or_else(|| SimError::Unresolved(name.to_string()))?
                     };
                     let rate_val = env
                         .get(rate)
-                        .ok_or_else(|| SimError::Unresolved((*rate).to_string()))?;
+                        .ok_or_else(|| SimError::Unresolved(rate.to_string()))?;
                     let x = value_binop(&prev_val, &rate_val, |a, b| a + b)
-                        .map_err(|err| SimError::Eval { var: (*name).to_string(), err })?;
-                    env.set(*name, x);
+                        .map_err(|err| SimError::Eval { var: name.to_string(), err })?;
+                    env.set(name, x);
                 }
             }
         }
@@ -288,11 +325,12 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
         // 保证向量延迟寄存器的输出形状跨步一致（如 RFG_prev 在第0步也是向量，而非标量）。
         // 不影响数值：本步下游已用标量 init（广播）算过；这里只修正记录形状。
         if n == 0 {
-            for (name, src, init) in &delays {
+            for &(name, src, init) in &plan.delays {
+                let init0 = input.init_overrides.get(name).copied().unwrap_or(init);
                 if let Some(src_val) = env.get(src) {
-                    let shaped = value_binop(&Value::Scalar(*init), &src_val, |a, _| a)
-                        .map_err(|err| SimError::Eval { var: (*name).to_string(), err })?;
-                    env.set(*name, shaped);
+                    let shaped = value_binop(&Value::Scalar(init0), &src_val, |a, _| a)
+                        .map_err(|err| SimError::Eval { var: name.to_string(), err })?;
+                    env.set(name, shaped);
                 }
             }
         }

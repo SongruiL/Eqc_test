@@ -25,6 +25,12 @@ impl PythonGenerator {
             let content = Self::generate_module(file);
             let file_path = output_dir.join(format!("{}.py", module_name));
             fs::write(&file_path, content).map_err(|e| CompileError::io(&file_path, e))?;
+
+            // 动态模型：额外生成可独立运行的逐日仿真器（与 eqc simulate 同语义）
+            if let Some(sim_code) = super::python_sim::generate_python_simulator(file) {
+                let sim_path = output_dir.join(format!("{}_sim.py", module_name));
+                fs::write(&sim_path, sim_code).map_err(|e| CompileError::io(&sim_path, e))?;
+            }
         }
 
         // 生成参数文件
