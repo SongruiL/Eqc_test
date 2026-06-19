@@ -43,6 +43,18 @@
   .vars .grp { width:100%; font-size:11px; color:var(--sub); font-weight:600; margin-top:4px; }
   .err { color:#dc2626; font-size:13px; }
   .hint { color:var(--sub); font-size:12px; margin-top:8px; }
+  /* 情景探索器：调参数/初值 → 实时重算曲线 */
+  .scn-head { display:flex; align-items:center; gap:8px; margin-top:14px; padding-top:10px;
+    border-top:1px solid var(--line); font-size:13px; font-weight:600; }
+  .scn-head .btn { margin-left:auto; }
+  .scn-note { color:var(--sub); font-size:11px; font-weight:400; }
+  .scenario { max-height:240px; overflow-y:auto; margin-top:8px; }
+  .scn-grp { font-size:11px; color:var(--sub); font-weight:600; margin:8px 0 3px; }
+  .scn-row { display:grid; grid-template-columns:96px 1fr 78px; align-items:center; gap:8px; margin:4px 0; }
+  .scn-lab { font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .scn-row input[type=range] { width:100%; accent-color:var(--accent); }
+  .scn-num { width:78px; font-size:12px; padding:2px 5px; border:1px solid var(--line); border-radius:5px; }
+  .scn-row.changed .scn-lab { color:var(--accent); font-weight:600; }
   /* 节点悬停注释 */
   #nodeTip { position:fixed; z-index:1000; display:none; pointer-events:none; max-width:380px;
     background:var(--card); border:1px solid var(--line); border-radius:8px;
@@ -89,6 +101,9 @@
       <div class="chart-wrap"><img id="chart" alt="trajectory chart"></div>
       <div class="hint" id="chartHint"></div>
       <div class="vars" id="vars"></div>
+      <div class="scn-head">情景 <span class="scn-note">调参数/初值即实时重算</span>
+        <button class="btn" id="scnReset">重置默认</button></div>
+      <div class="scenario" id="scenario"></div>
     </div>
   </section>
 </div>
@@ -107,6 +122,7 @@ async function loadModel(){
     document.getElementById('title').textContent = mod.name_cn || mod.model || 'EQC Studio';
     document.getElementById('subtitle').textContent = mod.id ? ('· ' + mod.id) : '';
     buildVarList(mod.variables || []);
+    buildScenario(mod.parameters || [], mod.variables || []);
     setBadge('已连接', true);
   } catch(e){ setBadge('加载模型失败', false); }
 }
@@ -136,13 +152,72 @@ function buildVarList(vars){
   syncAllHl();   // 默认勾选的变量（如 Y）节点也高亮
 }
 
+// —— 情景探索器：调参数/初值 → 实时重算曲线（覆盖经 /api/chart.svg?p=&init= 交给 EQC 重算）——
+const OVR = {};   // 参数覆盖 name->值（仅存与默认不同者）
+const IOVR = {};  // 初值覆盖
+let _chartTimer = null;
+function scheduleChart(){ clearTimeout(_chartTimer); _chartTimer = setTimeout(updateChart, 150); }
+function overrideQuery(){
+  const ps = Object.entries(OVR).map(([k,v])=>k+':'+v);
+  const is = Object.entries(IOVR).map(([k,v])=>k+':'+v);
+  let q = '';
+  if(ps.length) q += '&p=' + encodeURIComponent(ps.join(','));
+  if(is.length) q += '&init=' + encodeURIComponent(is.join(','));
+  return q;
+}
+function ctrlRow(box, store, name, label, def){
+  const d = Number(def);
+  const lo = Math.min(0, 2*d), hi = (Math.max(0, 2*d) || 1);
+  const step = (((hi-lo)/100) || 0.01);
+  const row = document.createElement('div'); row.className = 'scn-row';
+  row.innerHTML = '<span class="scn-lab" title="'+label.replace(/"/g,'')+'">'+name+'</span>'
+    + '<input type="range" min="'+lo+'" max="'+hi+'" step="'+step+'" value="'+d+'">'
+    + '<input type="number" step="'+step+'" value="'+d+'" class="scn-num">';
+  const rng = row.querySelector('input[type=range]');
+  const num = row.querySelector('input[type=number]');
+  const apply = (val)=>{
+    const v = Number(val);
+    if(!Number.isFinite(v)) return;
+    rng.value = v; num.value = v;
+    if(v === d){ delete store[name]; row.classList.remove('changed'); }
+    else { store[name] = v; row.classList.add('changed'); }
+    scheduleChart();
+  };
+  rng.addEventListener('input', ()=>apply(rng.value));
+  num.addEventListener('input', ()=>apply(num.value));
+  box.appendChild(row);
+}
+function buildScenario(params, vars){
+  const box = document.getElementById('scenario'); box.innerHTML = '';
+  for(const k in OVR) delete OVR[k];
+  for(const k in IOVR) delete IOVR[k];
+  // 向量参数（cohort 种子）不可被标量覆盖 → 情景面板跳过
+  const scalarParams = (params||[]).filter(p=> !p.values);
+  if(scalarParams.length){
+    const h = document.createElement('div'); h.className='scn-grp'; h.textContent='参数'; box.appendChild(h);
+    scalarParams.forEach(p=> ctrlRow(box, OVR, p.name, (p.name_cn||'') + (p.unit ? (' · '+p.unit) : ''), p.default));
+  }
+  // 只列真正的状态量初值（半状态 X_prev 等延迟寄存器是记账副本，不列）
+  const inits = (vars||[]).filter(v=> v.init!==undefined && v.init!==null && v.class==='state');
+  if(inits.length){
+    const h = document.createElement('div'); h.className='scn-grp'; h.textContent='初值'; box.appendChild(h);
+    inits.forEach(v=> ctrlRow(box, IOVR, v.name, '初值'+(v.unit ? (' · '+v.unit) : ''), v.init));
+  }
+}
+function resetScenario(){
+  const mod = (MODEL && MODEL.modules && MODEL.modules[0]) || {};
+  buildScenario(mod.parameters || [], mod.variables || []);  // 重建即清空覆盖、控件复位
+  updateChart();
+}
+document.getElementById('scnReset').addEventListener('click', resetScenario);
+
 function updateChart(){
   const checked = Array.from(document.querySelectorAll('#vars input:checked')).map(i=>i.value);
   const img = document.getElementById('chart');
   const hint = document.getElementById('chartHint');
   if(checked.length===0){ img.removeAttribute('src'); hint.textContent='勾选变量以绘制轨迹。'; return; }
   hint.textContent = '绘制：' + checked.join(', ');
-  img.src = '/api/chart.svg?vars=' + encodeURIComponent(checked.join(',')) + '&_=' + Date.now();
+  img.src = '/api/chart.svg?vars=' + encodeURIComponent(checked.join(',')) + overrideQuery() + '&_=' + Date.now();
   img.onerror = ()=>{ hint.innerHTML = '<span class="err">无法绘制（可能未提供 --drivers，或模型有错）</span>'; };
 }
 

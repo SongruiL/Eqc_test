@@ -86,12 +86,19 @@ pub struct SimInput {
     pub drivers: HashMap<String, Vec<f64>>,
     /// 参数覆盖：变量名 -> 值（覆盖 `parameters:` 默认值）。
     pub param_overrides: HashMap<String, f64>,
+    /// 初值覆盖：状态量/延迟寄存器名 -> 初值（覆盖变量上的 `init:`）。
+    pub init_overrides: HashMap<String, f64>,
 }
 
 impl SimInput {
     /// 构造一个 `steps` 步的空输入。
     pub fn new(steps: usize) -> Self {
-        Self { steps, drivers: HashMap::new(), param_overrides: HashMap::new() }
+        Self {
+            steps,
+            drivers: HashMap::new(),
+            param_overrides: HashMap::new(),
+            init_overrides: HashMap::new(),
+        }
     }
 
     /// 链式加入一条驱动量序列。
@@ -162,7 +169,7 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
         let n = name.as_str();
         if var.is_integrator() {
             let rate = var.rate.as_deref().unwrap();
-            let init = var.init.ok_or_else(|| SimError::MissingInit(name.clone()))?;
+            let init = input.init_overrides.get(n).copied().or(var.init).ok_or_else(|| SimError::MissingInit(name.clone()))?;
             if !file.variables.contains_key(rate) && !file.parameters.contains_key(rate) {
                 return Err(SimError::UndefinedSource { var: name.clone(), source: rate.to_string() });
             }
@@ -170,7 +177,7 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
             nodes.push((n, Node::Integrator { rate, init }));
         } else if var.is_delay() {
             let src = var.prev.as_deref().unwrap();
-            let init = var.init.ok_or_else(|| SimError::MissingInit(name.clone()))?;
+            let init = input.init_overrides.get(n).copied().or(var.init).ok_or_else(|| SimError::MissingInit(name.clone()))?;
             if !file.variables.contains_key(src) && !file.parameters.contains_key(src) {
                 return Err(SimError::UndefinedSource { var: name.clone(), source: src.to_string() });
             }

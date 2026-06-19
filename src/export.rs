@@ -45,6 +45,10 @@ pub struct ParamJson {
     pub default: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unit: Option<String>,
+    /// 向量参数（cohort 种子）的各分量值；标量参数为 `None`。
+    /// 前端据此区分：向量参数不可被标量覆盖（情景面板里跳过）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub values: Option<Vec<f64>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -100,6 +104,7 @@ fn module_json(f: &EquationFile) -> ModuleJson {
             name_cn: p.name_cn.clone(),
             default: p.default,
             unit: p.unit.clone(),
+            values: p.values.clone(),
         })
         .collect();
 

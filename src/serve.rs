@@ -140,13 +140,17 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
             Ok(h) => ("200 OK", "text/html; charset=utf-8", h),
             Err(e) => ("200 OK", "text/html; charset=utf-8", error_html(&e)),
         },
-        "/api/simulate" => match run_sim(ctx) {
-            Ok(out) => ("200 OK", "application/json; charset=utf-8", trajectory_json(&out)),
-            Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
-        },
+        "/api/simulate" => {
+            let (pv, iv) = (parse_overrides(query, "p"), parse_overrides(query, "init"));
+            match run_sim(ctx, &pv, &iv) {
+                Ok(out) => ("200 OK", "application/json; charset=utf-8", trajectory_json(&out)),
+                Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
+            }
+        }
         "/api/chart.svg" => {
             let vars = parse_vars(query);
-            let svg = match run_sim(ctx) {
+            let (pv, iv) = (parse_overrides(query, "p"), parse_overrides(query, "init"));
+            let svg = match run_sim(ctx, &pv, &iv) {
                 Ok(out) => {
                     let refs: Vec<&str> = vars.iter().map(|s| s.as_str()).collect();
                     crate::chart::line_chart_svg(&out, &refs, 720.0, 360.0)
@@ -236,8 +240,13 @@ fn parse_layout(query: &str) -> LayoutKind {
     LayoutKind::Layered
 }
 
-/// 用预加载的驱动量/参数跑一次仿真（单模型，取第一个模块）。
-fn run_sim(ctx: &Ctx) -> Result<SimOutput, String> {
+/// 用预加载的驱动量 + 参数跑一次仿真（单模型，取第一个模块）。
+/// `param_ov`/`init_ov`：请求级覆盖（情景探索器传来），叠加在启动级 `--params` 之上。
+fn run_sim(
+    ctx: &Ctx,
+    param_ov: &HashMap<String, f64>,
+    init_ov: &HashMap<String, f64>,
+) -> Result<SimOutput, String> {
     let files = load_files(&ctx.path)?;
     let file = files.first().ok_or_else(|| "无模型".to_string())?;
     let (steps, dmap) = ctx
@@ -249,7 +258,33 @@ fn run_sim(ctx: &Ctx) -> Result<SimOutput, String> {
     if let Some(p) = &ctx.params {
         input.param_overrides = p.clone();
     }
+    // 请求级覆盖叠加（优先级最高）
+    for (k, v) in param_ov {
+        input.param_overrides.insert(k.clone(), *v);
+    }
+    input.init_overrides = init_ov.clone();
     simulate(file, &input).map_err(|e| format!("仿真失败: {e}"))
+}
+
+/// 解析 `key=name:val,name2:val2`（url 解码后），用于 `p=`（参数）/`init=`（初值）覆盖。
+fn parse_overrides(query: &str, key: &str) -> HashMap<String, f64> {
+    let prefix = format!("{key}=");
+    let mut out = HashMap::new();
+    for kv in query.split('&') {
+        if let Some(v) = kv.strip_prefix(&prefix) {
+            for pair in url_decode(v).split(',') {
+                if let Some((name, val)) = pair.split_once(':') {
+                    if let Ok(f) = val.trim().parse::<f64>() {
+                        let n = name.trim();
+                        if !n.is_empty() && f.is_finite() {
+                            out.insert(n.to_string(), f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 /// 轨迹 JSON：`{ "steps": N, "series": { name: [..], .. } }`。
@@ -334,6 +369,18 @@ mod tests {
         // 节点悬停注释 + 点击联动
         assert!(STUDIO_HTML.contains("nodeTip"));
         assert!(STUDIO_HTML.contains("wireNodeClicks"));
+    }
+
+    #[test]
+    fn test_parse_overrides() {
+        let p = parse_overrides("vars=Y&p=Tbase:3.5,LUE:2.8&init=TF:0&_=1", "p");
+        assert_eq!(p.get("Tbase"), Some(&3.5));
+        assert_eq!(p.get("LUE"), Some(&2.8));
+        let i = parse_overrides("p=Tbase:3.5&init=TF:0,DF:1.5", "init");
+        assert_eq!(i.get("TF"), Some(&0.0));
+        assert_eq!(i.get("DF"), Some(&1.5));
+        assert!(parse_overrides("vars=Y", "p").is_empty());
+        assert!(parse_overrides("p=bad:xx", "p").is_empty()); // 非数值忽略
     }
 
     #[test]

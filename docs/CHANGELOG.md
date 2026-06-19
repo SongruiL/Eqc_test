@@ -78,8 +78,16 @@
 - **点击多选联动**：点节点 = 切换选中（高亮节点+公式 + 画其轨迹）；再点取消；依次点多个曲线累加；与右栏复选框双向同步。**不再自动滚动**（注释已可见）。
 - Rust 侧：节点 `<g>` 加 `data-var`、公式块加 `data-output`、高亮样式 `.hl`；契约/报告测试加断言（报告仍断言不含 `<script>`）。
 
+### EQC Studio 情景探索器（浏览器调参数/初值 → 实时重算曲线）
+让 `--drivers`/`--params` 不再启动时冻结：页面上拖滑块/填数值改**参数和状态量初值**，曲线**实时重算**。EQC 仍是唯一权威——"情景"只作查询参数传给服务端重算。
+- **后端**：`SimInput` 加 `init_overrides`（状态量/延迟寄存器初值覆盖，优先于变量上的 `init:`）；`serve.rs` 给 `/api/chart.svg` 与 `/api/simulate` 解析 `p=name:val,…`（参数）与 `init=name:val,…`（初值），叠加在启动级 `--params` 之上传入仿真。
+- **契约**：`ParamJson` 加 `values` 字段（向量参数的各分量），前端据此**跳过向量参数**（cohort 种子不可被标量覆盖）。
+- **前端**：从 `/api/model` 自动生成情景面板（标量参数 + 状态量初值，各一行滑块+数值框），改动防抖 150ms 重设 `chart.svg` 的 src 实时重绘；改过标蓝；「重置默认」。复用现有 `<img>` 图表机制，无新增渲染。
+- 后续可做（暂缓）：滑块合理范围/步长、叠加"基线曲线"对比、天气（drivers）整体缩放旋钮。
+- 测试 154 lib + 4 + 100 全绿。
+
 ## 工程基线
-- 测试：153 lib + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
+- 测试：154 lib + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
 - 远程：github.com/SongruiL/Eqc_test，SSH 推送。
 - 文档：见 `docs/USAGE.md`（架构与模块地图）、`docs/spec-*.md`（设计规格）。
 
