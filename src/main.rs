@@ -250,6 +250,28 @@ enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+
+    /// 仿真优化：读模型 + 决策 spec，用差分进化 DE 搜旋钮空间，输出最优旋钮 + 目标值
+    Optimize {
+        /// 模型文件（单个 .eq.yaml）
+        input: PathBuf,
+
+        /// 决策 spec（YAML：目标/旋钮/约束/优化器，见 docs/spec-optimization.md §4）
+        #[arg(short, long)]
+        spec: PathBuf,
+
+        /// 环境驱动量 CSV（覆盖 spec 里的 environment:；二者至少有一个）
+        #[arg(short, long)]
+        drivers: Option<PathBuf>,
+
+        /// 步数（默认取驱动量 CSV 行数）
+        #[arg(long)]
+        steps: Option<usize>,
+
+        /// 输出结果 JSON（最优旋钮 + 目标值 + 收敛轨迹），缺省只打印到控制台
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[cfg(feature = "cli")]
@@ -282,6 +304,9 @@ fn main() {
             equation_compiler::serve::serve(&input, port, drivers.as_ref(), params.as_ref())
         }
         Commands::Export { input, output } => run_export(&input, output.as_ref()),
+        Commands::Optimize { input, spec, drivers, steps, output } => {
+            run_optimize(&input, &spec, drivers.as_ref(), steps, output.as_ref())
+        }
     };
 
     if let Err(e) = result {
@@ -587,6 +612,132 @@ fn run_export(input: &PathBuf, output: Option<&PathBuf>) -> Result<(), Box<dyn s
         }
         None => println!("{json}"),
     }
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+fn run_optimize(
+    input: &PathBuf,
+    spec: &PathBuf,
+    drivers: Option<&PathBuf>,
+    steps: Option<usize>,
+    output: Option<&PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use equation_compiler::optimize::{
+        differential_evolution, evaluate, load_problem, validate_problem, DeConfig, Sense,
+    };
+    use equation_compiler::parse_file;
+    use equation_compiler::scenario::load_drivers_csv;
+
+    println!("🎯 优化模型: {}", input.display());
+    let file = parse_file(input)?;
+    let problem = load_problem(spec)?;
+    validate_problem(&file, &problem)?;
+
+    // —— 解析环境驱动量：--drivers 优先，否则用 spec 里的 environment（相对 spec 目录解析）——
+    let driver_path: PathBuf = match drivers {
+        Some(p) => p.clone(),
+        None => match &problem.environment {
+            Some(env) => spec.parent().unwrap_or_else(|| std::path::Path::new(".")).join(env),
+            None => {
+                return Err("未提供环境驱动量：请加 --drivers，或在决策 spec 里写 environment:".into())
+            }
+        },
+    };
+    let (rows, driver_map) = load_drivers_csv(&driver_path)?;
+    let steps = steps.unwrap_or(rows);
+
+    // —— 优化器配置（阶段 1 仅 DE）——
+    if problem.optimizer.method != "de" {
+        return Err(format!(
+            "阶段 1 仅支持 method: de（收到 '{}'）",
+            problem.optimizer.method
+        )
+        .into());
+    }
+    let cfg = DeConfig {
+        pop: problem.optimizer.pop,
+        iters: problem.optimizer.iters,
+        seed: problem.optimizer.seed,
+        ..Default::default()
+    };
+    let bounds: Vec<(f64, f64)> = problem.knobs.iter().map(|k| (k.bounds[0], k.bounds[1])).collect();
+
+    let sense_str = match problem.objective.sense {
+        Sense::Max => "max",
+        Sense::Min => "min",
+    };
+    println!(
+        "   旋钮 {} 个 | 环境 {} ({} 步) | DE pop={} iters={} seed={} | 目标 {sense_str} {}",
+        problem.knobs.len(),
+        driver_path.display(),
+        steps,
+        cfg.pop,
+        cfg.iters,
+        cfg.seed,
+        problem.objective.expr,
+    );
+
+    // —— 跑 DE：代价 = 目标评估核的 cost ——
+    let res = differential_evolution(&bounds, &cfg, |x| {
+        evaluate(&file, &problem, x, &driver_map, steps).cost
+    });
+
+    // —— 用最优旋钮再评一次，拿到完整结果（目标值/可行性/惩罚）——
+    let best = evaluate(&file, &problem, &res.best_x, &driver_map, steps);
+
+    println!("\n✅ 优化完成");
+    println!("   最优旋钮：");
+    for (k, v) in problem.knobs.iter().zip(&res.best_x) {
+        let unit = k.unit.as_deref().map(|u| format!(" {u}")).unwrap_or_default();
+        println!("     {:<16} = {:.6}{unit}   [{}]", k.var, v, k.kind.as_str());
+    }
+    match best.objective {
+        Some(obj) => println!("   目标值（{sense_str}）：{obj:.6}"),
+        None => println!("   目标值：⚠️ 最优候选仍无法求值（{}）", best.note.unwrap_or_default()),
+    }
+    if !problem.constraints.is_empty() {
+        println!(
+            "   约束：{}（惩罚 {:.6}）",
+            if best.feasible { "满足 ✓" } else { "违反 ✗" },
+            best.penalty
+        );
+    }
+    if let (Some(first), Some(last)) = (res.history.first(), res.history.last()) {
+        println!("   收敛：初代代价 {first:.6} → 末代 {last:.6}（共 {} 代）", res.history.len() - 1);
+    }
+
+    // —— 写结果 JSON ——
+    if let Some(path) = output {
+        let knobs_json: Vec<serde_json::Value> = problem
+            .knobs
+            .iter()
+            .zip(&res.best_x)
+            .map(|(k, v)| {
+                serde_json::json!({
+                    "var": k.var,
+                    "kind": k.kind.as_str(),
+                    "value": v,
+                    "unit": k.unit,
+                    "bounds": [k.bounds[0], k.bounds[1]],
+                })
+            })
+            .collect();
+        let result = serde_json::json!({
+            "model": file.meta.id,
+            "objective": { "expr": problem.objective.expr, "sense": sense_str },
+            "best_knobs": knobs_json,
+            "objective_value": best.objective,
+            "feasible": best.feasible,
+            "penalty": best.penalty,
+            "best_cost": res.best_cost,
+            "optimizer": { "method": "de", "pop": cfg.pop, "iters": cfg.iters, "seed": cfg.seed },
+            "history": res.history,
+        });
+        std::fs::write(path, serde_json::to_string_pretty(&result)?)?;
+        println!("   结果已写入 {}", path.display());
+    }
+
     Ok(())
 }
 
