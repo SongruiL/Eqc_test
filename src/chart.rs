@@ -252,6 +252,114 @@ pub fn convergence_chart_svg(history: &[f64], width: f64, height: f64) -> String
     s
 }
 
+/// 把多目标 Pareto 前沿画成散点图 SVG：x=目标1、y=目标2，点按目标1 连成权衡曲线。
+/// 每个点带 `data-i="{原始下标}"` + class `pp`，供前端点选（叠加该点轨迹）。内联 SVG（非 `<img>`）。
+pub fn pareto_chart_svg(points: &[(f64, f64)], xlabel: &str, ylabel: &str, width: f64, height: f64) -> String {
+    if points.is_empty() {
+        return format!(
+            "<svg viewBox=\"0 0 {width:.0} {height:.0}\" class=\"chart-svg\" xmlns=\"http://www.w3.org/2000/svg\">\
+             <text x=\"{:.0}\" y=\"{:.0}\" font-size=\"13\" fill=\"#6b7280\" text-anchor=\"middle\">（无前沿点）</text></svg>",
+            width / 2.0,
+            height / 2.0
+        );
+    }
+    let (mut xmin, mut xmax, mut ymin, mut ymax) = (f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY);
+    for &(x, y) in points {
+        if x.is_finite() {
+            xmin = xmin.min(x);
+            xmax = xmax.max(x);
+        }
+        if y.is_finite() {
+            ymin = ymin.min(y);
+            ymax = ymax.max(y);
+        }
+    }
+    if !xmin.is_finite() {
+        xmin = 0.0;
+        xmax = 1.0;
+    }
+    if !ymin.is_finite() {
+        ymin = 0.0;
+        ymax = 1.0;
+    }
+    if (xmax - xmin).abs() < 1e-12 {
+        xmax = xmin + 1.0;
+    }
+    if (ymax - ymin).abs() < 1e-12 {
+        ymax = ymin + 1.0;
+    }
+    let (xpad, ypad) = ((xmax - xmin) * 0.05, (ymax - ymin) * 0.05);
+    xmin -= xpad;
+    xmax += xpad;
+    ymin -= ypad;
+    ymax += ypad;
+
+    let (ml, mr, mt, mb) = (70.0, 16.0, 18.0, 40.0);
+    let pw = (width - ml - mr).max(1.0);
+    let ph = (height - mt - mb).max(1.0);
+    let xmap = |x: f64| ml + (x - xmin) / (xmax - xmin) * pw;
+    let ymap = |y: f64| mt + (ymax - y) / (ymax - ymin) * ph;
+
+    let mut s = format!(
+        "<svg viewBox=\"0 0 {width:.0} {height:.0}\" class=\"chart-svg pareto-svg\" xmlns=\"http://www.w3.org/2000/svg\">"
+    );
+    // 网格 + 刻度（各 4 段）
+    for k in 0..=4 {
+        let yv = ymin + (ymax - ymin) * (k as f64 / 4.0);
+        let yy = ymap(yv);
+        s.push_str(&format!(
+            "<line x1=\"{ml:.0}\" y1=\"{yy:.1}\" x2=\"{:.1}\" y2=\"{yy:.1}\" stroke=\"#eef2ff\"/>\
+             <text x=\"{:.0}\" y=\"{:.1}\" font-size=\"10\" fill=\"#6b7280\" text-anchor=\"end\">{}</text>",
+            ml + pw, ml - 6.0, yy + 3.0, fmt(yv)
+        ));
+        let xv = xmin + (xmax - xmin) * (k as f64 / 4.0);
+        let xx = xmap(xv);
+        s.push_str(&format!(
+            "<line x1=\"{xx:.1}\" y1=\"{mt:.0}\" x2=\"{xx:.1}\" y2=\"{:.1}\" stroke=\"#f3f4f6\"/>\
+             <text x=\"{xx:.1}\" y=\"{:.0}\" font-size=\"10\" fill=\"#6b7280\" text-anchor=\"middle\">{}</text>",
+            mt + ph, mt + ph + 14.0, fmt(xv)
+        ));
+    }
+    // 轴 + 标签
+    s.push_str(&format!(
+        "<line x1=\"{ml:.0}\" y1=\"{mt:.0}\" x2=\"{ml:.0}\" y2=\"{:.1}\" stroke=\"#cbd5e1\"/>\
+         <line x1=\"{ml:.0}\" y1=\"{:.1}\" x2=\"{:.1}\" y2=\"{:.1}\" stroke=\"#cbd5e1\"/>",
+        mt + ph, mt + ph, ml + pw, mt + ph
+    ));
+    s.push_str(&format!(
+        "<text x=\"{:.1}\" y=\"{:.0}\" font-size=\"10\" fill=\"#374151\" text-anchor=\"middle\">{}</text>",
+        ml + pw / 2.0, height - 4.0, xml_escape(xlabel)
+    ));
+    s.push_str(&format!(
+        "<text x=\"12\" y=\"{:.1}\" font-size=\"10\" fill=\"#374151\" text-anchor=\"middle\" transform=\"rotate(-90 12 {:.1})\">{}</text>",
+        mt + ph / 2.0, mt + ph / 2.0, xml_escape(ylabel)
+    ));
+
+    // 连线（按目标1 升序）
+    let mut order: Vec<usize> = (0..points.len()).collect();
+    order.sort_by(|&a, &b| points[a].0.partial_cmp(&points[b].0).unwrap_or(std::cmp::Ordering::Equal));
+    let line: String = order
+        .iter()
+        .filter(|&&i| points[i].0.is_finite() && points[i].1.is_finite())
+        .map(|&i| format!("{:.1},{:.1}", xmap(points[i].0), ymap(points[i].1)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    s.push_str(&format!(
+        "<polyline points=\"{line}\" fill=\"none\" stroke=\"#93c5fd\" stroke-width=\"1.4\"/>"
+    ));
+    // 散点（data-i = 原始下标，供前端点选）
+    for (i, &(x, y)) in points.iter().enumerate() {
+        if x.is_finite() && y.is_finite() {
+            s.push_str(&format!(
+                "<circle class=\"pp\" data-i=\"{i}\" cx=\"{:.1}\" cy=\"{:.1}\" r=\"4\" fill=\"#2563eb\" stroke=\"#fff\" stroke-width=\"1\"/>",
+                xmap(x), ymap(y)
+            ));
+        }
+    }
+    s.push_str("</svg>");
+    s
+}
+
 fn fmt(v: f64) -> String {
     if v.abs() >= 100.0 {
         format!("{v:.0}")
@@ -309,5 +417,20 @@ mod tests {
     fn test_convergence_chart_empty() {
         let svg = convergence_chart_svg(&[], 720.0, 300.0);
         assert!(svg.contains("无收敛数据"));
+    }
+
+    #[test]
+    fn test_pareto_chart() {
+        let pts = vec![(7.5, 96000.0), (9.0, 180000.0), (10.95, 288000.0)];
+        let svg = pareto_chart_svg(&pts, "产量 Y", "CO2 用量", 640.0, 360.0);
+        assert!(svg.contains("<svg"));
+        assert_eq!(svg.matches("class=\"pp\"").count(), 3, "三个可点选前沿点");
+        assert!(svg.contains("data-i=\"0\"") && svg.contains("data-i=\"2\""));
+        assert_eq!(svg.matches("<polyline").count(), 1, "一条连线");
+    }
+
+    #[test]
+    fn test_pareto_chart_empty() {
+        assert!(pareto_chart_svg(&[], "x", "y", 640.0, 360.0).contains("无前沿点"));
     }
 }

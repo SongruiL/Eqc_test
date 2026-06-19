@@ -327,6 +327,26 @@ fn run_optimize(ctx: &Ctx, query: &str) -> Result<String, String> {
         },
     };
 
+    // 多目标：MO-DE 跑出 Pareto 前沿，注入散点图 SVG（点选叠加轨迹靠它）。
+    if problem.is_multi() {
+        let mr = optimize::run_mo(file, &problem, &driver_map, steps)?;
+        let mut j = optimize::mo_result_json(file, &problem, &mr);
+        if let Some(obj) = j.as_object_mut() {
+            let pts: Vec<(f64, f64)> = mr
+                .front
+                .iter()
+                .filter(|p| p.objectives.len() >= 2)
+                .map(|p| (p.objectives[0], p.objectives[1]))
+                .collect();
+            let (xl, yl) = (problem.objective.expr.clone(), problem.objective2.as_ref().unwrap().expr.clone());
+            obj.insert(
+                "pareto_svg".to_string(),
+                serde_json::Value::String(crate::chart::pareto_chart_svg(&pts, &xl, &yl, 700.0, 380.0)),
+            );
+        }
+        return Ok(j.to_string());
+    }
+
     let res = optimize::run(file, &problem, &driver_map, steps)?;
     // 数据 JSON（与 CLI 同结构）+ 注入 EQC 自生成的收敛曲线 SVG（供 Studio 直接显示；
     // CLI 写文件的 result_json 保持纯数据、不含 SVG）。
@@ -456,9 +476,10 @@ mod tests {
         // 节点悬停注释 + 点击联动
         assert!(STUDIO_HTML.contains("nodeTip"));
         assert!(STUDIO_HTML.contains("wireNodeClicks"));
-        // 决策优化面板
+        // 决策优化面板 + 多目标前沿渲染
         assert!(STUDIO_HTML.contains("optRun"));
         assert!(STUDIO_HTML.contains("/api/optimize?spec="));
+        assert!(STUDIO_HTML.contains("renderParetoResult"));
     }
 
     #[test]

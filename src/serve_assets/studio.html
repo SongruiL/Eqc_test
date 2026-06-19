@@ -78,6 +78,8 @@
   .opt-cons { font-size:12px; margin-top:8px; }
   .opt-cons .ok { color:#16a34a; } .opt-cons .bad { color:#dc2626; }
   .opt-conv svg { width:100%; max-width:720px; height:auto; display:block; }
+  .opt-conv circle.pp { cursor:pointer; transition:r .08s; }
+  .opt-conv circle.pp:hover { stroke:#1d4ed8; stroke-width:2; }
   .opt-summary { font-size:13px; margin-bottom:4px; }
   .opt-summary .feas-ok { color:#16a34a; font-weight:600; } .opt-summary .feas-bad { color:#dc2626; font-weight:600; }
 </style>
@@ -511,6 +513,7 @@ async function runOptimize(){
 }
 function renderOptResult(j){
   const grid = document.getElementById('optResult'); grid.style.display='';
+  if(j.multi_objective){ renderParetoResult(j); return; }
   const feas = j.feasible ? '<span class="feas-ok">可行 ✓</span>' : '<span class="feas-bad">违反约束 ✗</span>';
   let left = '<div class="opt-summary"><b>目标值（' + esc(j.objective.sense) + '）：</b>'
     + (j.objective_value!=null ? fmtNum(j.objective_value) : '—') + '　' + feas + '</div>';
@@ -536,6 +539,32 @@ function renderOptResult(j){
   document.getElementById('optConv').innerHTML = j.convergence_svg || '';
   const ap = document.getElementById('optApply');
   if(ap) ap.addEventListener('click', ()=>applyBestKnobs(j.best_knobs));
+}
+// 多目标：画 Pareto 前沿散点（EQC 生成的 SVG），点选某点 → 叠加该点整季轨迹。
+function renderParetoResult(j){
+  const o1 = (j.objectives && j.objectives[0]) || {expr:'目标1', sense:''};
+  const o2 = (j.objectives && j.objectives[1]) || {expr:'目标2', sense:''};
+  const n = j.front ? j.front.length : 0;
+  let left = '<div class="opt-summary"><b>多目标 Pareto 前沿</b>（' + n + ' 点）</div>';
+  left += '<div class="opt-cons">目标1（' + esc(o1.sense) + '）：' + esc(o1.expr)
+        + '<br>目标2（' + esc(o2.sense) + '）：' + esc(o2.expr) + '</div>';
+  left += '<div class="hint" id="ppInfo" style="margin-top:10px">点前沿上的点 → 把该点旋钮叠加到上方「整季仿真轨迹」（确保勾了 Y）。</div>';
+  document.getElementById('optLeft').innerHTML = left;
+  document.getElementById('optConv').innerHTML = j.pareto_svg || '';
+  const svg = document.querySelector('#optConv svg');
+  if(!svg) return;
+  svg.querySelectorAll('circle.pp').forEach(c=>{
+    c.addEventListener('click', ()=>{
+      const i = +c.getAttribute('data-i');
+      const pt = j.front && j.front[i]; if(!pt) return;
+      svg.querySelectorAll('circle.pp').forEach(x=>{ x.setAttribute('r','4'); x.setAttribute('fill','#2563eb'); });
+      c.setAttribute('r','6'); c.setAttribute('fill','#dc2626');   // 高亮选中点
+      applyBestKnobs(pt.knobs);
+      const ov = (pt.objectives||[]).map((v,k)=> esc(k===0?o1.expr:o2.expr) + ' = ' + fmtNum(v)).join('　·　');
+      const feas = (pt.feasible===false) ? ' <span class="err">(违反约束)</span>' : '';
+      document.getElementById('ppInfo').innerHTML = '已叠加该点轨迹：' + ov + feas;
+    });
+  });
 }
 // 把最优旋钮喂回情景覆盖（param→OVR、init→IOVR、driver_const→DOVR），重画曲线
 function applyBestKnobs(knobs){
