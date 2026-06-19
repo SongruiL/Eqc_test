@@ -698,10 +698,19 @@ fn run_optimize(
     }
     if !problem.constraints.is_empty() {
         println!(
-            "   约束：{}（惩罚 {:.6}）",
-            if best.feasible { "满足 ✓" } else { "违反 ✗" },
+            "   约束（{}，惩罚 {:.6}）：",
+            if best.feasible { "全部满足 ✓" } else { "存在违反 ✗" },
             best.penalty
         );
+        for cs in &best.constraints {
+            let mark = if cs.violation > 0.0 { "✗" } else { "✓" };
+            let viol = if cs.violation > 0.0 {
+                format!("   违反 {:.6}", cs.violation)
+            } else {
+                String::new()
+            };
+            println!("     {mark} {} = {:.6} ≤ {:.6}{viol}", cs.expr, cs.value, cs.max);
+        }
     }
     if let (Some(first), Some(last)) = (res.history.first(), res.history.last()) {
         println!("   收敛：初代代价 {first:.6} → 末代 {last:.6}（共 {} 代）", res.history.len() - 1);
@@ -723,6 +732,19 @@ fn run_optimize(
                 })
             })
             .collect();
+        let constraints_json: Vec<serde_json::Value> = best
+            .constraints
+            .iter()
+            .map(|cs| {
+                serde_json::json!({
+                    "expr": cs.expr,
+                    "value": cs.value,
+                    "max": cs.max,
+                    "violation": cs.violation,
+                    "satisfied": cs.violation == 0.0,
+                })
+            })
+            .collect();
         let result = serde_json::json!({
             "model": file.meta.id,
             "objective": { "expr": problem.objective.expr, "sense": sense_str },
@@ -730,6 +752,7 @@ fn run_optimize(
             "objective_value": best.objective,
             "feasible": best.feasible,
             "penalty": best.penalty,
+            "constraints": constraints_json,
             "best_cost": res.best_cost,
             "optimizer": { "method": "de", "pop": cfg.pop, "iters": cfg.iters, "seed": cfg.seed },
             "history": res.history,
