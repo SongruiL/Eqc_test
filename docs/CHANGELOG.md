@@ -109,8 +109,24 @@
 - **验证**（本机 Python 3.10，与 `eqc simulate` 对拍）：标量版 `strawberry_v1`——**Y 逐位完全一致（6.7058324979969655）**，92 变量末值 73 个逐位相同、其余 <1e-9；向量版 `strawberry_s4`——156 变量末值 112 个逐位相同、其余 <1e-9，**0 不一致**（差异皆 numpy vs Rust 超越函数末位）。
 - **Rust 目标后置**。生成器单测覆盖动态/静态判定与关键结构。
 
+### 优化层 arc（阶段 1：决策优化 = 仿真优化）
+从「当前条件下系统会怎样」迈向「想要某种结果该怎么做」。不解析反推方程（机理模型含阈值/分段无法求逆），而是**在前向模型上搜索**：试一组决策 → 跑仿真 → 打分 → 调整再试。设计见 `docs/spec-optimization.md`。三层架构：搜索算法 / **目标评估核** / 前向模型（解释器）。新增 `src/optimize`。
+
+- **时间归约词汇**（`objective.rs`）：`final/at/max/min/mean/total` 作用于 `SimOutput` 一条整季轨迹（区别于逐日算子与 `vsum`）。`eval_objective(expr, &SimOutput, &bindings)` 复用现有解析器/AST/求值器——先 `sexpr::parse`，在 **SExpr 层**把每个归约子式就地替换成数，再 `convert`+`eval` 求剩下的纯算术。**不新增 AST 变体**（不污染 360 变体枚举、不动三个 codegen），也避开与逐元素 `max/min` 的命名冲突（消歧：`final/at/total/mean` 是归约专用词；`max/min` 仅当 `(max 单轨迹变量)` 时作归约）。
+- **决策 spec**（`problem.rs`）：与模型**分离**的独立产物（「可控」是场景属性而非变量固有属性）。YAML 顶层 `optimize:`——`objective{expr,sense}` + `knobs[{var,kind,bounds,unit}]`（`kind∈{param,init,driver_const}`，阶段 1 仅标量）+ `constants` + `constraints[{expr,max}]` + `environment` + `optimizer{method,pop,iters,seed}`。
+- **目标评估核**（`core.rs`）：`evaluate(file, problem, &knob_values, &drivers, steps) -> EvalOutcome`——装配 `SimInput`（param→覆盖 / init→初值覆盖 / driver_const→整列常数）→ `simulate` → 目标归约 + sense + 约束惩罚（`expr≤max` 线性外罚）→ 代价。**绑定**：模型标量参数默认值 ← 常量 ← 旋钮当前值（旋钮优先），故目标里 `Pd`（也是旋钮）取试验值、单价/成本取常量。**鲁棒**：发散/缺驱动/非有限/求值失败一律给 `WORST_COST=1e18` 不崩。`validate_problem` 跑前校验旋钮种类/边界。决策优化 / 参数标定 / 未来 GP-fitness **共用这一层**。
+- **差分进化 DE**（`de.rs`）：免导数、对非光滑/阈值/多峰鲁棒。手搓确定性 PRNG（SplitMix64，不引入 `rand` 依赖）→ 同 `seed` + 确定性代价 = **逐位可复现**。DE/rand/1/bin + 边界钳制；`DeResult{best_x,best_cost,history}`。
+- **CLI**：`eqc optimize <模型> --spec problem.yaml [--drivers w.csv] [--steps N] [-o result.json]`——读模型+决策 spec → DE 搜旋钮 → 打印最优旋钮/目标值/可行性/收敛、写结果 JSON。
+- **草莓 S4 验证**（`../strawberry_model/optimize_s4*.yaml`）：
+  - 最大化产量（旋钮 CO₂ driver_const + Pd param）→ CO₂=1200、Pd=12（均顶界）、Y=10.9503 kg/m²。
+  - **交叉核对 (a)**：Pd-only 优化最优 Pd=12、Y=**7.561201**，与 `eqc sweep --param Pd --range 4:12:17` 网格 argmax **逐位一致**。
+  - **交叉核对 (b)**：用独立 `eqc simulate`（CO₂≡1200 常列 + Pd=12 覆盖）复现最优点 Y=**10.950268524327067**，与优化器目标值**逐位一致**（验证 driver_const + param + final 归约一致）。
+  - **利润变体** `(sub (mul (final Y) price) (mul CO2 co2_cost))`：最优 CO₂=**757 ppm（内点**，成本项把它从 1200 拉回）、利润 199.87，比两边界各高 8–11%——证明优化器响应目标**结构**而非顶界。端到端**可复现**（重跑同结果）。
+- 单测 26 个（objective 6 + problem/core 8 + de 6 + 已计入）覆盖归约/算术/边界、评估核（最大化/driver_const/min+常量/约束惩罚/垃圾候选不崩/validate）、DE（Sphere/Rosenbrock 收敛/同种子可复现/边界/单调/零维）。
+- **后置**（spec §8 阶段 2+）：约束可视化、`--sensitivity` 自动预筛接入、曲线参数化时变控制、离散旋钮、参数标定（接田间数据）、其它优化器（CMA-ES/贝叶斯）；更远是 GP 约束进化层（复用本评估核当 fitness 引擎）。
+
 ## 工程基线
-- 测试：156 lib + 2 bin + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
+- 测试：176 lib + 2 bin + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
 - 远程：github.com/SongruiL/Eqc_test，SSH 推送。
 - 文档：见 `docs/USAGE.md`（架构与模块地图）、`docs/spec-*.md`（设计规格）。
 
