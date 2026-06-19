@@ -41,12 +41,22 @@ pub fn generate_python_simulator(file: &EquationFile) -> Option<String> {
     l.push("import math".into());
     l.push("from types import SimpleNamespace".into());
     l.push(String::new());
+    // 记录 helper：标量→name；向量→name[1]/name[2]…（与 eqc simulate 的 flatten 一致）
+    l.push("def _rec(traj, name, v):".into());
+    l.push("    a = np.asarray(v, dtype=float)".into());
+    l.push("    if a.ndim == 0:".into());
+    l.push("        traj.setdefault(name, []).append(float(a))".into());
+    l.push("    else:".into());
+    l.push("        f = a.reshape(-1)".into());
+    l.push("        for _i in range(f.size):".into());
+    l.push("            traj.setdefault(name + '[' + str(_i + 1) + ']', []).append(float(f[_i]))".into());
+    l.push(String::new());
 
     // 参数默认值（标量数字；向量参数为列表，标量生成器暂不支持其覆盖语义）
     l.push("_DEFAULTS = {".into());
     for (name, p) in &file.parameters {
         let val = match &p.values {
-            Some(v) => format!("[{}]", v.iter().map(|x| fnum(*x)).collect::<Vec<_>>().join(", ")),
+            Some(v) => format!("np.array([{}])", v.iter().map(|x| fnum(*x)).collect::<Vec<_>>().join(", ")),
             None => fnum(p.default),
         };
         l.push(format!("    '{name}': {val},"));
@@ -104,14 +114,29 @@ pub fn generate_python_simulator(file: &EquationFile) -> Option<String> {
             }
         }
     }
-    // 快照本步全部变量（供下一步的积分/延迟读取）+ 记录轨迹
+    // 首步：把延迟寄存器的标量 init 按其来源的形状广播（向量延迟寄存器记录形状跨步一致；
+    // 标量来源时为恒等，不影响数值）。复刻引擎 step-0 reshape。
+    if !plan.delays.is_empty() {
+        l.push("        if _n == 1:".into());
+        for (name, src, _init) in &plan.delays {
+            let src_ref = if is_param(src) {
+                format!("p.{src}")
+            } else {
+                (*src).to_string()
+            };
+            l.push(format!(
+                "            {name} = _init['{name}'] + 0.0 * np.asarray({src_ref}, dtype=float)"
+            ));
+        }
+    }
+    // 快照本步全部变量（供下一步的积分/延迟读取）+ 记录轨迹（向量自动展平为 name[i]）
     l.push("        prev = {".into());
     for name in file.variables.keys() {
         l.push(format!("            '{name}': {name},"));
     }
     l.push("        }".into());
     l.push("        for _k, _v in prev.items():".into());
-    l.push("            traj.setdefault(_k, []).append(float(_v))".into());
+    l.push("            _rec(traj, _k, _v)".into());
     l.push("    return traj".into());
     l.push(String::new());
 
@@ -188,6 +213,7 @@ mod tests {
         };
         let code = generate_python_simulator(&file).expect("动态模型应生成仿真器");
         assert!(code.contains("def simulate("));
+        assert!(code.contains("def _rec(")); // 展平记录 helper（标量/向量通吃）
         assert!(code.contains("_INIT = {"));
         assert!(code.contains("'X': 1.0"));
         assert!(code.contains("T = drivers['T'][_n - 1]")); // 驱动量逐日取值

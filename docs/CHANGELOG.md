@@ -105,9 +105,9 @@
 补上动态模型「单一真相源 → 可部署代码」这条断掉的承诺（此前 `eqc build` 按静态网络生成、状态量无更新代码）。
 - **步进计划抽象（单一真相源）**：`sim` 新增 pub `build_plan(file) -> SimPlan`——拓扑序的步内计算（`PlanStep::{Equation,Integrator}`）+ 延迟寄存器 + 驱动量清单。`simulate`（树遍历引擎）与代码生成器**共用同一份计划** → 生成代码与引擎逐步一致（correct-by-construction）。`simulate` 据此重构（初值覆盖改到「用时点」应用），草莓 Y 逐位不变（零回归）。
 - **Python 仿真器生成**（`generators/python_sim.rs`）：动态模型经 `eqc build --format python` 额外输出 `{id}_sim.py`——可独立运行的 `simulate(drivers, steps[, params][, init])`：逐日显式 Euler、`X[n]=X[n-1]+rate[n]`、延迟寄存器、内置 `DAT`，方程体复用 `Expr::to_python`；带 `__main__`（读驱动量 CSV、打印各变量末值，便于对拍）。
-- **验证**（本机 Python 3.10）：标量版草莓 `strawberry_v1` 生成的 Python 与 `eqc simulate` 对拍——**Y 逐位完全一致（6.7058324979969655）**；92 个变量末值中 73 个逐位相同、其余在 1e-9 内（numpy vs Rust 超越函数末位差异）。
-- 覆盖**标量动态模型**；向量模型（cohort/`vsum`）→ numpy 改造后置；Rust 目标后置。
-- 2 个生成器单测。
+- **向量模型支持（numpy）**：向量参数生成为 `np.array`、记录用 `_rec` 展平为 `name[i]`（与引擎 flatten 一致）、首步延迟寄存器按来源形状广播（复刻引擎 step-0 reshape）。同一份生成器标量/向量通吃。
+- **验证**（本机 Python 3.10，与 `eqc simulate` 对拍）：标量版 `strawberry_v1`——**Y 逐位完全一致（6.7058324979969655）**，92 变量末值 73 个逐位相同、其余 <1e-9；向量版 `strawberry_s4`——156 变量末值 112 个逐位相同、其余 <1e-9，**0 不一致**（差异皆 numpy vs Rust 超越函数末位）。
+- **Rust 目标后置**。生成器单测覆盖动态/静态判定与关键结构。
 
 ## 工程基线
 - 测试：156 lib + 2 bin + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
