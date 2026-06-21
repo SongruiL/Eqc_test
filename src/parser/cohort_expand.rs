@@ -29,6 +29,9 @@
 //! 展开规则：
 //! - `cohort: F` 的变量/参数/方程 → 复制 `size` 份，名字后缀 `__i`（i 从 1 起）。
 //! - `{ref: X, at: q}` → `{ref: X__i}`（i = 下标 q 的当前值）；`{idx: q}` → `{const: i}`。
+//! - `{ref: X, at: q, offset: k}` → 引用同家族**相邻**成员 `{ref: X__(i+k)}`（k 整数，可负）；
+//!   越界（i+k < 1 或 > size）→ `{const: 0}`。用于"固定箱车列"等需 j-1/j+1 流的阶段模型
+//!   （如番茄果实发育阶段间碳/果数流动：首阶段无前驱、末阶段无后继 → 自动归 0）。
 //! - `{op: sum_over, over: F, body: B}` → 把 B 对 F 的每个下标展开，折成 `add` 链；
 //!   `prod_over` 折成 `mul` 链。空家族 → `sum_over=0`、`prod_over=1`。
 //! - cohort 变量的 `rate`/`prev` 若指向**同家族**成员，同样加 `__i` 后缀。
@@ -303,11 +306,29 @@ fn rewrite_expr(
         return Ok(v.clone());
     };
 
-    // {ref: X [, at: q]}
+    // {ref: X [, at: q [, offset: k]]}
+    // `offset`（整数，可负）= 引用同家族的相邻成员（如箱车 j-1/j+1）。
+    // 越界（target < 1 或 > size）→ 折成 {const: 0}，天然处理首/末阶段无邻居的边界。
+    // 无 offset（或 offset=0）→ 与原行为逐位一致（不需家族 size，老模型不受影响）。
     if let Some(name) = get_str(m, "ref") {
         if let Some(idx_name) = get_str(m, "at") {
             let i = *env.get(&idx_name).ok_or_else(|| CohortError::UnknownIndex(idx_name.clone()))?;
-            return Ok(ref_value(&suffix(&name, i)));
+            let offset = m.get("offset").and_then(Value::as_i64).unwrap_or(0);
+            if offset == 0 {
+                return Ok(ref_value(&suffix(&name, i)));
+            }
+            // 带偏移：需所属家族的 size 做边界判定（按下标名反查家族）
+            let size = families
+                .values()
+                .find(|f| f.index == idx_name)
+                .map(|f| f.size)
+                .ok_or_else(|| CohortError::UnknownIndex(idx_name.clone()))?;
+            let target = i as i64 + offset;
+            if target >= 1 && target <= size as i64 {
+                return Ok(ref_value(&suffix(&name, target as usize)));
+            } else {
+                return Ok(const_value(0.0));
+            }
         }
         return Ok(v.clone());
     }
@@ -494,6 +515,70 @@ equations:
         assert_eq!(get_str(outer[1].as_mapping().unwrap(), "ref").as_deref(), Some("DRFG__3"));
         let inner = outer[0].as_mapping().unwrap();
         assert_eq!(get_str(inner, "op").as_deref(), Some("add"));
+    }
+
+    #[test]
+    fn test_expand_neighbor_offset_boxcar() {
+        // 固定箱车列：每阶段引用前驱(offset -1)与后继(offset +1)；首/末阶段越界→const 0
+        let src = yaml(
+            r#"
+cohorts:
+  stage: { size: 3, index: q }
+variables:
+  C:     { cohort: stage, class: state, init: 0.0, rate: rateC }
+  rateC: { cohort: stage, class: rate }
+equations:
+  - id: FLOW
+    output: rateC
+    cohort: stage
+    expression:
+      op: sub
+      args:
+        - { ref: C, at: q, offset: -1 }
+        - { ref: C, at: q, offset: 1 }
+"#,
+        );
+        let out = expand_cohorts(src).unwrap();
+        let eqs = out.get("equations").unwrap().as_sequence().unwrap();
+        assert_eq!(eqs.len(), 3); // rateC__1..3
+
+        // 取每条方程的 expression.args[0]（前驱 offset -1）与 args[1]（后继 offset +1）
+        let arg = |i: usize, a: usize| -> &Value {
+            &eqs[i].as_mapping().unwrap()
+                .get("expression").unwrap().as_mapping().unwrap()
+                .get("args").unwrap().as_sequence().unwrap()[a]
+        };
+        let is_const0 = |v: &Value| v.as_mapping().unwrap().get("const").and_then(Value::as_f64) == Some(0.0);
+        let ref_name = |v: &Value| get_str(v.as_mapping().unwrap(), "ref");
+
+        // q=1: 前驱越界→const 0；后继→C__2
+        assert!(is_const0(arg(0, 0)));
+        assert_eq!(ref_name(arg(0, 1)).as_deref(), Some("C__2"));
+        // q=2: 前驱→C__1；后继→C__3
+        assert_eq!(ref_name(arg(1, 0)).as_deref(), Some("C__1"));
+        assert_eq!(ref_name(arg(1, 1)).as_deref(), Some("C__3"));
+        // q=3: 前驱→C__2；后继越界→const 0
+        assert_eq!(ref_name(arg(2, 0)).as_deref(), Some("C__2"));
+        assert!(is_const0(arg(2, 1)));
+    }
+
+    #[test]
+    fn test_offset_zero_equals_no_offset() {
+        // offset: 0 与无 offset 逐位一致（向后兼容）
+        let src = yaml(
+            r#"
+cohorts:
+  fam: { size: 2, index: q }
+variables:
+  X: { cohort: fam }
+equations:
+  - { id: E, output: X, cohort: fam, expression: { ref: X, at: q, offset: 0 } }
+"#,
+        );
+        let out = expand_cohorts(src).unwrap();
+        let eqs = out.get("equations").unwrap().as_sequence().unwrap();
+        let expr1 = eqs[1].as_mapping().unwrap().get("expression").unwrap();
+        assert_eq!(get_str(expr1.as_mapping().unwrap(), "ref").as_deref(), Some("X__2"));
     }
 
     #[test]
