@@ -176,6 +176,11 @@ enum Commands {
         #[arg(long)]
         dt: Option<f64>,
 
+        /// 状态初值覆盖 `name=val,name=val,...`（覆盖模型里状态/延迟寄存器的 init:；多年生跨年编排用：
+        /// 携带木质池/储备作次年 init、物候清零）。例：`--init W_cane=420,C_reserve=66,ChillAccum=0`
+        #[arg(long)]
+        init: Option<String>,
+
         /// 输出轨迹 CSV
         #[arg(short, long, default_value = "sim_output.csv")]
         output: PathBuf,
@@ -354,8 +359,8 @@ fn main() {
         Commands::SexprSpec => run_sexpr_spec(),
         Commands::CheckDims { input, strict } => run_check_dims(&input, strict),
         Commands::Report { input, output, layout } => run_report(&input, &output, &layout),
-        Commands::Simulate { input, drivers, params, steps, output, dt } => {
-            run_simulate(&input, &drivers, params.as_ref(), steps, &output, dt)
+        Commands::Simulate { input, drivers, params, steps, output, dt, init } => {
+            run_simulate(&input, &drivers, params.as_ref(), steps, &output, dt, init.as_deref())
         }
         Commands::Sweep { input, drivers, param, range, sensitivity, percent, var, reduce, params, steps, output } => {
             run_sweep(&input, &drivers, param.as_deref(), range.as_deref(), sensitivity, percent, &var, &reduce, params.as_ref(), steps, &output)
@@ -456,6 +461,7 @@ fn run_simulate(
     steps: Option<usize>,
     output: &PathBuf,
     dt: Option<f64>,
+    init: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use equation_compiler::scenario::{load_drivers_csv, load_params_json};
     use equation_compiler::{parse_file, simulate, SimInput};
@@ -474,6 +480,11 @@ fn run_simulate(
     // 读参数覆盖 JSON（可选）
     if let Some(pjson) = params {
         sim_in.param_overrides = load_params_json(pjson)?;
+    }
+
+    // 状态初值覆盖 `name=val,...`（覆盖状态/延迟寄存器 init；多年生跨年编排用）
+    if let Some(s) = init {
+        sim_in.init_overrides = parse_init_overrides(s)?;
     }
 
     let out = simulate(&file, &sim_in).map_err(|e| format!("仿真失败: {e}"))?;
@@ -507,6 +518,31 @@ fn run_simulate(
         }
     }
     Ok(())
+}
+
+/// 解析状态初值覆盖 `name=val,name=val,...` → map。空串/空段忽略。
+#[cfg(feature = "cli")]
+fn parse_init_overrides(s: &str) -> Result<std::collections::HashMap<String, f64>, String> {
+    let mut m = std::collections::HashMap::new();
+    for pair in s.split(',') {
+        let pair = pair.trim();
+        if pair.is_empty() {
+            continue;
+        }
+        let (name, val) = pair
+            .split_once('=')
+            .ok_or_else(|| format!("--init 段 '{pair}' 须为 name=val 形式"))?;
+        let name = name.trim();
+        let v: f64 = val
+            .trim()
+            .parse()
+            .map_err(|_| format!("--init '{name}' 的值 '{}' 不是数值", val.trim()))?;
+        if name.is_empty() {
+            return Err(format!("--init 段 '{pair}' 变量名为空"));
+        }
+        m.insert(name.to_string(), v);
+    }
+    Ok(m)
 }
 
 /// 解析扫描区间 `a:b:n` → (起, 止, 点数)。
@@ -1502,5 +1538,18 @@ mod cli_tests {
         assert!((reduce_series(&s, "mean").unwrap() - 2.0).abs() < 1e-9);
         assert!(reduce_series(&s, "bogus").is_err());
         assert!(reduce_series(&[], "final").is_err());
+    }
+
+    #[test]
+    fn test_parse_init_overrides() {
+        let m = parse_init_overrides("W_cane=420, C_reserve=66.5 , ChillAccum=0").unwrap();
+        assert_eq!(m.len(), 3);
+        assert_eq!(m["W_cane"], 420.0);
+        assert_eq!(m["C_reserve"], 66.5);
+        assert_eq!(m["ChillAccum"], 0.0);
+        assert!(parse_init_overrides("").unwrap().is_empty()); // 空串 → 空 map
+        assert!(parse_init_overrides("W_cane").is_err()); // 缺 =
+        assert!(parse_init_overrides("W_cane=abc").is_err()); // 非数值
+        assert!(parse_init_overrides("=5").is_err()); // 名为空
     }
 }
