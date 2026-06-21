@@ -55,10 +55,20 @@ pub struct Metadata {
     /// 源代码文件（参考用）
     #[serde(default)]
     pub source_files: Vec<String>,
+
+    /// 仿真时间步长（与速率方程的时间单位一致；缺省 1.0 = 现有日步长模型，行为逐位不变）。
+    /// 状态量积分按 `X[n] = X[n-1] + rate[n]·dt`；亚日动态模型（如温室气候 ODE）设更小值
+    /// （秒/分钟级）。可被 `SimInput.dt` / CLI `--dt` 覆盖。
+    #[serde(default = "default_dt")]
+    pub dt: f64,
 }
 
 fn default_version() -> String {
     "1.0".to_string()
+}
+
+fn default_dt() -> f64 {
+    1.0
 }
 
 impl EquationFile {
@@ -154,6 +164,7 @@ mod tests {
                 description: None,
                 reference: None,
                 source_files: vec![],
+                dt: 1.0,
             },
             parameters,
             variables: Default::default(),

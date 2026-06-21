@@ -172,6 +172,7 @@ mod tests {
             description: None,
             reference: None,
             source_files: vec![],
+            dt: 1.0,
         }
     }
 

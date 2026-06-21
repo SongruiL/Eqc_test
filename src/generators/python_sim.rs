@@ -80,6 +80,8 @@ pub fn generate_python_simulator(file: &EquationFile) -> Option<String> {
     l.push("    _init = dict(_INIT); _init.update(init or {})".into());
     l.push("    traj = {}".into());
     l.push("    prev = {}".into());
+    // 时间步长（来自模型 meta.dt；状态量积分 X+=rate·dt，与引擎一致）
+    l.push(format!("    _dt = {}", fnum(file.meta.dt)));
     l.push("    for _n in range(1, steps + 1):".into());
     l.push("        DAT = _n".into());
 
@@ -109,7 +111,7 @@ pub fn generate_python_simulator(file: &EquationFile) -> Option<String> {
                     (*rate).to_string()
                 };
                 l.push(format!(
-                    "        {name} = (_init['{name}'] if _n == 1 else prev['{name}']) + {rate_ref}"
+                    "        {name} = (_init['{name}'] if _n == 1 else prev['{name}']) + {rate_ref} * _dt"
                 ));
             }
         }
@@ -174,6 +176,7 @@ mod tests {
             description: None,
             reference: None,
             source_files: vec![],
+            dt: 1.0,
         }
     }
 
@@ -217,8 +220,9 @@ mod tests {
         assert!(code.contains("_INIT = {"));
         assert!(code.contains("'X': 1.0"));
         assert!(code.contains("T = drivers['T'][_n - 1]")); // 驱动量逐日取值
-        // 积分更新：X[n] = (init 或 prev) + rate
-        assert!(code.contains("X = (_init['X'] if _n == 1 else prev['X']) + R"));
+        // 积分更新：X[n] = (init 或 prev) + rate·dt（meta.dt 缺省 1.0）
+        assert!(code.contains("_dt = 1.0"));
+        assert!(code.contains("X = (_init['X'] if _n == 1 else prev['X']) + R * _dt"));
     }
 
     #[test]

@@ -575,8 +575,9 @@ fn nary(
     }
 }
 
-/// 两个 [`Value`] 的逐元素二元运算（广播）。供仿真器向量积分等复用（如 `X = prev + rate`）。
-pub fn value_binop(a: &Value, b: &Value, f: fn(f64, f64) -> f64) -> Result<Value, EvalError> {
+/// 两个 [`Value`] 的逐元素二元运算（广播）。供仿真器向量积分等复用（如 `X = prev + rate·dt`）。
+/// `f` 取 `impl Fn` 以允许捕获变量的闭包（如步长 `dt`）。
+pub fn value_binop(a: &Value, b: &Value, f: impl Fn(f64, f64) -> f64) -> Result<Value, EvalError> {
     let args = [a.clone(), b.clone()];
     Ok(match broadcast_shape("binop", &args)? {
         Shape::Scalar => Value::Scalar(f(a.as_scalar()?, b.as_scalar()?)),

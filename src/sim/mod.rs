@@ -6,14 +6,14 @@
 //!
 //! # 计算模型
 //!
-//! 每个时间步 `n`（日步长 dt=1）按依赖拓扑序求值：
+//! 每个时间步 `n`（步长 `dt`，缺省 1 = 日步长；可经模型 `meta.dt` 或 `SimInput.dt` 设亚日步长）按依赖拓扑序求值：
 //!
 //! - **驱动量 driving**：未被任何方程产生、非跨步的输入变量，逐日从 [`SimInput::drivers`] 取值。
 //! - **参数 parameter**：来自 `parameters:` 的默认值，可被 [`SimInput::param_overrides`] 覆盖。
 //! - **延迟寄存器 prev（半状态量）**：`X[n] = src[n-1]`，首步用 `init`。在步首即可定值
 //!   （只依赖上一步），故视为「源」。
 //! - **方程辅助/速率量**：普通 `equations:` 表达式，由 [`Expr::eval`] 求值。
-//! - **积分状态量 state**：`X[n] = X[n-1] + rate[n]`，`X[-1]` 用 `init`。
+//! - **积分状态量 state**：`X[n] = X[n-1] + rate[n]·dt`，`X[-1]` 用 `init`（显式 Euler）。
 //!
 //! 所有「当前步引用」一律解析为**本步已算出的值（n）**；唯一的跨步值是
 //! ① 积分状态量自身的上一步（隐含在 `X[n]=X_prev+rate` 里）② 延迟寄存器（显式 `prev`）。
@@ -80,7 +80,7 @@ impl std::error::Error for SimError {}
 /// 仿真输入。
 #[derive(Debug, Clone, Default)]
 pub struct SimInput {
-    /// 时间步数（天数）。
+    /// 时间步数。
     pub steps: usize,
     /// 驱动量时间序列：变量名 -> 每步取值（长度须等于 `steps`）。
     pub drivers: HashMap<String, Vec<f64>>,
@@ -88,6 +88,9 @@ pub struct SimInput {
     pub param_overrides: HashMap<String, f64>,
     /// 初值覆盖：状态量/延迟寄存器名 -> 初值（覆盖变量上的 `init:`）。
     pub init_overrides: HashMap<String, f64>,
+    /// 时间步长覆盖：`None` = 用模型 `meta.dt`（缺省 1.0，= 日步长）；`Some(x)` = 强制用 x。
+    /// 状态量积分 `X[n] = X[n-1] + rate[n]·dt`。亚日动态模型（如温室气候 ODE）需小步长。
+    pub dt: Option<f64>,
 }
 
 impl SimInput {
@@ -98,6 +101,7 @@ impl SimInput {
             drivers: HashMap::new(),
             param_overrides: HashMap::new(),
             init_overrides: HashMap::new(),
+            dt: None,
         }
     }
 
@@ -239,6 +243,9 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
     // —— 1. 编译步进计划（与 eqc build 代码生成器共用，保证生成器与引擎逐步一致）——
     let plan = build_plan(file)?;
 
+    // 时间步长：SimInput.dt 覆盖 > 模型 meta.dt（缺省 1.0=日步长）。状态量积分用 X+=rate·dt。
+    let dt = input.dt.unwrap_or(file.meta.dt);
+
     // —— 2. 校验驱动量：每个驱动量须有长度=steps 的时间序列 ——
     for &dn in &plan.drivers {
         match input.drivers.get(dn) {
@@ -319,7 +326,8 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
                     let rate_val = env
                         .get(rate)
                         .ok_or_else(|| SimError::Unresolved(rate.to_string()))?;
-                    let x = value_binop(&prev_val, &rate_val, |a, b| a + b)
+                    // X[n] = X[n-1] + rate[n]·dt（dt=1 时与旧行为逐位一致）
+                    let x = value_binop(&prev_val, &rate_val, |a, b| a + b * dt)
                         .map_err(|err| SimError::Eval { var: name.to_string(), err })?;
                     env.put(name, x);
                 }
@@ -483,6 +491,42 @@ equations:
         // dCT = CT[n] - CT[n-1]：首步 CT_prev=init0 → 10-0=10；之后 20、30
         assert_eq!(out.series("dCT").unwrap(), &[10.0, 20.0, 30.0]);
         assert_eq!(out.final_value("CT"), Some(60.0));
+    }
+
+    /// 亚日步长 dt：状态量积分 X[n]=X[n-1]+rate[n]·dt。dt=0.5 → 增量减半；dt=1 与旧行为一致。
+    #[test]
+    fn test_sub_day_timestep() {
+        let yaml = r#"
+meta: { id: DT, model: DT, name_cn: 步长测试 }
+variables:
+  T:  { type: input, class: driving }
+  CT: { type: output, class: state, init: 0.0, rate: T }
+"#;
+        let (_d, file) = write_model(yaml);
+        // dt=1（默认）：CT = 10, 30, 60
+        let out1 = simulate(&file, &SimInput::new(3).driver("T", vec![10.0, 20.0, 30.0])).unwrap();
+        assert_eq!(out1.series("CT").unwrap(), &[10.0, 30.0, 60.0]);
+        // dt=0.5（SimInput 覆盖）：每步增量减半 → CT = 5, 15, 30
+        let mut inp = SimInput::new(3).driver("T", vec![10.0, 20.0, 30.0]);
+        inp.dt = Some(0.5);
+        let out2 = simulate(&file, &inp).unwrap();
+        assert_eq!(out2.series("CT").unwrap(), &[5.0, 15.0, 30.0]);
+    }
+
+    /// 模型 `meta.dt` 作默认步长（`SimInput.dt=None` 时生效）；缺省 1.0。
+    #[test]
+    fn test_meta_dt_default() {
+        let yaml = r#"
+meta: { id: DT2, model: DT2, name_cn: meta步长, dt: 0.25 }
+variables:
+  T:  { type: input, class: driving }
+  CT: { type: output, class: state, init: 0.0, rate: T }
+"#;
+        let (_d, file) = write_model(yaml);
+        assert_eq!(file.meta.dt, 0.25, "meta.dt 应被解析");
+        // dt=0.25：CT = 4·0.25=1，+8·0.25=3
+        let out = simulate(&file, &SimInput::new(2).driver("T", vec![4.0, 8.0])).unwrap();
+        assert_eq!(out.series("CT").unwrap(), &[1.0, 3.0]);
     }
 
     /// V2：向量参数 + 向量状态量逐元素积分；输出展平成 name[i]。

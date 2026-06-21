@@ -172,6 +172,10 @@ enum Commands {
         #[arg(short, long)]
         steps: Option<usize>,
 
+        /// 时间步长 dt（覆盖模型 meta.dt；缺省用 meta.dt，日步长模型=1）。亚日动态模型（温室气候）设小步长
+        #[arg(long)]
+        dt: Option<f64>,
+
         /// 输出轨迹 CSV
         #[arg(short, long, default_value = "sim_output.csv")]
         output: PathBuf,
@@ -350,8 +354,8 @@ fn main() {
         Commands::SexprSpec => run_sexpr_spec(),
         Commands::CheckDims { input, strict } => run_check_dims(&input, strict),
         Commands::Report { input, output, layout } => run_report(&input, &output, &layout),
-        Commands::Simulate { input, drivers, params, steps, output } => {
-            run_simulate(&input, &drivers, params.as_ref(), steps, &output)
+        Commands::Simulate { input, drivers, params, steps, output, dt } => {
+            run_simulate(&input, &drivers, params.as_ref(), steps, &output, dt)
         }
         Commands::Sweep { input, drivers, param, range, sensitivity, percent, var, reduce, params, steps, output } => {
             run_sweep(&input, &drivers, param.as_deref(), range.as_deref(), sensitivity, percent, &var, &reduce, params.as_ref(), steps, &output)
@@ -451,6 +455,7 @@ fn run_simulate(
     params: Option<&PathBuf>,
     steps: Option<usize>,
     output: &PathBuf,
+    dt: Option<f64>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use equation_compiler::scenario::{load_drivers_csv, load_params_json};
     use equation_compiler::{parse_file, simulate, SimInput};
@@ -464,6 +469,7 @@ fn run_simulate(
 
     let mut sim_in = SimInput::new(steps);
     sim_in.drivers = driver_map;
+    sim_in.dt = dt; // None → 用模型 meta.dt
 
     // 读参数覆盖 JSON（可选）
     if let Some(pjson) = params {
