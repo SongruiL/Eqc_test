@@ -166,6 +166,7 @@ mod tests {
                 unit: Some("degC".into()),
                 bounds: None,
                 optimizable: true,
+                management: false,
                 description: None,
             },
         );

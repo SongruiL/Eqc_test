@@ -52,6 +52,9 @@ pub struct ParamJson {
     /// 前端据此区分：向量参数不可被标量覆盖（情景面板里跳过）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub values: Option<Vec<f64>>,
+    /// 是否为管理输入（逐处理区可设；园区「本区管理」编辑器据此列出）。false 省略。
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub management: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -120,6 +123,7 @@ fn module_json(f: &EquationFile) -> ModuleJson {
             default: p.default,
             unit: p.unit.clone(),
             values: p.values.clone(),
+            management: p.management,
         })
         .collect();
 

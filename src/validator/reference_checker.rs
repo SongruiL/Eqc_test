@@ -191,6 +191,7 @@ mod tests {
                 unit: None,
                 bounds: None,
                 optimizable: false,
+                management: false,
                 description: None,
             },
         );

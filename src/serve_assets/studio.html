@@ -119,6 +119,14 @@
   .advice-lead { font-size:14px; margin-bottom:6px; }
   .advice-list { margin:0 0 8px; padding-left:22px; }
   .advice-list li { margin:5px 0; font-size:14px; }
+  /* 全局处理区栏 + 本区管理编辑器 */
+  .zone-bar { display:flex; align-items:center; gap:10px; margin:14px 14px 0; padding:8px 12px;
+    background:#eef2ff; border:1px solid #dbe3ff; border-radius:10px; }
+  .zone-bar .zone-lab { font-weight:600; color:var(--ink); }
+  .mgmt-row { display:flex; align-items:center; gap:10px; margin:6px 0; }
+  .mgmt-row .m-lab { flex:0 0 160px; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .mgmt-row input { width:120px; font-size:13px; padding:2px 6px; border:1px solid var(--line); border-radius:5px; }
+  .mgmt-row .m-tag { font-size:11px; color:var(--sub); }
 </style>
 </head>
 <body>
@@ -134,6 +142,23 @@
 
 <!-- 园区/简明视图：看懂输出（模型怎么说）+ 田间数据录入 + 用本区数据标定 -->
 <div id="parkView" hidden>
+  <div class="zone-bar">
+    <span class="zone-lab">处理区</span>
+    <input id="zoneInput" class="zone-in" value="1" title="英文/数字；6 个处理区可用 1..6 或名称">
+    <button class="btn" id="zoneLoad">切换 / 载入</button>
+    <span id="zoneInfo" class="scn-note"></span>
+  </div>
+
+  <section class="panel park-panel" id="mgmtPanel">
+    <h2>本区管理（按处理区设置）
+      <span class="tools"><span id="mgmtStatus" class="scn-note"></span></span>
+    </h2>
+    <div class="body">
+      <div id="mgmtEditor"></div>
+      <div class="hint">设置本处理区的灌溉/施氮/CO₂/EC 等管理量；自动保存到该区，喂入「模型怎么说」与「用本区数据标定」。留空=用模型默认。</div>
+    </div>
+  </section>
+
   <section class="panel park-panel" id="understandPanel">
     <h2>模型怎么说 <span id="calBadge"></span>
       <span class="tools"><button class="btn" id="refreshUnderstand">刷新</button></span>
@@ -146,14 +171,7 @@
   </section>
 
   <section class="panel park-panel">
-    <h2>田间数据录入
-      <span class="tools">
-        <label class="zone-lab">处理区
-          <input id="zoneInput" class="zone-in" value="1" title="英文/数字；6 个处理区可用 1..6 或名称">
-        </label>
-        <button class="btn" id="zoneLoad">载入</button>
-      </span>
-    </h2>
+    <h2>田间数据录入 <span class="scn-note" style="font-weight:400">（当前处理区，见顶部）</span></h2>
     <div class="body">
       <div class="hint" id="parkHint">列由模型「可测」标志自动生成（表头=大白话名+单位）；空格=那天没测。切换处理区会载入已存数据。保存即写入该区 observed CSV（标定用）。</div>
       <div class="grid-wrap"><table class="entry" id="entryTable"></table></div>
@@ -259,8 +277,7 @@ async function loadModel(){
     buildVarList(mod.variables || []);
     buildScenario(mod.parameters || [], mod.variables || []);
     buildEntryHead();            // 园区录入网格列（按模型 measurable）
-    loadZone();                  // 载入当前处理区已存数据
-    renderUnderstand();          // 看懂卡：标定徽章 + 头条输出 + 胁迫红绿灯
+    onZoneChange();              // 载入本区：管理设置 + 观测网格 + 看懂卡
     setBadge('已连接', true);
   } catch(e){ setBadge('加载模型失败', false); }
 }
@@ -784,8 +801,64 @@ async function saveObs(){
 }
 document.getElementById('addRow').addEventListener('click', ()=>addEntryRow());
 document.getElementById('saveObs').addEventListener('click', saveObs);
-document.getElementById('zoneLoad').addEventListener('click', loadZone);
-document.getElementById('zoneInput').addEventListener('change', loadZone);
+
+// —— 本区管理：每处理区的灌溉/施氮/CO₂/EC 设置（管理参数→OVR、控制变量→DOVR，存 <zone>.json）——
+function mgmtInputs(){
+  const mod=(MODEL&&MODEL.modules&&MODEL.modules[0])||{};
+  const out=[];
+  (mod.parameters||[]).forEach(p=>{ if(p.management && !p.values) out.push({name:p.name, label:(p.name_cn||p.name), unit:p.unit||'', def:p.default, kind:'param'}); });
+  (mod.variables||[]).forEach(v=>{ if(v.class==='control') out.push({name:v.name, label:(v.label||v.description||v.name), unit:v.unit||'', def:null, kind:'driver'}); });
+  return out;
+}
+function buildMgmtEditor(saved){
+  const box=document.getElementById('mgmtEditor'); if(!box) return; box.innerHTML='';
+  const items=mgmtInputs();
+  if(!items.length){ box.innerHTML='<span class="scn-note">（模型未标注管理输入：给参数加 management 标志、或用 control 类变量）</span>'; return; }
+  saved=saved||{params:{},drivers:{}};
+  const sp=saved.params||{}, sd=saved.drivers||{};
+  items.forEach(it=>{
+    const cur = it.kind==='param' ? (sp[it.name]!=null?sp[it.name]:it.def) : (sd[it.name]!=null?sd[it.name]:'');
+    const row=document.createElement('div'); row.className='mgmt-row';
+    row.innerHTML='<span class="m-lab" title="'+esc(it.name)+'">'+esc(it.label)+(it.unit?(' · '+esc(it.unit)):'')+'</span>'
+      +'<input type="number" step="any" value="'+(cur===''?'':cur)+'" placeholder="默认">'
+      +'<span class="m-tag">'+(it.kind==='param'?'参数':'控制')+'</span>';
+    const inp=row.querySelector('input');
+    inp.addEventListener('input', ()=>{
+      const v=inp.value.trim();
+      if(it.kind==='param'){ if(v===''||Number(v)===it.def) delete OVR[it.name]; else OVR[it.name]=Number(v); }
+      else { if(v==='') delete DOVR[it.name]; else DOVR[it.name]=Number(v); }
+      scheduleZoneSave(); scheduleUnderstand();
+    });
+    box.appendChild(row);
+  });
+}
+let _zoneSaveTimer=null, _undTimer=null;
+function scheduleZoneSave(){ clearTimeout(_zoneSaveTimer); _zoneSaveTimer=setTimeout(saveZoneMgmt, 400); }
+function scheduleUnderstand(){ clearTimeout(_undTimer); _undTimer=setTimeout(renderUnderstand, 250); }
+async function saveZoneMgmt(){
+  const params={}, drivers={};
+  mgmtInputs().forEach(it=>{ if(it.kind==='param'){ if(it.name in OVR) params[it.name]=OVR[it.name]; } else { if(it.name in DOVR) drivers[it.name]=DOVR[it.name]; } });
+  try{
+    const r=await fetch('/api/zone?zone='+encodeURIComponent(curZone()),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({params,drivers})});
+    const j=await r.json(); const st=document.getElementById('mgmtStatus');
+    if(st) st.textContent = j.ok?('已保存本区管理 ✓（'+(j.params+j.drivers)+' 项）'):(j.error||'');
+  }catch(e){}
+}
+// 切换处理区：载入本区管理（→OVR/DOVR + 编辑器）+ 观测网格 + 看懂卡
+async function onZoneChange(){
+  // 先清掉当前管理项的覆盖（避免上个区的残留），再载入本区
+  mgmtInputs().forEach(it=>{ if(it.kind==='param') delete OVR[it.name]; else delete DOVR[it.name]; });
+  let saved={params:{},drivers:{}};
+  try{ saved=await (await fetch('/api/zone?zone='+encodeURIComponent(curZone())+'&_='+Date.now(),{cache:'no-store'})).json(); }catch(e){}
+  if(saved.params) Object.keys(saved.params).forEach(k=>OVR[k]=saved.params[k]);
+  if(saved.drivers) Object.keys(saved.drivers).forEach(k=>DOVR[k]=saved.drivers[k]);
+  buildMgmtEditor(saved);
+  loadZone();
+  renderUnderstand();
+  const zi=document.getElementById('zoneInfo'); if(zi) zi.textContent='当前：'+curZone()+(saved.has_observed?'（已有观测）':'');
+}
+document.getElementById('zoneLoad').addEventListener('click', onZoneChange);
+document.getElementById('zoneInput').addEventListener('change', onZoneChange);
 
 // —— 看懂卡：标定徽章 + 头条输出 + 胁迫红绿灯（全部取自 /api/model 契约 + /api/simulate）——
 function calBadgeHtml(){

@@ -199,6 +199,15 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
             },
             _ => ("405 Method Not Allowed", "text/plain; charset=utf-8", "Method Not Allowed".to_string()),
         },
+        // 每处理区的管理设置（灌溉/施氮/EC/CO₂…），存 <zone>.json；标定时叠加该区管理。
+        "/api/zone" => match method {
+            "GET" => ("200 OK", "application/json; charset=utf-8", read_zone(ctx, query)),
+            "POST" => match write_zone(ctx, query, &req_body) {
+                Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
+                Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
+            },
+            _ => ("405 Method Not Allowed", "text/plain; charset=utf-8", "Method Not Allowed".to_string()),
+        },
         _ => ("404 Not Found", "text/plain; charset=utf-8", "Not Found".to_string()),
     };
 
@@ -416,11 +425,12 @@ fn run_calibrate(ctx: &Ctx, query: &str) -> Result<String, String> {
         return Err("标定暂为单目标（误差最小化）：spec 请用单个 objective".into());
     }
     let files = load_files(&ctx.path)?;
-    let file = files.first().ok_or_else(|| "无模型".to_string())?;
+    // 克隆模型：本区管理通过改管理参数 default 注入 → 标定按本区处理仿真。
+    let mut file = files.first().ok_or_else(|| "无模型".to_string())?.clone();
     let spec_dir = spec_path.parent().unwrap_or_else(|| Path::new("."));
 
     // 同期天气：spec 的 environment（相对 spec 目录）优先，否则启动级 --drivers
-    let (steps, driver_map) = match &problem.environment {
+    let (steps, mut driver_map) = match &problem.environment {
         Some(env) => crate::scenario::load_drivers_csv(&spec_dir.join(env))?,
         None => match &ctx.drivers {
             Some((rows, map)) => (*rows, map.clone()),
@@ -429,6 +439,18 @@ fn run_calibrate(ctx: &Ctx, query: &str) -> Result<String, String> {
             }
         },
     };
+
+    // 叠加本区管理：params 改模型参数 default，drivers 设为常数列（CO₂ 等控制量）。
+    // 这样 calibrate 在「本区处理」下仿真——拿低氮区数据就用低氮管理拟合（多处理区标定的关键）。
+    let (zparams, zdrivers) = read_zone_management(ctx, &zone);
+    for (name, val) in &zparams {
+        if let Some(p) = file.parameters.get_mut(name) {
+            p.default = *val;
+        }
+    }
+    for (name, val) in &zdrivers {
+        driver_map.insert(name.clone(), vec![*val; steps]);
+    }
 
     // 实测数据：本处理区录入的 observed CSV 优先（录入→标定闭环），否则 spec 的 observed
     let zone_csv = ctx.data_dir.join(format!("{zone}.csv"));
@@ -447,8 +469,8 @@ fn run_calibrate(ctx: &Ctx, query: &str) -> Result<String, String> {
     let observed_data = crate::scenario::load_observed_csv(&obs_path)?;
     let n_obs: usize = observed_data.values().map(|v| v.len()).sum();
 
-    let res = optimize::run_obs(file, &problem, &driver_map, steps, &observed_data)?;
-    let mut j = optimize::result_json(file, &problem, &res);
+    let res = optimize::run_obs(&file, &problem, &driver_map, steps, &observed_data)?;
+    let mut j = optimize::result_json(&file, &problem, &res);
     if let Some(obj) = j.as_object_mut() {
         obj.insert(
             "convergence_svg".to_string(),
@@ -744,6 +766,68 @@ fn build_observed_csv(
     Ok((csv, nrows))
 }
 
+/// 从 JSON 对象抽取 `{name: 有限数}` 到 `dst`。
+fn extract_scalar_map(v: Option<&serde_json::Value>, dst: &mut HashMap<String, f64>) {
+    if let Some(obj) = v.and_then(|x| x.as_object()) {
+        for (k, val) in obj {
+            if let Some(f) = val.as_f64() {
+                if f.is_finite() {
+                    dst.insert(k.clone(), f);
+                }
+            }
+        }
+    }
+}
+
+/// 读某处理区的管理设置 `<zone>.json`（`{params:{}, drivers:{}}`）。缺/坏 → 空。
+/// `params` = 管理**参数**覆盖（改模型参数）；`drivers` = **控制量**常数（如 CO₂）。
+fn read_zone_management(ctx: &Ctx, zone: &str) -> (HashMap<String, f64>, HashMap<String, f64>) {
+    let mut params = HashMap::new();
+    let mut drivers = HashMap::new();
+    if let Ok(txt) = std::fs::read_to_string(ctx.data_dir.join(format!("{zone}.json"))) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) {
+            extract_scalar_map(v.get("params"), &mut params);
+            extract_scalar_map(v.get("drivers"), &mut drivers);
+        }
+    }
+    (params, drivers)
+}
+
+/// `GET /api/zone?zone=A` → 该区管理设置 + 是否已有观测。
+fn read_zone(ctx: &Ctx, query: &str) -> String {
+    let zone = parse_zone(query);
+    let (params, drivers) = read_zone_management(ctx, &zone);
+    let has_obs = ctx.data_dir.join(format!("{zone}.csv")).exists();
+    let pj: serde_json::Map<String, serde_json::Value> =
+        params.into_iter().map(|(k, v)| (k, serde_json::json!(v))).collect();
+    let dj: serde_json::Map<String, serde_json::Value> =
+        drivers.into_iter().map(|(k, v)| (k, serde_json::json!(v))).collect();
+    serde_json::json!({ "zone": zone, "params": pj, "drivers": dj, "has_observed": has_obs }).to_string()
+}
+
+/// `POST /api/zone?zone=A` body `{params:{}, drivers:{}}` → 写 `<zone>.json`（原子替换）。
+fn write_zone(ctx: &Ctx, query: &str, body: &[u8]) -> Result<String, String> {
+    let zone = parse_zone(query);
+    let v: serde_json::Value =
+        serde_json::from_slice(body).map_err(|e| format!("请求体不是合法 JSON: {e}"))?;
+    let mut params = HashMap::new();
+    let mut drivers = HashMap::new();
+    extract_scalar_map(v.get("params"), &mut params);
+    extract_scalar_map(v.get("drivers"), &mut drivers);
+    let pj: serde_json::Map<String, serde_json::Value> =
+        params.iter().map(|(k, v)| (k.clone(), serde_json::json!(v))).collect();
+    let dj: serde_json::Map<String, serde_json::Value> =
+        drivers.iter().map(|(k, v)| (k.clone(), serde_json::json!(v))).collect();
+    let out = serde_json::json!({ "params": pj, "drivers": dj });
+    std::fs::create_dir_all(&ctx.data_dir).map_err(|e| format!("建目录失败: {e}"))?;
+    let path = ctx.data_dir.join(format!("{zone}.json"));
+    let tmp = ctx.data_dir.join(format!(".{zone}.json.tmp"));
+    std::fs::write(&tmp, serde_json::to_string_pretty(&out).unwrap_or_default())
+        .map_err(|e| format!("写临时文件失败: {e}"))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("替换文件失败: {e}"))?;
+    Ok(serde_json::json!({ "ok": true, "zone": zone, "params": params.len(), "drivers": drivers.len() }).to_string())
+}
+
 /// 监听指纹：单文件取其 mtime；目录取所有 `.eq.yaml` 的最大 mtime。
 fn fingerprint(path: &Path) -> Option<SystemTime> {
     if path.is_file() {
@@ -810,6 +894,10 @@ mod tests {
         // 管理建议（大白话优化）
         assert!(STUDIO_HTML.contains("adviceRun"));
         assert!(STUDIO_HTML.contains("runAdvice"));
+        // 多处理区：全局处理区栏 + 本区管理编辑器 + zone 端点
+        assert!(STUDIO_HTML.contains("zone-bar"));
+        assert!(STUDIO_HTML.contains("mgmtEditor"));
+        assert!(STUDIO_HTML.contains("/api/zone?zone="));
     }
 
     #[test]

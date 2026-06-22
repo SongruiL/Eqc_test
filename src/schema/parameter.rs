@@ -39,6 +39,13 @@ pub struct Parameter {
     #[serde(default = "default_true")]
     pub optimizable: bool,
 
+    /// 是否为**管理输入**（园区按处理区设置的、可逐区不同的管理量，如灌溉/施氮/EC）。
+    ///
+    /// 多处理区编排用：园区视图「本区管理」编辑器据此列出可逐区设置的参数；存入 `<zone>.json`。
+    /// （`control` 类**变量**——如 CO₂——已天然是管理决策输入，由 class 识别，无需本标志。）
+    #[serde(default)]
+    pub management: bool,
+
     /// 描述
     #[serde(default)]
     pub description: Option<String>,
