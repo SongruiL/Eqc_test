@@ -715,6 +715,10 @@ mod tests {
         assert!(STUDIO_HTML.contains("optRun"));
         assert!(STUDIO_HTML.contains("/api/optimize?spec="));
         assert!(STUDIO_HTML.contains("renderParetoResult"));
+        // 园区/简明视图：视图切换 + 录入网格 + 实测数据端点
+        assert!(STUDIO_HTML.contains("modeSeg"));
+        assert!(STUDIO_HTML.contains("entryTable"));
+        assert!(STUDIO_HTML.contains("/api/observations?zone="));
     }
 
     #[test]
