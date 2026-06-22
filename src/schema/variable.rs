@@ -159,6 +159,13 @@ pub struct Variable {
     #[serde(default)]
     pub measurable: bool,
 
+    /// 胁迫/健康信号标志（看懂输出的「红绿灯」用）。取值：
+    /// - `"factor"`：胁迫因子，0–1，**1=好**（不胁迫），如 `f_N/f_W/f_EC`，看最差=全季最小值；
+    /// - `"risk"`：失调风险，0–1，**0=好**（安全），如 `tipburn_risk`，看最差=全季最大值。
+    /// 前端据此把数值翻成 充足/偏紧/缺乏 或 安全/注意/高风险 的红绿灯；缺省 None=非健康信号。
+    #[serde(default)]
+    pub stress_factor: Option<String>,
+
     /// 来源（仅 input 类型）：格式 "MODULE.variable"
     #[serde(default)]
     pub source: Option<String>,
@@ -265,6 +272,7 @@ mod tests {
             description: None,
             label: None,
             measurable: false,
+            stress_factor: None,
             source: None,
             class: None,
             init: None,

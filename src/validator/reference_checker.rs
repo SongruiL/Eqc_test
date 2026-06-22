@@ -173,6 +173,7 @@ mod tests {
             reference: None,
             source_files: vec![],
             dt: 1.0,
+            calibration: None,
         }
     }
 
@@ -204,6 +205,7 @@ mod tests {
                 description: None,
                 label: None,
                 measurable: false,
+                stress_factor: None,
                 source: None,
                 class: None,
                 init: None,
@@ -328,6 +330,7 @@ mod tests {
                 description: None,
                 label: None,
                 measurable: false,
+                stress_factor: None,
                 source: None,
                 class: Some(crate::schema::VarClass::State),
                 init: Some(0.0),

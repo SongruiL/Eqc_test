@@ -99,6 +99,22 @@
   table.entry input:focus { border-color:var(--accent); outline:none; background:#fff; }
   table.entry input.dat { width:60px; font-weight:600; text-align:center; }
   .entry-bar { margin-top:10px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  /* 看懂卡：标定徽章 + 头条输出 + 胁迫红绿灯 */
+  .badge-cal { font-size:12px; font-weight:600; padding:2px 10px; border-radius:12px; margin-left:8px; }
+  .badge-cal.ok { background:#dcfce7; color:#166534; }
+  .badge-cal.warn { background:#fef9c3; color:#854d0e; }
+  .headline { display:flex; flex-wrap:wrap; gap:12px 22px; }
+  .hl-item { min-width:110px; }
+  .hl-val { font-size:21px; font-weight:700; color:var(--ink); line-height:1.2; }
+  .hl-unit { font-size:12px; font-weight:400; color:var(--sub); }
+  .hl-lab { font-size:12px; color:var(--sub); }
+  .stress-lights { display:flex; flex-wrap:wrap; gap:8px 12px; margin-top:14px; }
+  .light { display:inline-flex; align-items:center; gap:6px; font-size:13px; padding:3px 11px; border-radius:14px; border:1px solid var(--line); }
+  .light .dot { width:9px; height:9px; border-radius:50%; display:inline-block; }
+  .light.ok { background:#f0fdf4; } .light.ok .dot { background:#16a34a; }
+  .light.warn { background:#fffbeb; } .light.warn .dot { background:#f59e0b; }
+  .light.bad { background:#fef2f2; } .light.bad .dot { background:#dc2626; }
+  .light small { color:var(--sub); }
 </style>
 </head>
 <body>
@@ -112,8 +128,19 @@
   <span class="badge" id="badge">连接中…</span>
 </header>
 
-<!-- 园区/简明视图：田间数据录入（看懂输出待 Phase 2 补） -->
+<!-- 园区/简明视图：看懂输出（模型怎么说）+ 田间数据录入 + 用本区数据标定 -->
 <div id="parkView" hidden>
+  <section class="panel park-panel" id="understandPanel">
+    <h2>模型怎么说 <span id="calBadge"></span>
+      <span class="tools"><button class="btn" id="refreshUnderstand">刷新</button></span>
+    </h2>
+    <div class="body">
+      <div class="headline" id="headline"></div>
+      <div class="stress-lights" id="stressLights"></div>
+      <div class="hint" id="understandHint"></div>
+    </div>
+  </section>
+
   <section class="panel park-panel">
     <h2>田间数据录入
       <span class="tools">
@@ -216,6 +243,7 @@ async function loadModel(){
     buildScenario(mod.parameters || [], mod.variables || []);
     buildEntryHead();            // 园区录入网格列（按模型 measurable）
     loadZone();                  // 载入当前处理区已存数据
+    renderUnderstand();          // 看懂卡：标定徽章 + 头条输出 + 胁迫红绿灯
     setBadge('已连接', true);
   } catch(e){ setBadge('加载模型失败', false); }
 }
@@ -741,6 +769,42 @@ document.getElementById('addRow').addEventListener('click', ()=>addEntryRow());
 document.getElementById('saveObs').addEventListener('click', saveObs);
 document.getElementById('zoneLoad').addEventListener('click', loadZone);
 document.getElementById('zoneInput').addEventListener('change', loadZone);
+
+// —— 看懂卡：标定徽章 + 头条输出 + 胁迫红绿灯（全部取自 /api/model 契约 + /api/simulate）——
+function calBadgeHtml(){
+  const mod=(MODEL&&MODEL.modules&&MODEL.modules[0])||{};
+  const c=mod.calibration;
+  if(c&&c.calibrated) return '<span class="badge-cal ok">✓ 已标定'+(c.note?(' · '+esc(c.note)):'')+'</span>';
+  const note=(c&&c.note)?c.note:'参数为占位值，结果仅供方向参考';
+  return '<span class="badge-cal warn">⚠ 未标定 · '+esc(note)+'</span>';
+}
+async function renderUnderstand(){
+  const badge=document.getElementById('calBadge'); if(badge) badge.innerHTML=calBadgeHtml();
+  const hl=document.getElementById('headline'), sl=document.getElementById('stressLights'), hint=document.getElementById('understandHint');
+  if(!hl) return;
+  hl.innerHTML=''; sl.innerHTML=''; hint.textContent='正在跑当前情景仿真…';
+  let j;
+  try{ j=await (await fetch('/api/simulate?_='+Date.now(),{cache:'no-store'})).json(); }
+  catch(e){ hint.innerHTML='<span class="err">无法仿真</span>'; return; }
+  if(j.error||!j.series){ hint.textContent='提示：'+(j.error||'需要启动时加 --drivers 才能预测整季'); return; }
+  const series=j.series, mod=(MODEL.modules&&MODEL.modules[0])||{}, vars=mod.variables||[];
+  // 头条：measurable 输出（排除胁迫信号，它们走红绿灯）的整季末预测值
+  let head=vars.filter(v=>v.measurable&&v.var_type==='output'&&!v.stress_factor);
+  if(!head.length) head=vars.filter(v=>v.var_type==='output'&&!v.stress_factor);
+  head.forEach(v=>{ const s=series[v.name]; if(!s||!s.length) return;
+    const val=s[s.length-1];
+    hl.innerHTML+='<div class="hl-item"><div class="hl-val">'+fmtNum(val)+' <span class="hl-unit">'+esc(v.unit||'')+'</span></div><div class="hl-lab">'+esc(v.label||v.description||v.name)+'</div></div>'; });
+  // 胁迫红绿灯：factor 看全季最小值（1=好），risk 看全季最大值（0=好）
+  const stress=vars.filter(v=>v.stress_factor);
+  stress.forEach(v=>{ const s=series[v.name]; if(!s||!s.length) return;
+    let worst,light,txt;
+    if(v.stress_factor==='risk'){ worst=Math.max.apply(null,s); if(worst<=0.1){light='ok';txt='安全';}else if(worst<=0.4){light='warn';txt='注意';}else{light='bad';txt='高风险';} }
+    else { worst=Math.min.apply(null,s); if(worst>=0.9){light='ok';txt='充足';}else if(worst>=0.6){light='warn';txt='偏紧';}else{light='bad';txt='缺乏';} }
+    sl.innerHTML+='<div class="light '+light+'"><span class="dot"></span>'+esc(v.label||v.name)+'：'+txt+' <small>('+fmtNum(worst)+')</small></div>'; });
+  if(!stress.length) sl.innerHTML='<span class="scn-note">（模型未标注胁迫信号）</span>';
+  hint.textContent='基于当前情景整季仿真'+(j.steps?('（'+j.steps+' 天）'):'')+'；红绿灯取全季最差值。未标定时数值仅供方向参考。';
+}
+document.getElementById('refreshUnderstand').addEventListener('click', renderUnderstand);
 
 // —— 用田间数据标定（接 eqc calibrate；本处理区录入的数据作 observed）——
 function paramLabel(name){

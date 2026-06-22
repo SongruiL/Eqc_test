@@ -335,6 +335,7 @@ mod tests {
                 reference: None,
                 source_files: vec![],
                 dt: 1.0,
+                calibration: None,
             },
             parameters,
             variables: Default::default(),

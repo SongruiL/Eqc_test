@@ -33,6 +33,9 @@ pub struct ModuleJson {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reference: Option<String>,
+    /// 标定状态（看懂输出的可信度徽章）；未声明则省略，前端视为未标定。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub calibration: Option<crate::schema::Calibration>,
     pub parameters: Vec<ParamJson>,
     pub variables: Vec<VarJson>,
     pub equations: Vec<EqJson>,
@@ -70,6 +73,9 @@ pub struct VarJson {
     /// 是否可田间测量（录入网格列、标定观测对象）；false 时省略以保持契约干净。
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub measurable: bool,
+    /// 胁迫/健康信号（"factor" 1=好 / "risk" 0=好）；前端据此画红绿灯。非信号则省略。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stress_factor: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub init: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -133,6 +139,7 @@ fn module_json(f: &EquationFile) -> ModuleJson {
                 description: v.description.clone(),
                 label: v.label.clone(),
                 measurable: v.measurable,
+                stress_factor: v.stress_factor.clone(),
                 init: v.init,
                 rate: v.rate.clone(),
                 prev: v.prev.clone(),
@@ -165,6 +172,7 @@ fn module_json(f: &EquationFile) -> ModuleJson {
         name_en: f.meta.name_en.clone(),
         description: f.meta.description.clone(),
         reference: f.meta.reference.clone(),
+        calibration: f.meta.calibration.clone(),
         parameters,
         variables,
         equations,
@@ -195,6 +203,7 @@ mod tests {
             description: Some("累积干物质".into()),
             label: Some("总干物质".into()),
             measurable: true,
+            stress_factor: None,
             source: None,
             class: Some(crate::schema::VarClass::State),
             init: Some(19.9),
@@ -218,6 +227,7 @@ mod tests {
                 reference: None,
                 source_files: vec![],
                 dt: 1.0,
+                calibration: None,
             },
             parameters: Default::default(),
             variables,

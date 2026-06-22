@@ -803,6 +803,10 @@ mod tests {
         assert!(STUDIO_HTML.contains("/api/observations?zone="));
         assert!(STUDIO_HTML.contains("calibRun"));
         assert!(STUDIO_HTML.contains("/api/calibrate?spec="));
+        // 看懂卡：标定徽章 + 头条 + 胁迫红绿灯
+        assert!(STUDIO_HTML.contains("calBadge"));
+        assert!(STUDIO_HTML.contains("renderUnderstand"));
+        assert!(STUDIO_HTML.contains("stress-lights"));
     }
 
     #[test]

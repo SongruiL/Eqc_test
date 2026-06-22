@@ -61,6 +61,29 @@ pub struct Metadata {
     /// （秒/分钟级）。可被 `SimInput.dt` / CLI `--dt` 覆盖。
     #[serde(default = "default_dt")]
     pub dt: f64,
+
+    /// 标定状态（看懂输出的「可信度徽章」用）。缺省 None = 视为未标定。
+    #[serde(default)]
+    pub calibration: Option<Calibration>,
+}
+
+/// 模型标定状态：诚实告知非数学用户「此结果可不可信」。
+///
+/// 未标定 = 参数为占位/文献值（合成情景），结果**仅供方向参考**；
+/// 已标定 = 用田间实测反推过参数，量级可信。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Calibration {
+    /// 是否已用实测数据标定过。
+    #[serde(default)]
+    pub calibrated: bool,
+
+    /// 说明（如"全部参数为占位值，待云南 2026-07 数据标定"或"已用一区数据标定 LUE/SLA"）。
+    #[serde(default)]
+    pub note: Option<String>,
+
+    /// 标定日期（可选，ISO 如 2026-07-15）。
+    #[serde(default)]
+    pub date: Option<String>,
 }
 
 fn default_version() -> String {
@@ -165,6 +188,7 @@ mod tests {
                 reference: None,
                 source_files: vec![],
                 dt: 1.0,
+                calibration: None,
             },
             parameters,
             variables: Default::default(),

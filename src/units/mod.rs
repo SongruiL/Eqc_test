@@ -837,6 +837,7 @@ mod tests {
                 description: None,
                 label: None,
                 measurable: false,
+                stress_factor: None,
                 source: None,
                 class: None,
                 init: None,
@@ -873,6 +874,7 @@ mod tests {
                 reference: None,
                 source_files: vec![],
                 dt: 1.0,
+                calibration: None,
             },
             parameters: Default::default(),
             variables,
@@ -948,6 +950,7 @@ mod tests {
                 description: None,
                 label: None,
                 measurable: false,
+                stress_factor: None,
                 source: None,
                 class: None,
                 init: None,
@@ -963,6 +966,7 @@ mod tests {
                 description: None,
                 label: None,
                 measurable: false,
+                stress_factor: None,
                 source: Some(src.to_string()),
                 class: None,
                 init: None,
@@ -981,6 +985,7 @@ mod tests {
                 reference: None,
                 source_files: vec![],
                 dt: 1.0,
+                calibration: None,
             }
         }
 
