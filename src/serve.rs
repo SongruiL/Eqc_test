@@ -33,15 +33,49 @@ use crate::sim::{simulate, SimInput, SimOutput};
 /// 打包进二进制的 Studio 前端页面（零构建步骤；以后可换成真正的 `frontend/` 构建产物）。
 const STUDIO_HTML: &str = include_str!("serve_assets/studio.html");
 
-/// 服务上下文：模型路径 + 预加载的情景数据 + 实测数据目录 + 版本号。
-struct Ctx {
+/// 工作区清单（多模型，免重启切模型）：`eqc serve eqc-workspace.yaml`，或
+/// `eqc serve <目录>`（其中含 `eqc-workspace.yaml`）。每个模型**显式**声明
+/// id/友好名/模型路径/驱动——因为作物目录里是版本史（s1..s8、t1..t3、bb1..bb5）、
+/// 且每模型驱动不同（草莓日级 / 番茄小时 / 蓝莓需冷 / 温室室外），纯目录扫描无法判定。
+#[derive(serde::Deserialize)]
+struct WorkspaceManifest {
+    models: Vec<ManifestEntry>,
+}
+
+/// 清单中一条模型声明（路径相对清单所在目录解析）。
+#[derive(serde::Deserialize)]
+struct ManifestEntry {
+    id: String,
+    #[serde(default)]
+    name: Option<String>,
+    path: String,
+    #[serde(default)]
+    drivers: Option<String>,
+    #[serde(default)]
+    params: Option<String>,
+    #[serde(default)]
+    data_dir: Option<String>,
+}
+
+/// 花名册中的一个模型：路径 + 预载情景数据 + 本模型实测数据目录。
+/// 单模型模式 = 1 个条目的花名册（行为与历史逐位一致、零回归）。
+struct ModelEntry {
+    /// 选择器/`?model=` 用的稳定标识（文件名安全：字母/数字/_/-）。单模型 = `"default"`。
+    id: String,
+    /// 友好名（清单 `name:` → 模型 `meta.name_cn` → id）。
+    name: String,
     path: PathBuf,
-    /// 预加载的驱动量（步数, 名->序列）；未提供则无法仿真。
+    /// 预载驱动量（步数, 名->序列）；未提供则该模型无法仿真。
     drivers: Option<(usize, HashMap<String, Vec<f64>>)>,
     params: Option<HashMap<String, f64>>,
-    /// 园区录入的实测数据目录（每处理区一个 `<zone>.csv`，稀疏 observed 格式）。
-    /// `/api/observations` 在此读写；正是 `eqc calibrate --observed` 的输入。
+    /// 本模型园区录入的实测数据目录（每处理区一个 `<zone>.csv`，稀疏 observed）。
+    /// `/api/observations` 在此读写；正是 `eqc calibrate --observed` 的输入。多模型按 id 隔离。
     data_dir: PathBuf,
+}
+
+/// 服务上下文：模型花名册 + 版本号。单/多模型统一成一份 roster（≥1 条）。
+struct Ctx {
+    models: Vec<ModelEntry>,
     version: AtomicU64,
 }
 
@@ -53,56 +87,40 @@ pub fn serve(
     params_path: Option<&PathBuf>,
     data_dir_arg: Option<&PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // 预加载情景数据（出错只警告、不阻断——模型结构仍可看）
-    let drivers = match drivers_path {
-        Some(p) => match crate::scenario::load_drivers_csv(p) {
-            Ok(d) => {
-                println!("   驱动量：{}（{} 天 × {} 列）", p.display(), d.0, d.1.len());
-                Some(d)
-            }
-            Err(e) => {
-                eprintln!("⚠️  驱动量加载失败（仿真不可用）：{e}");
-                None
-            }
-        },
-        None => None,
+    // 工作区清单（多模型）优先；否则单模型/目录合并模式（与历史逐位一致）。
+    let models = if let Some(manifest) = workspace_manifest_path(path) {
+        if drivers_path.is_some() || params_path.is_some() || data_dir_arg.is_some() {
+            eprintln!("⚠️  工作区模式：--drivers/--params/--data-dir 被忽略（由清单按模型声明）");
+        }
+        println!("📦 工作区清单：{}", manifest.display());
+        build_roster_from_manifest(&manifest)?
+    } else {
+        vec![build_single_entry(path, drivers_path, params_path, data_dir_arg)]
     };
-    let params = match params_path {
-        Some(p) => crate::scenario::load_params_json(p)
-            .map_err(|e| {
-                eprintln!("⚠️  参数 JSON 加载失败：{e}");
-            })
-            .ok(),
-        None => None,
-    };
-
-    // 实测数据目录：显式 --data-dir 优先，否则模型同级的 observations/。
-    let data_dir = data_dir_arg.cloned().unwrap_or_else(|| {
-        let base = if path.is_dir() {
-            path.to_path_buf()
-        } else {
-            path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."))
+    if models.is_empty() {
+        return Err("工作区清单没有任何模型".into());
+    }
+    for m in &models {
+        let drv = match &m.drivers {
+            Some((n, cols)) => format!("{n} 步 × {} 列", cols.len()),
+            None => "无（仿真不可用）".to_string(),
         };
-        base.join("observations")
-    });
-    println!("   实测数据目录：{}（园区录入写入 <zone>.csv，缺则首次保存时创建）", data_dir.display());
+        println!(
+            "   • {} [{}]  {}  驱动:{}  实测:{}",
+            m.name, m.id, m.path.display(), drv, m.data_dir.display()
+        );
+    }
 
-    let ctx = Arc::new(Ctx {
-        path: path.to_path_buf(),
-        drivers,
-        params,
-        data_dir,
-        version: AtomicU64::new(1),
-    });
+    let ctx = Arc::new(Ctx { models, version: AtomicU64::new(1) });
 
-    // 文件监听线程：mtime 变化 → 版本 +1 → 前端整页刷新
+    // 文件监听线程：任一模型文件 mtime 变化 → 版本 +1 → 前端整页刷新
     {
         let ctx = Arc::clone(&ctx);
         std::thread::spawn(move || {
-            let mut last = fingerprint(&ctx.path);
+            let mut last = roster_fingerprint(&ctx.models);
             loop {
                 std::thread::sleep(Duration::from_millis(500));
-                let fp = fingerprint(&ctx.path);
+                let fp = roster_fingerprint(&ctx.models);
                 if fp != last {
                     last = fp;
                     let v = ctx.version.fetch_add(1, Ordering::SeqCst) + 1;
@@ -115,8 +133,7 @@ pub fn serve(
     let listener = TcpListener::bind(("127.0.0.1", port))
         .map_err(|e| format!("无法绑定 127.0.0.1:{port}（端口被占用？换 --port）：{e}"))?;
     println!("🌐 EQC Studio 运行中：  http://localhost:{port}/");
-    println!("   监听 {}", path.display());
-    println!("   编辑模型并保存即自动刷新；Ctrl+C 退出。");
+    println!("   {} 个模型；编辑模型并保存即自动刷新；Ctrl+C 退出。", ctx.models.len());
 
     for stream in listener.incoming().flatten() {
         let ctx = Arc::clone(&ctx);
@@ -125,6 +142,183 @@ pub fn serve(
         });
     }
     Ok(())
+}
+
+/// 判定输入是否指向工作区清单：单文件且是**非** `.eq.` 的 `.yaml/.yml` → 它本身；
+/// 目录 → 找其中的 `eqc-workspace.yaml`/`.yml`。否则 `None`（= 单模型/目录合并模式）。
+/// `.eq.` 中缀是全代码库识别「方程文件」的约定，复用它当判别符。
+fn workspace_manifest_path(path: &Path) -> Option<PathBuf> {
+    if path.is_file() {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let is_yaml = name.ends_with(".yaml") || name.ends_with(".yml");
+        if is_yaml && !name.contains(".eq.") {
+            return Some(path.to_path_buf());
+        }
+    } else if path.is_dir() {
+        for cand in ["eqc-workspace.yaml", "eqc-workspace.yml"] {
+            let p = path.join(cand);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+/// 模型 id 必须文件名安全（用于 `observations/<id>` 目录，防路径穿越）。
+fn valid_model_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// 预载驱动量（出错只警告、不阻断——模型结构仍可看）。
+fn load_drivers_opt(p: Option<&Path>) -> Option<(usize, HashMap<String, Vec<f64>>)> {
+    let p = p?;
+    match crate::scenario::load_drivers_csv(p) {
+        Ok(d) => Some(d),
+        Err(e) => {
+            eprintln!("⚠️  驱动量加载失败（{}，仿真不可用）：{e}", p.display());
+            None
+        }
+    }
+}
+
+/// 预载参数覆盖 JSON（出错只警告）。
+fn load_params_opt(p: Option<&Path>) -> Option<HashMap<String, f64>> {
+    let p = p?;
+    crate::scenario::load_params_json(p)
+        .map_err(|e| eprintln!("⚠️  参数 JSON 加载失败（{}）：{e}", p.display()))
+        .ok()
+}
+
+/// 读模型友好名（`meta.name_cn`）；解析失败则 `None`。
+fn model_display_name(path: &Path) -> Option<String> {
+    parse_file(path).ok().map(|f| f.meta.name_cn)
+}
+
+/// 单模型模式：1 个条目的花名册（驱动/参数/实测目录与历史逐位一致）。
+fn build_single_entry(
+    path: &Path,
+    drivers_path: Option<&PathBuf>,
+    params_path: Option<&PathBuf>,
+    data_dir_arg: Option<&PathBuf>,
+) -> ModelEntry {
+    let drivers = load_drivers_opt(drivers_path.map(|p| p.as_path()));
+    if let Some((n, cols)) = &drivers {
+        println!("   驱动量：{n} 步 × {} 列", cols.len());
+    }
+    let params = load_params_opt(params_path.map(|p| p.as_path()));
+    // 实测数据目录：显式 --data-dir 优先，否则模型同级的 observations/（不按 id 分子目录，保持历史路径）。
+    let data_dir = data_dir_arg.cloned().unwrap_or_else(|| {
+        let base = if path.is_dir() {
+            path.to_path_buf()
+        } else {
+            path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."))
+        };
+        base.join("observations")
+    });
+    let name = model_display_name(path).unwrap_or_else(|| {
+        path.file_stem().and_then(|s| s.to_str()).unwrap_or("model").to_string()
+    });
+    ModelEntry { id: "default".to_string(), name, path: path.to_path_buf(), drivers, params, data_dir }
+}
+
+/// 工作区模式：按清单逐条建模型（路径相对清单目录；实测目录缺省 `<清单目录>/observations/<id>/`）。
+fn build_roster_from_manifest(manifest: &Path) -> Result<Vec<ModelEntry>, String> {
+    let txt = std::fs::read_to_string(manifest)
+        .map_err(|e| format!("读工作区清单失败（{}）：{e}", manifest.display()))?;
+    let ws: WorkspaceManifest = serde_yaml::from_str(&txt)
+        .map_err(|e| format!("工作区清单不是合法 YAML（需顶层 `models: [...]`）：{e}"))?;
+    if ws.models.is_empty() {
+        return Err("工作区清单 models 为空".into());
+    }
+    let base = manifest.parent().unwrap_or_else(|| Path::new("."));
+    let resolve = |rel: &str| -> PathBuf {
+        let p = PathBuf::from(rel);
+        if p.is_absolute() {
+            p
+        } else {
+            base.join(rel)
+        }
+    };
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for e in ws.models {
+        if !valid_model_id(&e.id) {
+            return Err(format!("非法模型 id '{}'（只允许字母/数字/下划线/连字符、长度 1..=64）", e.id));
+        }
+        if !seen.insert(e.id.clone()) {
+            return Err(format!("模型 id 重复：'{}'", e.id));
+        }
+        let path = resolve(&e.path);
+        if !path.exists() {
+            eprintln!("⚠️  模型 '{}' 文件不存在：{}", e.id, path.display());
+        }
+        let drivers = match &e.drivers {
+            Some(d) => {
+                let p = resolve(d);
+                load_drivers_opt(Some(p.as_path()))
+            }
+            None => None,
+        };
+        let params = match &e.params {
+            Some(p) => {
+                let pp = resolve(p);
+                load_params_opt(Some(pp.as_path()))
+            }
+            None => None,
+        };
+        let data_dir = match &e.data_dir {
+            Some(d) => resolve(d),
+            None => base.join("observations").join(&e.id),
+        };
+        let name = e
+            .name
+            .clone()
+            .or_else(|| model_display_name(&path))
+            .unwrap_or_else(|| e.id.clone());
+        out.push(ModelEntry { id: e.id, name, path, drivers, params, data_dir });
+    }
+    Ok(out)
+}
+
+/// 整个花名册的监听指纹（各模型文件 mtime 的有序快照；任一变化即触发刷新）。
+fn roster_fingerprint(models: &[ModelEntry]) -> Vec<Option<SystemTime>> {
+    models.iter().map(|m| fingerprint(&m.path)).collect()
+}
+
+/// 按 `?model=<id>` 解析当前模型（缺省/未知 → 花名册第一个；花名册恒 ≥1 条）。
+fn resolve_model<'a>(ctx: &'a Ctx, query: &str) -> &'a ModelEntry {
+    if let Some(id) = parse_model(query) {
+        if let Some(m) = ctx.models.iter().find(|m| m.id == id) {
+            return m;
+        }
+    }
+    &ctx.models[0]
+}
+
+/// `?model=strawberry` → "strawberry"（url 解码；缺省 None）。
+fn parse_model(query: &str) -> Option<String> {
+    for kv in query.split('&') {
+        if let Some(v) = kv.strip_prefix("model=") {
+            let s = url_decode(v);
+            if !s.is_empty() {
+                return Some(s);
+            }
+        }
+    }
+    None
+}
+
+/// 模型花名册 JSON（前端据此建顶部选择器；不硬编码作物清单——问 EQC 要）。
+fn models_json(ctx: &Ctx) -> String {
+    let arr: Vec<serde_json::Value> = ctx
+        .models
+        .iter()
+        .map(|m| serde_json::json!({ "id": m.id, "name": m.name, "has_drivers": m.drivers.is_some() }))
+        .collect();
+    serde_json::json!({ "models": arr }).to_string()
 }
 
 /// 处理一个连接。
@@ -138,6 +332,9 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
         None => (target, ""),
     };
 
+    // 当前模型（按 `?model=<id>`，缺省第一个）。/、/__version、/api/models 不依赖它，但解析无害。
+    let m = resolve_model(ctx, query);
+
     let (status, ctype, body): (&str, &str, String) = match route {
         "/" | "/index.html" => ("200 OK", "text/html; charset=utf-8", STUDIO_HTML.to_string()),
         "/__version" => (
@@ -145,11 +342,13 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
             "text/plain; charset=utf-8",
             ctx.version.load(Ordering::SeqCst).to_string(),
         ),
-        "/api/model" => match load_files(&ctx.path) {
+        // 模型花名册（前端建顶部选择器用）。
+        "/api/models" => ("200 OK", "application/json; charset=utf-8", models_json(ctx)),
+        "/api/model" => match load_files(&m.path) {
             Ok(files) => ("200 OK", "application/json; charset=utf-8", crate::export::to_json_string(&files)),
             Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
         },
-        "/api/report" => match render_report(&ctx.path, parse_layout(query), parse_dag_level(query)) {
+        "/api/report" => match render_report(&m.path, parse_layout(query), parse_dag_level(query)) {
             Ok(h) => ("200 OK", "text/html; charset=utf-8", h),
             Err(e) => ("200 OK", "text/html; charset=utf-8", error_html(&e)),
         },
@@ -159,7 +358,7 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
                 parse_overrides(query, "init"),
                 parse_overrides(query, "d"),
             );
-            match run_sim(ctx, &pv, &iv, &dv) {
+            match run_sim(m, &pv, &iv, &dv) {
                 Ok(out) => ("200 OK", "application/json; charset=utf-8", trajectory_json(&out)),
                 Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
             }
@@ -171,7 +370,7 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
                 parse_overrides(query, "init"),
                 parse_overrides(query, "d"),
             );
-            let svg = match run_sim(ctx, &pv, &iv, &dv) {
+            let svg = match run_sim(m, &pv, &iv, &dv) {
                 Ok(out) => {
                     let refs: Vec<&str> = vars.iter().map(|s| s.as_str()).collect();
                     crate::chart::line_chart_svg(&out, &refs, 720.0, 360.0)
@@ -180,20 +379,20 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
             };
             ("200 OK", "image/svg+xml; charset=utf-8", svg)
         }
-        "/api/optimize" => match run_optimize(ctx, query) {
+        "/api/optimize" => match run_optimize(m, query) {
             Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
             Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
         },
         // 用某处理区录入的实测数据标定模型参数（录入→标定闭环的「标定」端）。
-        "/api/calibrate" => match run_calibrate(ctx, query) {
+        "/api/calibrate" => match run_calibrate(m, query) {
             Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
             Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
         },
         // 实测数据读写（园区录入 → 标定输入）。GET 读回某处理区的稀疏 observed；
         // POST 写出规范稀疏 CSV（EQC 权威拥有格式，前端只递交结构化数据）。
         "/api/observations" => match method {
-            "GET" => ("200 OK", "application/json; charset=utf-8", read_observations(ctx, query)),
-            "POST" => match write_observations(ctx, query, &req_body) {
+            "GET" => ("200 OK", "application/json; charset=utf-8", read_observations(m, query)),
+            "POST" => match write_observations(m, query, &req_body) {
                 Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
                 Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
             },
@@ -201,8 +400,8 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
         },
         // 每处理区的管理设置（灌溉/施氮/EC/CO₂…），存 <zone>.json；标定时叠加该区管理。
         "/api/zone" => match method {
-            "GET" => ("200 OK", "application/json; charset=utf-8", read_zone(ctx, query)),
-            "POST" => match write_zone(ctx, query, &req_body) {
+            "GET" => ("200 OK", "application/json; charset=utf-8", read_zone(m, query)),
+            "POST" => match write_zone(m, query, &req_body) {
                 Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
                 Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
             },
@@ -305,20 +504,20 @@ fn parse_dag_level(query: &str) -> DagLevel {
 /// 叠加在启动级 `--params`/`--drivers` 之上。`driver_ov` 把某驱动整列设成常数
 /// （对应 `driver_const` 旋钮——这样优化得到的恒定 CO₂ 等也能画出其最优轨迹）。
 fn run_sim(
-    ctx: &Ctx,
+    m: &ModelEntry,
     param_ov: &HashMap<String, f64>,
     init_ov: &HashMap<String, f64>,
     driver_ov: &HashMap<String, f64>,
 ) -> Result<SimOutput, String> {
-    let files = load_files(&ctx.path)?;
+    let files = load_files(&m.path)?;
     let file = files.first().ok_or_else(|| "无模型".to_string())?;
-    let (steps, dmap) = ctx
+    let (steps, dmap) = m
         .drivers
         .as_ref()
-        .ok_or_else(|| "未提供驱动量（启动时加 --drivers w.csv）——无法仿真".to_string())?;
+        .ok_or_else(|| "未提供驱动量（该模型清单未声明 drivers，或启动时未加 --drivers）——无法仿真".to_string())?;
     let mut input = SimInput::new(*steps);
     input.drivers = dmap.clone();
-    if let Some(p) = &ctx.params {
+    if let Some(p) = &m.params {
         input.param_overrides = p.clone();
     }
     // 请求级覆盖叠加（优先级最高）
@@ -336,16 +535,16 @@ fn run_sim(
 /// `/api/optimize?spec=<路径>`：读决策 spec，跑优化，返回与 CLI 同一份结果 JSON。
 /// spec 路径相对模型所在目录解析；环境驱动量取 spec 的 `environment:`（相对 spec 目录），
 /// 缺省回退到启动级 `--drivers`。
-fn run_optimize(ctx: &Ctx, query: &str) -> Result<String, String> {
+fn run_optimize(m: &ModelEntry, query: &str) -> Result<String, String> {
     use crate::optimize::{self, load_problem};
 
     let spec_arg = parse_spec(query)
         .ok_or_else(|| "缺少 spec 参数（/api/optimize?spec=problem.yaml）".to_string())?;
     // spec 路径：绝对直接用，否则相对模型所在目录
-    let model_dir: PathBuf = if ctx.path.is_dir() {
-        ctx.path.clone()
+    let model_dir: PathBuf = if m.path.is_dir() {
+        m.path.clone()
     } else {
-        ctx.path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."))
+        m.path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."))
     };
     let spec_path = {
         let p = PathBuf::from(&spec_arg);
@@ -357,19 +556,19 @@ fn run_optimize(ctx: &Ctx, query: &str) -> Result<String, String> {
     };
 
     let problem = load_problem(&spec_path)?;
-    let files = load_files(&ctx.path)?;
+    let files = load_files(&m.path)?;
     let file = files.first().ok_or_else(|| "无模型".to_string())?;
 
-    // 环境驱动量：spec 的 environment（相对 spec 目录）优先，否则启动级 --drivers
+    // 环境驱动量：spec 的 environment（相对 spec 目录）优先，否则该模型预载 drivers
     let (steps, driver_map) = match &problem.environment {
         Some(env) => {
             let spec_dir = spec_path.parent().unwrap_or_else(|| Path::new("."));
             crate::scenario::load_drivers_csv(&spec_dir.join(env))?
         }
-        None => match &ctx.drivers {
+        None => match &m.drivers {
             Some((rows, map)) => (*rows, map.clone()),
             None => {
-                return Err("决策 spec 无 environment 且启动时未提供 --drivers——无环境驱动量".into())
+                return Err("决策 spec 无 environment 且该模型无预载驱动量——无环境驱动量".into())
             }
         },
     };
@@ -411,16 +610,16 @@ fn run_optimize(ctx: &Ctx, query: &str) -> Result<String, String> {
 /// 与 `eqc calibrate` 共用 `optimize::run_obs`。observed **优先**取该处理区录入的 CSV
 /// （录入→标定闭环），否则回退 spec 的 `observed:`；同期天气取 spec 的 `environment:`，
 /// 否则启动级 `--drivers`。返回与 `eqc calibrate` 同结构的结果 JSON + 注入收敛曲线 SVG。
-fn run_calibrate(ctx: &Ctx, query: &str) -> Result<String, String> {
+fn run_calibrate(m: &ModelEntry, query: &str) -> Result<String, String> {
     use crate::optimize::{self, load_problem};
 
     let spec_arg = parse_spec(query)
         .ok_or_else(|| "缺少 spec 参数（/api/calibrate?spec=calib.yaml）".to_string())?;
     let zone = parse_zone(query);
-    let model_dir: PathBuf = if ctx.path.is_dir() {
-        ctx.path.clone()
+    let model_dir: PathBuf = if m.path.is_dir() {
+        m.path.clone()
     } else {
-        ctx.path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."))
+        m.path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."))
     };
     let spec_path = {
         let p = PathBuf::from(&spec_arg);
@@ -435,25 +634,25 @@ fn run_calibrate(ctx: &Ctx, query: &str) -> Result<String, String> {
     if problem.is_multi() {
         return Err("标定暂为单目标（误差最小化）：spec 请用单个 objective".into());
     }
-    let files = load_files(&ctx.path)?;
+    let files = load_files(&m.path)?;
     // 克隆模型：本区管理通过改管理参数 default 注入 → 标定按本区处理仿真。
     let mut file = files.first().ok_or_else(|| "无模型".to_string())?.clone();
     let spec_dir = spec_path.parent().unwrap_or_else(|| Path::new("."));
 
-    // 同期天气：spec 的 environment（相对 spec 目录）优先，否则启动级 --drivers
+    // 同期天气：spec 的 environment（相对 spec 目录）优先，否则该模型预载 drivers
     let (steps, mut driver_map) = match &problem.environment {
         Some(env) => crate::scenario::load_drivers_csv(&spec_dir.join(env))?,
-        None => match &ctx.drivers {
+        None => match &m.drivers {
             Some((rows, map)) => (*rows, map.clone()),
             None => {
-                return Err("标定 spec 无 environment 且启动时未提供 --drivers——无同期天气".into())
+                return Err("标定 spec 无 environment 且该模型无预载驱动量——无同期天气".into())
             }
         },
     };
 
     // 叠加本区管理：params 改模型参数 default，drivers 设为常数列（CO₂ 等控制量）。
     // 这样 calibrate 在「本区处理」下仿真——拿低氮区数据就用低氮管理拟合（多处理区标定的关键）。
-    let (zparams, zdrivers) = read_zone_management(ctx, &zone);
+    let (zparams, zdrivers) = read_zone_management(&m.data_dir, &zone);
     for (name, val) in &zparams {
         if let Some(p) = file.parameters.get_mut(name) {
             p.default = *val;
@@ -464,7 +663,7 @@ fn run_calibrate(ctx: &Ctx, query: &str) -> Result<String, String> {
     }
 
     // 实测数据：本处理区录入的 observed CSV 优先（录入→标定闭环），否则 spec 的 observed
-    let zone_csv = ctx.data_dir.join(format!("{zone}.csv"));
+    let zone_csv = m.data_dir.join(format!("{zone}.csv"));
     let obs_path: PathBuf = if zone_csv.exists() {
         zone_csv
     } else {
@@ -510,9 +709,9 @@ fn run_calibrate(ctx: &Ctx, query: &str) -> Result<String, String> {
             "knobs": j.get("best_knobs").cloned().unwrap_or(serde_json::Value::Null),
             "at": at,
         });
-        let _ = std::fs::create_dir_all(&ctx.data_dir);
+        let _ = std::fs::create_dir_all(&m.data_dir);
         let _ = std::fs::write(
-            ctx.data_dir.join(format!("{zone}.calib.json")),
+            m.data_dir.join(format!("{zone}.calib.json")),
             serde_json::to_string_pretty(&calib).unwrap_or_default(),
         );
         if let Some(obj) = j.as_object_mut() {
@@ -664,9 +863,9 @@ fn parse_zone(query: &str) -> String {
 }
 
 /// 读回某处理区已录入的稀疏实测数据（JSON）。文件不存在 → 空集（非错误）。
-fn read_observations(ctx: &Ctx, query: &str) -> String {
+fn read_observations(m: &ModelEntry, query: &str) -> String {
     let zone = parse_zone(query);
-    let path = ctx.data_dir.join(format!("{zone}.csv"));
+    let path = m.data_dir.join(format!("{zone}.csv"));
     if !path.exists() {
         return serde_json::json!({ "zone": zone, "exists": false, "observations": {}, "days": [] })
             .to_string();
@@ -697,7 +896,7 @@ fn read_observations(ctx: &Ctx, query: &str) -> String {
 /// 写出某处理区的稀疏实测 CSV（园区录入 → 标定输入）。EQC 拥有格式，前端只递交结构化数据：
 /// body = `{ "columns": ["Y","TDM",...], "rows": [ {"DAT":30,"Y":1.2,"TDM":12.5}, ... ] }`。
 /// 校验：列名须是模型变量、DAT 正整数、值有限；按 DAT 排序去重；原子替换写盘。
-fn write_observations(ctx: &Ctx, query: &str, body: &[u8]) -> Result<String, String> {
+fn write_observations(m: &ModelEntry, query: &str, body: &[u8]) -> Result<String, String> {
     let zone = parse_zone(query);
     let v: serde_json::Value =
         serde_json::from_slice(body).map_err(|e| format!("请求体不是合法 JSON: {e}"))?;
@@ -713,7 +912,7 @@ fn write_observations(ctx: &Ctx, query: &str, body: &[u8]) -> Result<String, Str
         return Err("columns 为空".into());
     }
     // 列名须是模型变量（防笔误、保证 CSV 可被 calibrate 消费）
-    let files = load_files(&ctx.path)?;
+    let files = load_files(&m.path)?;
     let file = files.first().ok_or_else(|| "无模型".to_string())?;
     for c in &columns {
         if c.is_empty() || c.contains(',') || c.contains('\n') || c.eq_ignore_ascii_case("DAT") {
@@ -730,9 +929,9 @@ fn write_observations(ctx: &Ctx, query: &str, body: &[u8]) -> Result<String, Str
         .ok_or_else(|| "缺 rows 数组".to_string())?;
     let (csv, nrows) = build_observed_csv(&columns, rows)?;
 
-    std::fs::create_dir_all(&ctx.data_dir).map_err(|e| format!("建目录失败: {e}"))?;
-    let path = ctx.data_dir.join(format!("{zone}.csv"));
-    let tmp = ctx.data_dir.join(format!(".{zone}.csv.tmp"));
+    std::fs::create_dir_all(&m.data_dir).map_err(|e| format!("建目录失败: {e}"))?;
+    let path = m.data_dir.join(format!("{zone}.csv"));
+    let tmp = m.data_dir.join(format!(".{zone}.csv.tmp"));
     std::fs::write(&tmp, csv.as_bytes()).map_err(|e| format!("写临时文件失败: {e}"))?;
     std::fs::rename(&tmp, &path).map_err(|e| format!("替换文件失败: {e}"))?;
     Ok(serde_json::json!({
@@ -817,10 +1016,10 @@ fn extract_scalar_map(v: Option<&serde_json::Value>, dst: &mut HashMap<String, f
 
 /// 读某处理区的管理设置 `<zone>.json`（`{params:{}, drivers:{}}`）。缺/坏 → 空。
 /// `params` = 管理**参数**覆盖（改模型参数）；`drivers` = **控制量**常数（如 CO₂）。
-fn read_zone_management(ctx: &Ctx, zone: &str) -> (HashMap<String, f64>, HashMap<String, f64>) {
+fn read_zone_management(data_dir: &Path, zone: &str) -> (HashMap<String, f64>, HashMap<String, f64>) {
     let mut params = HashMap::new();
     let mut drivers = HashMap::new();
-    if let Ok(txt) = std::fs::read_to_string(ctx.data_dir.join(format!("{zone}.json"))) {
+    if let Ok(txt) = std::fs::read_to_string(data_dir.join(format!("{zone}.json"))) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) {
             extract_scalar_map(v.get("params"), &mut params);
             extract_scalar_map(v.get("drivers"), &mut drivers);
@@ -830,31 +1029,31 @@ fn read_zone_management(ctx: &Ctx, zone: &str) -> (HashMap<String, f64>, HashMap
 }
 
 /// 读某处理区的标定状态 `<zone>.calib.json`（4B）；缺/坏 → `null`。
-fn read_calib_status(ctx: &Ctx, zone: &str) -> serde_json::Value {
-    match std::fs::read_to_string(ctx.data_dir.join(format!("{zone}.calib.json"))) {
+fn read_calib_status(data_dir: &Path, zone: &str) -> serde_json::Value {
+    match std::fs::read_to_string(data_dir.join(format!("{zone}.calib.json"))) {
         Ok(txt) => serde_json::from_str(&txt).unwrap_or(serde_json::Value::Null),
         Err(_) => serde_json::Value::Null,
     }
 }
 
 /// `GET /api/zone?zone=A` → 该区管理设置 + 是否已有观测 + 标定状态。
-fn read_zone(ctx: &Ctx, query: &str) -> String {
+fn read_zone(m: &ModelEntry, query: &str) -> String {
     let zone = parse_zone(query);
-    let (params, drivers) = read_zone_management(ctx, &zone);
-    let has_obs = ctx.data_dir.join(format!("{zone}.csv")).exists();
+    let (params, drivers) = read_zone_management(&m.data_dir, &zone);
+    let has_obs = m.data_dir.join(format!("{zone}.csv")).exists();
     let pj: serde_json::Map<String, serde_json::Value> =
         params.into_iter().map(|(k, v)| (k, serde_json::json!(v))).collect();
     let dj: serde_json::Map<String, serde_json::Value> =
         drivers.into_iter().map(|(k, v)| (k, serde_json::json!(v))).collect();
     serde_json::json!({
         "zone": zone, "params": pj, "drivers": dj,
-        "has_observed": has_obs, "calibration": read_calib_status(ctx, &zone)
+        "has_observed": has_obs, "calibration": read_calib_status(&m.data_dir, &zone)
     })
     .to_string()
 }
 
 /// `POST /api/zone?zone=A` body `{params:{}, drivers:{}}` → 写 `<zone>.json`（原子替换）。
-fn write_zone(ctx: &Ctx, query: &str, body: &[u8]) -> Result<String, String> {
+fn write_zone(m: &ModelEntry, query: &str, body: &[u8]) -> Result<String, String> {
     let zone = parse_zone(query);
     let v: serde_json::Value =
         serde_json::from_slice(body).map_err(|e| format!("请求体不是合法 JSON: {e}"))?;
@@ -867,9 +1066,9 @@ fn write_zone(ctx: &Ctx, query: &str, body: &[u8]) -> Result<String, String> {
     let dj: serde_json::Map<String, serde_json::Value> =
         drivers.iter().map(|(k, v)| (k.clone(), serde_json::json!(v))).collect();
     let out = serde_json::json!({ "params": pj, "drivers": dj });
-    std::fs::create_dir_all(&ctx.data_dir).map_err(|e| format!("建目录失败: {e}"))?;
-    let path = ctx.data_dir.join(format!("{zone}.json"));
-    let tmp = ctx.data_dir.join(format!(".{zone}.json.tmp"));
+    std::fs::create_dir_all(&m.data_dir).map_err(|e| format!("建目录失败: {e}"))?;
+    let path = m.data_dir.join(format!("{zone}.json"));
+    let tmp = m.data_dir.join(format!(".{zone}.json.tmp"));
     std::fs::write(&tmp, serde_json::to_string_pretty(&out).unwrap_or_default())
         .map_err(|e| format!("写临时文件失败: {e}"))?;
     std::fs::rename(&tmp, &path).map_err(|e| format!("替换文件失败: {e}"))?;
@@ -952,6 +1151,11 @@ mod tests {
         // DAG 粒度切换（变量/方程/模块）
         assert!(STUDIO_HTML.contains("levelSeg"));
         assert!(STUDIO_HTML.contains("&level="));
+        // 多模型选择器（免重启切模型）：花名册端点 + 选择器 + 切换逻辑
+        assert!(STUDIO_HTML.contains("/api/models"));
+        assert!(STUDIO_HTML.contains("modelSel"));
+        assert!(STUDIO_HTML.contains("applyModel"));
+        assert!(STUDIO_HTML.contains("modelParam"));
     }
 
     #[test]
@@ -981,6 +1185,77 @@ mod tests {
         assert_eq!(parse_layout("layout=layered"), LayoutKind::Layered);
         assert_eq!(parse_layout(""), LayoutKind::Layered); // 缺省回退
         assert_eq!(parse_layout("vars=Y"), LayoutKind::Layered);
+    }
+
+    #[test]
+    fn test_parse_model() {
+        assert_eq!(parse_model("model=tomato&level=module").as_deref(), Some("tomato"));
+        assert_eq!(parse_model("layout=force&model=strawberry").as_deref(), Some("strawberry"));
+        assert!(parse_model("vars=Y").is_none());
+        assert!(parse_model("model=").is_none());
+    }
+
+    #[test]
+    fn test_valid_model_id() {
+        assert!(valid_model_id("strawberry"));
+        assert!(valid_model_id("bb5_gh-1"));
+        assert!(!valid_model_id("")); // 空
+        assert!(!valid_model_id("../etc")); // 路径穿越
+        assert!(!valid_model_id("a/b"));
+        assert!(!valid_model_id("a b")); // 空格
+    }
+
+    #[test]
+    fn test_workspace_manifest_path() {
+        let dir = std::env::temp_dir().join("eqc_ws_test");
+        let _ = std::fs::create_dir_all(&dir);
+        // 单模型 .eq.yaml → 非工作区
+        let model = dir.join("strawberry_s8.eq.yaml");
+        std::fs::write(&model, "x").unwrap();
+        assert!(workspace_manifest_path(&model).is_none());
+        // 普通 .yaml 文件 → 工作区清单本身
+        let ws = dir.join("my-workspace.yaml");
+        std::fs::write(&ws, "models: []").unwrap();
+        assert_eq!(workspace_manifest_path(&ws).as_deref(), Some(ws.as_path()));
+        // 目录含 eqc-workspace.yaml → 找到它
+        let canonical = dir.join("eqc-workspace.yaml");
+        std::fs::write(&canonical, "models: []").unwrap();
+        assert_eq!(workspace_manifest_path(&dir).as_deref(), Some(canonical.as_path()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_build_roster_from_manifest() {
+        let dir = std::env::temp_dir().join("eqc_roster_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let ws = dir.join("eqc-workspace.yaml");
+        // 提供 name: 故无需解析真实模型文件；path 不存在只告警不失败
+        std::fs::write(
+            &ws,
+            "models:\n  - { id: strawberry, name: 草莓 S8, path: a/s8.eq.yaml }\n  - { id: tomato, name: 番茄 T3, path: b/t3.eq.yaml, data_dir: obs_t }\n",
+        )
+        .unwrap();
+        let roster = build_roster_from_manifest(&ws).unwrap();
+        assert_eq!(roster.len(), 2);
+        assert_eq!(roster[0].id, "strawberry");
+        assert_eq!(roster[0].name, "草莓 S8");
+        // 路径相对清单目录解析
+        assert_eq!(roster[0].path, dir.join("a/s8.eq.yaml"));
+        // 缺省实测目录 = <清单目录>/observations/<id>
+        assert_eq!(roster[0].data_dir, dir.join("observations").join("strawberry"));
+        // 显式 data_dir 相对清单目录解析
+        assert_eq!(roster[1].data_dir, dir.join("obs_t"));
+
+        // 重复 id → 错误
+        std::fs::write(&ws, "models:\n  - { id: x, path: a }\n  - { id: x, path: b }\n").unwrap();
+        assert!(build_roster_from_manifest(&ws).is_err());
+        // 非法 id → 错误
+        std::fs::write(&ws, "models:\n  - { id: \"../x\", path: a }\n").unwrap();
+        assert!(build_roster_from_manifest(&ws).is_err());
+        // 空 models → 错误
+        std::fs::write(&ws, "models: []\n").unwrap();
+        assert!(build_roster_from_manifest(&ws).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -127,12 +127,16 @@
   .mgmt-row .m-lab { flex:0 0 160px; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .mgmt-row input { width:120px; font-size:13px; padding:2px 6px; border:1px solid var(--line); border-radius:5px; }
   .mgmt-row .m-tag { font-size:11px; color:var(--sub); }
+  /* 顶部模型选择器（多模型工作区才显示；单模型隐藏=与历史一致） */
+  .model-sel { margin-left:12px; font-size:13px; font-weight:600; padding:3px 8px;
+    border:1px solid var(--line); border-radius:6px; background:#fff; color:var(--ink); cursor:pointer; }
 </style>
 </head>
 <body>
 <header>
   <h1 id="title">EQC Studio</h1>
   <span class="sub" id="subtitle"></span>
+  <select id="modelSel" class="model-sel" title="切换模型（免重启）" hidden></select>
   <span class="seg" id="modeSeg" title="切换视图：园区=录数据/看懂，专家=结构/公式/优化">
     <button data-mode="park">园区</button>
     <button data-mode="expert">专家</button>
@@ -269,11 +273,47 @@
 <script>
 let MODEL = null;
 
+// —— 多模型工作区：顶部选择器免重启切模型 ——
+// `_model`=当前模型 id；null = 单模型模式（不发 model=，所有 URL 与历史逐位一致 = 零回归）。
+let MODELS = [];
+let _model = null;
+function modelParam(){ return _model ? ('&model=' + encodeURIComponent(_model)) : ''; }
+
+// 取花名册（/api/models）→ 建顶部选择器、定 _model。多模型才显示选择器。
+async function loadModels(){
+  try {
+    const j = await (await fetch('/api/models', {cache:'no-store'})).json();
+    MODELS = j.models || [];
+  } catch(e){ MODELS = []; }
+  const sel = document.getElementById('modelSel');
+  let saved = null; try { saved = localStorage.getItem('eqc_model'); } catch(e){}
+  if(MODELS.length > 1){
+    sel.innerHTML = MODELS.map(m=>`<option value="${m.id}">${m.name||m.id}</option>`).join('');
+    _model = MODELS.some(m=>m.id===saved) ? saved : MODELS[0].id;
+    sel.value = _model;
+    sel.hidden = false;
+    sel.addEventListener('change', ()=>applyModel(sel.value));
+  } else {
+    _model = null;      // 单模型：不发 model=，隐藏选择器（UI 与历史一致）
+    sel.hidden = true;
+  }
+}
+
+// 用户切模型：重载整个 MODEL（var 列表/情景/录入网格/看懂卡/处理区）+ 刷新结构图。level/layout 沿用，zone 随新模型重载。
+function applyModel(id){
+  if(!id || id === _model) return;
+  _model = id;
+  try { localStorage.setItem('eqc_model', id); } catch(e){}
+  const sel = document.getElementById('modelSel'); if(sel) sel.value = id;
+  loadModel();      // 重新拉 /api/model?model= → 重建右侧/园区全部面板
+  reloadReport();   // 结构图 iframe 切到新模型（+ 当前 layout/level）
+}
+
 function setBadge(t, ok){ const b=document.getElementById('badge'); b.textContent=t; b.style.color = ok?'#16a34a':'#6b7280'; }
 
 async function loadModel(){
   try {
-    const r = await fetch('/api/model', {cache:'no-store'});
+    const r = await fetch('/api/model' + (_model ? ('?model=' + encodeURIComponent(_model)) : ''), {cache:'no-store'});
     const m = await r.json();
     MODEL = m;
     const mod = (m.modules && m.modules[0]) || {};
@@ -381,7 +421,7 @@ function updateChart(){
   const hint = document.getElementById('chartHint');
   if(checked.length===0){ img.removeAttribute('src'); hint.textContent='勾选变量以绘制轨迹。'; return; }
   hint.textContent = '绘制：' + checked.join(', ');
-  img.src = '/api/chart.svg?vars=' + encodeURIComponent(checked.join(',')) + overrideQuery() + '&_=' + Date.now();
+  img.src = '/api/chart.svg?vars=' + encodeURIComponent(checked.join(',')) + overrideQuery() + modelParam() + '&_=' + Date.now();
   img.onerror = ()=>{ hint.innerHTML = '<span class="err">无法绘制（可能未提供 --drivers，或模型有错）</span>'; };
 }
 
@@ -400,7 +440,7 @@ let _layout = 'layered', _level = 'variable';
 try { _layout = localStorage.getItem('eqc_layout') || 'layered'; } catch(e){}
 try { _level  = localStorage.getItem('eqc_level')  || 'variable'; } catch(e){}
 function reloadReport(){
-  document.getElementById('report').src = '/api/report?layout=' + encodeURIComponent(_layout) + '&level=' + encodeURIComponent(_level);
+  document.getElementById('report').src = '/api/report?layout=' + encodeURIComponent(_layout) + '&level=' + encodeURIComponent(_level) + modelParam();
 }
 function applyLayout(kind){
   _layout = kind; try { localStorage.setItem('eqc_layout', kind); } catch(e){}
@@ -644,7 +684,7 @@ async function runOptimize(){
   const btn = document.getElementById('optRun');
   btn.disabled = true; status.textContent = '⏳ 运行中…（DE 搜索，可能数十秒；编辑模型时优化暂不可用）';
   try {
-    const r = await fetch('/api/optimize?spec=' + encodeURIComponent(spec) + '&_=' + Date.now(), {cache:'no-store'});
+    const r = await fetch('/api/optimize?spec=' + encodeURIComponent(spec) + modelParam() + '&_=' + Date.now(), {cache:'no-store'});
     const j = await r.json();
     if(j.error){ status.innerHTML = '<span class="err">优化失败：' + esc(j.error) + '</span>'; grid.style.display='none'; return; }
     status.textContent = '✅ 完成（' + (j.optimizer? ('DE pop='+j.optimizer.pop+' iters='+j.optimizer.iters+' seed='+j.optimizer.seed) : '') + '）';
@@ -778,7 +818,7 @@ function curZone(){ return (document.getElementById('zoneInput').value || 'defau
 async function loadZone(){
   const st = document.getElementById('saveStatus');
   try {
-    const r = await fetch('/api/observations?zone='+encodeURIComponent(curZone())+'&_='+Date.now(), {cache:'no-store'});
+    const r = await fetch('/api/observations?zone='+encodeURIComponent(curZone())+modelParam()+'&_='+Date.now(), {cache:'no-store'});
     const j = await r.json();
     if(j.error){ st.innerHTML='<span class="err">'+esc(j.error)+'</span>'; return; }
     const byDay = {}, obs = j.observations || {};
@@ -808,7 +848,7 @@ async function saveObs(){
   if(!columns.length){ st.innerHTML='<span class="err">模型无可测变量列</span>'; return; }
   st.textContent = '保存中…';
   try {
-    const r = await fetch('/api/observations?zone='+encodeURIComponent(curZone()), {
+    const r = await fetch('/api/observations?zone='+encodeURIComponent(curZone())+modelParam(), {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ columns, rows })
     });
@@ -857,7 +897,7 @@ async function saveZoneMgmt(){
   const params={}, drivers={};
   mgmtInputs().forEach(it=>{ if(it.kind==='param'){ if(it.name in OVR) params[it.name]=OVR[it.name]; } else { if(it.name in DOVR) drivers[it.name]=DOVR[it.name]; } });
   try{
-    const r=await fetch('/api/zone?zone='+encodeURIComponent(curZone()),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({params,drivers})});
+    const r=await fetch('/api/zone?zone='+encodeURIComponent(curZone())+modelParam(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({params,drivers})});
     const j=await r.json(); const st=document.getElementById('mgmtStatus');
     if(st) st.textContent = j.ok?('已保存本区管理 ✓（'+(j.params+j.drivers)+' 项）'):(j.error||'');
   }catch(e){}
@@ -867,7 +907,7 @@ async function onZoneChange(){
   // 先清掉当前管理项的覆盖（避免上个区的残留），再载入本区
   mgmtInputs().forEach(it=>{ if(it.kind==='param') delete OVR[it.name]; else delete DOVR[it.name]; });
   let saved={params:{},drivers:{}};
-  try{ saved=await (await fetch('/api/zone?zone='+encodeURIComponent(curZone())+'&_='+Date.now(),{cache:'no-store'})).json(); }catch(e){}
+  try{ saved=await (await fetch('/api/zone?zone='+encodeURIComponent(curZone())+modelParam()+'&_='+Date.now(),{cache:'no-store'})).json(); }catch(e){}
   if(saved.params) Object.keys(saved.params).forEach(k=>OVR[k]=saved.params[k]);
   if(saved.drivers) Object.keys(saved.drivers).forEach(k=>DOVR[k]=saved.drivers[k]);
   ZONE_CALIB = (saved && saved.calibration) ? saved.calibration : null;  // 4B：本区标定状态
@@ -902,7 +942,7 @@ async function renderUnderstand(){
   hl.innerHTML=''; sl.innerHTML=''; hint.textContent='正在跑当前情景仿真…';
   let j;
   // 带上情景覆盖（OVR/IOVR/DOVR）→ 采纳管理建议后「模型怎么说」随之刷新
-  try{ j=await (await fetch('/api/simulate?_='+Date.now()+overrideQuery(),{cache:'no-store'})).json(); }
+  try{ j=await (await fetch('/api/simulate?_='+Date.now()+overrideQuery()+modelParam(),{cache:'no-store'})).json(); }
   catch(e){ hint.innerHTML='<span class="err">无法仿真</span>'; return; }
   if(j.error||!j.series){ hint.textContent='提示：'+(j.error||'需要启动时加 --drivers 才能预测整季'); return; }
   const series=j.series, mod=(MODEL.modules&&MODEL.modules[0])||{}, vars=mod.variables||[];
@@ -943,7 +983,7 @@ async function runCalibrate(){
   const btn=document.getElementById('calibRun'); btn.disabled=true;
   st.textContent='⏳ 标定中…（DE 搜参数，可能数十秒）'; box.innerHTML='';
   try{
-    const r=await fetch('/api/calibrate?spec='+encodeURIComponent(spec)+'&zone='+encodeURIComponent(curZone())+'&_='+Date.now(),{cache:'no-store'});
+    const r=await fetch('/api/calibrate?spec='+encodeURIComponent(spec)+'&zone='+encodeURIComponent(curZone())+modelParam()+'&_='+Date.now(),{cache:'no-store'});
     const j=await r.json();
     if(j.error){ st.innerHTML='<span class="err">标定失败：'+esc(j.error)+'</span>'; return; }
     st.textContent='✅ 标定完成（'+(j.optimizer?('DE pop='+j.optimizer.pop+' iters='+j.optimizer.iters):'')+'，观测点 '+(j.n_obs||0)+'）';
@@ -976,7 +1016,7 @@ async function runAdvice(){
   const btn=document.getElementById('adviceRun'); btn.disabled=true;
   st.textContent='⏳ 求最优中…（DE 搜索，可能数十秒）'; box.innerHTML='';
   try{
-    const r=await fetch('/api/optimize?spec='+encodeURIComponent(spec)+'&_='+Date.now(),{cache:'no-store'});
+    const r=await fetch('/api/optimize?spec='+encodeURIComponent(spec)+modelParam()+'&_='+Date.now(),{cache:'no-store'});
     const j=await r.json();
     if(j.error){ st.innerHTML='<span class="err">求最优失败：'+esc(j.error)+'</span>'; return; }
     if(j.multi_objective){ st.innerHTML='<span class="err">该 spec 是多目标，请到专家视图看 Pareto 前沿。</span>'; return; }
@@ -998,13 +1038,17 @@ async function runAdvice(){
 }
 document.getElementById('adviceRun').addEventListener('click', runAdvice);
 
-initStructSegs();   // 结构图：恢复粒度 + 布局并加载报告
-
 let _savedMode = 'park';   // 4A：默认进园区视图（园区员工为主；最后选择仍由 localStorage 记住）
 try { _savedMode = localStorage.getItem('eqc_mode') || 'park'; } catch(e){}
-applyMode(_savedMode);
 
-loadModel();
+// 启动：先取模型花名册（建顶部选择器、定 _model），再加载结构图与模型——
+// 这样 initStructSegs/reloadReport 已能带上 model=。单模型时 _model=null，行为与历史一致。
+(async function boot(){
+  await loadModels();
+  initStructSegs();   // 结构图：恢复粒度 + 布局并加载报告（用 _model）
+  applyMode(_savedMode);
+  loadModel();
+})();
 </script>
 </body>
 </html>

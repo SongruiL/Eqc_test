@@ -138,8 +138,14 @@
 - **Cal-4 可辨识性/「该测什么」助手**（本次）：`optimize::identifiability`——对每个候选参数 ±10% 扰动，量其对每个候选可观测变量整条轨迹的**相对** RMS 影响（÷ 基线 RMS，跨量级可比）→ 敏感矩阵。`eqc identify <模型> --spec calib.yaml [--observables Y,LAI]`：报告「参数→最该测的观测」、不可辨识参数（无观测能约束）、可能异参同效的参数对（敏感模式皮尔逊相关 >0.99）+ 测量清单。`core.rs::simulate_candidate`（pub）；`Problem.observables` 字段。S4 实测洞见：LUE 测谁都行（全局乘子）；Pd 必须测 F（Y=F·Pd/1000 使 Y 几乎不随 Pd → 只测 Y 标不出 Pd）；Kc 在 CO₂≡400(=Cref) 下 f_CO2≡1 不可辨识（需 CO₂ 处理梯度）。2 个单测。
 - 后续：数据到位后真标 S4 / 带根系-水肥的新模型。
 
+### DAG 多层级 + 多模型工作区 arc（结构图三粒度 + 免重启切模型）
+首席科学家驱动：参数级 DAG 对复杂模型太眼花，想按方程/模块级看；并最终把温室↔作物耦合成一张大图。
+- **step 1 三粒度**（前序）：`Metadata.modules`（模型声明子模块）+ `DagLevel{Variable,Equation,Module}`/`collapse_dag` + `report::generate_report_leveled` + serve `/api/report?level=` + Studio 粒度选择器 + 友好中文节点名 + 按模块上色图例 + 角色图 Forrester 主干布局。
+- **step 2 多模型选择器（免重启切模型）**（本次）：`eqc serve` 指向 **工作区清单 `eqc-workspace.yaml`**（或含它的目录）→ Studio 顶部模型下拉切草莓/番茄/蓝莓/温室，免重启，与粒度/布局/处理区组合。`serve.rs`：`Ctx`→模型花名册 `Vec<ModelEntry>{id,name,path,drivers,params,data_dir}`（单/多模型统一，单模型=1 条、行为逐位不变），`resolve_model` 按 `?model=<id>`，新端点 `/api/models`，全部 model-bound 端点接 `model=`，每模型实测数据隔离 `observations/<id>/`。用**显式清单**而非目录扫描——作物目录是版本史（s1..s8）且每模型驱动不同。`studio.html`：顶部 `<select>` 选择器（多模型才显示）、`loadModels`/`applyModel`/`modelParam`、`model=` 串入 10 个 fetch + boot 先取花名册。活体：4 模型仿真全跑通、`?model=` 正确切换、单模型零回归。
+- **下一步 step 3 耦合视图**：作物驱动量声明 `source: GREENHOUSE.xxx` → `build_dag` 画跨模型边 → 模块级把温室↔作物连成一张大图。
+
 ## 工程基线
-- 测试：199 lib + 2 bin + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
+- 测试：211 lib + 3 bin + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
 - 远程：github.com/SongruiL/Eqc_test，SSH 推送。
 - 文档：见 `docs/USAGE.md`（架构与模块地图）、`docs/spec-*.md`（设计规格）。
 
