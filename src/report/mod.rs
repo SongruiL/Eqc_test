@@ -224,6 +224,33 @@ fn box_exit(cx: f64, cy: f64, hw: f64, hh: f64, tx: f64, ty: f64) -> (f64, f64) 
     (cx + dx * t, cy + dy * t)
 }
 
+/// 子模块配色：每个模块一个色（按名排序、色相均匀铺开）。节点上色 + 图例共用，保证一致。
+fn module_palette(dag: &Dag) -> Vec<(String, String)> {
+    let mut mods: Vec<String> = dag
+        .nodes
+        .iter()
+        .map(|n| n.module.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    mods.sort();
+    let n = mods.len().max(1);
+    mods.into_iter()
+        .enumerate()
+        .map(|(i, m)| (m, format!("hsl({:.0}, 55%, 86%)", (i as f64) * 360.0 / (n as f64))))
+        .collect()
+}
+
+/// 子模块色块图例（与 [`dag_svg`] 节点配色一致）。
+fn module_legend(dag: &Dag) -> String {
+    let mut s = String::from("<div class=\"legend\">");
+    for (m, c) in module_palette(dag) {
+        s.push_str(&format!("<span style=\"background:{c}\">{}</span>", xml(&m)));
+    }
+    s.push_str("</div>");
+    s
+}
+
 fn dag_svg(dag: &Dag, kind: LayoutKind) -> String {
     if dag.nodes.is_empty() {
         return "<p class=\"empty\">（无节点）</p>".to_string();
@@ -253,19 +280,26 @@ fn dag_svg(dag: &Dag, kind: LayoutKind) -> String {
             ));
         }
     }
+    // 模块配色（节点按子模块上色，与图例一致）
+    let palette = module_palette(dag);
+    let color: std::collections::HashMap<&str, &str> =
+        palette.iter().map(|(m, c)| (m.as_str(), c.as_str())).collect();
     // 节点
     for n in &dag.nodes {
         let (x, y) = pos[n.id.as_str()];
         let cls = format!("{:?}", n.node_type).to_lowercase();
         let short = n.id.rsplit('.').next().unwrap_or(&n.id);
-        let label = if n.id.chars().count() > 18 {
-            format!("{}…", n.id.chars().take(17).collect::<String>())
+        // 显示名：友好标签（变量 label → 方程中文名 → 代号），过长截断；其余进 tooltip
+        let raw = n.metadata.get("label").map(|s| s.as_str()).unwrap_or(short);
+        let label = if raw.chars().count() > 13 {
+            format!("{}…", raw.chars().take(12).collect::<String>())
         } else {
-            n.id.clone()
+            raw.to_string()
         };
+        let fill = color.get(n.module.as_str()).copied().unwrap_or("#eef2ff");
         s.push_str(&format!(
             "<g class=\"node {cls}\" data-var=\"{dv}\" data-id=\"{did}\" data-cx=\"{cx:.0}\" data-cy=\"{cy:.0}\" data-hw=\"{hw:.0}\" data-hh=\"{hh:.0}\">\
-             <rect x=\"{x:.0}\" y=\"{y:.0}\" width=\"{bw:.0}\" height=\"{bh:.0}\" rx=\"7\"/>\
+             <rect x=\"{x:.0}\" y=\"{y:.0}\" width=\"{bw:.0}\" height=\"{bh:.0}\" rx=\"7\" style=\"fill:{fill}\"/>\
              <text x=\"{tx:.0}\" y=\"{ty:.0}\">{lbl}</text></g>",
             dv = xml(short),
             did = xml(&n.id),
@@ -584,21 +618,19 @@ pub fn generate_report_leveled(
         body.push_str(&forrester_legend());
         body.push_str(&format!("<div class=\"dag\">{}</div>", forrester_svg(files, dag, layout)));
 
-        // 依赖关系图（按角色分色的拓扑 DAG）
-        body.push_str("<h2>依赖关系图 (DAG)<span class=\"sub\">按角色分色</span></h2>");
-        body.push_str("<div class=\"legend\">\
-            <span style=\"background:#ecfdf5\">参数</span>\
-            <span style=\"background:#eff6ff\">变量</span>\
-            <span style=\"background:#fef3c7\">方程</span></div>");
+        // 依赖关系图（按子模块分色的拓扑 DAG；节点名=变量label→方程中文名→代号）
+        body.push_str("<h2>依赖关系图 (DAG)<span class=\"sub\">按子模块分色 · 节点名取方程中文名</span></h2>");
+        body.push_str(&module_legend(dag));
         body.push_str(&format!("<div class=\"dag\">{}</div>", dag_svg(dag, layout)));
     } else {
-        // 方程级 / 模块级：折叠后的依赖图（Forrester 为变量级专属，此处不画）
+        // 方程级 / 模块级：折叠后的依赖图（Forrester 为变量级专属，此处不画）；按子模块分色
         let (h, sub) = if level == DagLevel::Module {
             ("模块级结构图", "子模块 + 跨模块数据流 —— 一眼看整体运算逻辑")
         } else {
-            ("方程级结构图", "方程节点（隐去参数叶子）—— 计算骨架")
+            ("方程级结构图", "方程节点（隐去参数叶子，节点名取方程中文名）—— 计算骨架")
         };
         body.push_str(&format!("<h2>{h}<span class=\"sub\">{sub}</span></h2>"));
+        body.push_str(&module_legend(dag));
         body.push_str(&format!("<div class=\"dag\">{}</div>", dag_svg(dag, layout)));
     }
 

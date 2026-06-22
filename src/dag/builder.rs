@@ -182,6 +182,29 @@ pub fn build_dag(files: &[EquationFile]) -> CompileResult<Dag> {
         }
     }
 
+    // 后置：给每个节点设**子模块**（上色 + 模块级折叠用）+ **友好标签**
+    // （变量 label → 方程中文名 → 参数中文名 → 代号；其余信息进悬停 tooltip）。
+    let submod = compute_submodules(files);
+    let eqnames = compute_eqnames(files);
+    for node in &mut nodes {
+        if let Some(m) = submod.get(&node.id) {
+            node.module = m.clone();
+        }
+        let (fmod, name) = node.id.split_once('.').unwrap_or(("", node.id.as_str()));
+        let label = files
+            .iter()
+            .find(|f| f.meta.id == fmod)
+            .and_then(|f| {
+                f.variables
+                    .get(name)
+                    .and_then(|v| v.label.clone())
+                    .or_else(|| eqnames.get(&node.id).cloned())
+                    .or_else(|| f.parameters.get(name).map(|p| p.name_cn.clone()))
+            })
+            .unwrap_or_else(|| name.to_string());
+        node.metadata.insert("label".to_string(), label);
+    }
+
     // 2. 添加边
     for file in files {
         let module = &file.meta.id;
@@ -268,11 +291,11 @@ impl DagLevel {
 }
 
 /// 把变量级 DAG 折叠到指定粒度。变量级原样返回。
-pub fn collapse_dag(dag: &Dag, files: &[EquationFile], level: DagLevel) -> Dag {
+pub fn collapse_dag(dag: &Dag, _files: &[EquationFile], level: DagLevel) -> Dag {
     match level {
         DagLevel::Variable => dag.clone(),
         DagLevel::Equation => collapse_to_equations(dag),
-        DagLevel::Module => collapse_to_modules(dag, files),
+        DagLevel::Module => collapse_to_modules(dag),
     }
 }
 
@@ -299,34 +322,84 @@ fn collapse_to_equations(dag: &Dag) -> Dag {
     Dag { nodes, edges, topological_order: dag.topological_order.clone() }
 }
 
-/// 模块级：按 `meta.modules`（模块名→方程id）把每个节点归到子模块，折叠成模块节点 + 聚合跨模块边。
-/// 参数节点丢弃；驱动量归「驱动量」；状态/延迟量随其 rate/prev 来源的模块；未列入的归「未分组」。
-fn collapse_to_modules(dag: &Dag, files: &[EquationFile]) -> Dag {
-    // 1) 节点 id（MODULE.name）→ 子模块名
+/// 模块级：按节点已设的子模块（[`build_dag`] 后置设好）折叠成模块节点 + 聚合跨模块边。参数节点丢弃。
+fn collapse_to_modules(dag: &Dag) -> Dag {
+    // 节点 id → (子模块, 是否参数)
+    let nodemap: HashMap<&str, (&str, bool)> = dag
+        .nodes
+        .iter()
+        .map(|n| (n.id.as_str(), (n.module.as_str(), n.node_type == NodeType::Parameter)))
+        .collect();
+    // 模块节点 = 非参数节点的不同子模块（"参数" 组也丢弃）
+    let mut modnames: Vec<String> = dag
+        .nodes
+        .iter()
+        .filter(|n| n.node_type != NodeType::Parameter && n.module != "参数")
+        .map(|n| n.module.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    modnames.sort();
+    let nodes: Vec<DagNode> = modnames
+        .iter()
+        .map(|m| DagNode {
+            id: m.clone(),
+            node_type: NodeType::Equation,
+            module: m.clone(),
+            metadata: IndexMap::new(),
+        })
+        .collect();
+    // 跨模块边（两端皆非参数、子模块不同）
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    let mut edges = Vec::new();
+    for e in &dag.edges {
+        if let (Some((a, ap)), Some((b, bp))) =
+            (nodemap.get(e.from.as_str()), nodemap.get(e.to.as_str()))
+        {
+            if *ap || *bp {
+                continue;
+            }
+            if a != b && seen.insert((a.to_string(), b.to_string())) {
+                edges.push(DagEdge {
+                    from: a.to_string(),
+                    to: b.to_string(),
+                    edge_type: EdgeType::DataFlow,
+                });
+            }
+        }
+    }
+    Dag { nodes, edges, topological_order: vec![] }
+}
+
+/// 每个节点（MODULE.name）→ 子模块名。供 [`build_dag`] 设节点子模块（上色 + 模块级折叠共用）。
+/// 方程输出→其 `meta.modules` 模块（未列入→「其他」）；驱动量→「驱动量」；参数→「参数」；
+/// 状态/延迟量→其 rate/prev 来源的模块。
+fn compute_submodules(files: &[EquationFile]) -> HashMap<String, String> {
     let mut sub: HashMap<String, String> = HashMap::new();
     for f in files {
         let mid = &f.meta.id;
-        // 方程 id → 模块名
         let mut eqmod: HashMap<&str, &str> = HashMap::new();
         for (mname, ids) in &f.meta.modules {
             for id in ids {
                 eqmod.insert(id.as_str(), mname.as_str());
             }
         }
-        // 方程输出 → 模块
         for eq in &f.equations {
-            let node = format!("{mid}.{}", eq.output);
-            let m = eqmod.get(eq.id.as_str()).copied().unwrap_or("未分组").to_string();
-            sub.insert(node, m);
+            sub.insert(
+                format!("{mid}.{}", eq.output),
+                eqmod.get(eq.id.as_str()).copied().unwrap_or("其他").to_string(),
+            );
         }
-        // 驱动量（input）→「驱动量」
         for (vname, var) in &f.variables {
             if var.var_type == VariableType::Input {
                 sub.entry(format!("{mid}.{vname}")).or_insert_with(|| "驱动量".to_string());
             }
         }
+        for name in f.parameters.keys() {
+            sub.entry(format!("{mid}.{name}")).or_insert_with(|| "参数".to_string());
+        }
     }
-    // 状态/延迟量（无方程）→ 随其 rate/prev 来源的模块
+    // 状态/延迟量随 rate/prev 来源
     for f in files {
         let mid = &f.meta.id;
         for (vname, var) in &f.variables {
@@ -340,37 +413,21 @@ fn collapse_to_modules(dag: &Dag, files: &[EquationFile]) -> Dag {
                     continue;
                 }
             }
-            sub.insert(node, "未分组".to_string());
+            sub.insert(node, "其他".to_string());
         }
     }
-    // 2) 模块节点（不在 sub 里的节点=参数，已丢弃）
-    let mut modnames: Vec<String> =
-        sub.values().cloned().collect::<HashSet<_>>().into_iter().collect();
-    modnames.sort();
-    let nodes: Vec<DagNode> = modnames
-        .iter()
-        .map(|m| DagNode {
-            id: m.clone(),
-            node_type: NodeType::Equation,
-            module: m.clone(),
-            metadata: IndexMap::new(),
-        })
-        .collect();
-    // 3) 聚合跨模块边
-    let mut seen: HashSet<(String, String)> = HashSet::new();
-    let mut edges = Vec::new();
-    for e in &dag.edges {
-        if let (Some(a), Some(b)) = (sub.get(&e.from), sub.get(&e.to)) {
-            if a != b && seen.insert((a.clone(), b.clone())) {
-                edges.push(DagEdge {
-                    from: a.clone(),
-                    to: b.clone(),
-                    edge_type: EdgeType::DataFlow,
-                });
-            }
+    sub
+}
+
+/// 每个方程输出节点（MODULE.output）→ 方程中文名（节点标签兜底）。
+fn compute_eqnames(files: &[EquationFile]) -> HashMap<String, String> {
+    let mut m = HashMap::new();
+    for f in files {
+        for eq in &f.equations {
+            m.insert(format!("{}.{}", f.meta.id, eq.output), eq.name.clone());
         }
     }
-    Dag { nodes, edges, topological_order: vec![] }
+    m
 }
 
 /// 计算拓扑排序
