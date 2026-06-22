@@ -33,12 +33,15 @@ use crate::sim::{simulate, SimInput, SimOutput};
 /// 打包进二进制的 Studio 前端页面（零构建步骤；以后可换成真正的 `frontend/` 构建产物）。
 const STUDIO_HTML: &str = include_str!("serve_assets/studio.html");
 
-/// 服务上下文：模型路径 + 预加载的情景数据 + 版本号。
+/// 服务上下文：模型路径 + 预加载的情景数据 + 实测数据目录 + 版本号。
 struct Ctx {
     path: PathBuf,
     /// 预加载的驱动量（步数, 名->序列）；未提供则无法仿真。
     drivers: Option<(usize, HashMap<String, Vec<f64>>)>,
     params: Option<HashMap<String, f64>>,
+    /// 园区录入的实测数据目录（每处理区一个 `<zone>.csv`，稀疏 observed 格式）。
+    /// `/api/observations` 在此读写；正是 `eqc calibrate --observed` 的输入。
+    data_dir: PathBuf,
     version: AtomicU64,
 }
 
@@ -48,6 +51,7 @@ pub fn serve(
     port: u16,
     drivers_path: Option<&PathBuf>,
     params_path: Option<&PathBuf>,
+    data_dir_arg: Option<&PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // 预加载情景数据（出错只警告、不阻断——模型结构仍可看）
     let drivers = match drivers_path {
@@ -72,10 +76,22 @@ pub fn serve(
         None => None,
     };
 
+    // 实测数据目录：显式 --data-dir 优先，否则模型同级的 observations/。
+    let data_dir = data_dir_arg.cloned().unwrap_or_else(|| {
+        let base = if path.is_dir() {
+            path.to_path_buf()
+        } else {
+            path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."))
+        };
+        base.join("observations")
+    });
+    println!("   实测数据目录：{}（园区录入写入 <zone>.csv，缺则首次保存时创建）", data_dir.display());
+
     let ctx = Arc::new(Ctx {
         path: path.to_path_buf(),
         drivers,
         params,
+        data_dir,
         version: AtomicU64::new(1),
     });
 
@@ -113,14 +129,10 @@ pub fn serve(
 
 /// 处理一个连接。
 fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
-    let mut buf = [0u8; 2048];
-    let n = stream.read(&mut buf)?;
-    let req = String::from_utf8_lossy(&buf[..n]);
-    let target = req
-        .lines()
-        .next()
-        .and_then(|l| l.split_whitespace().nth(1))
-        .unwrap_or("/");
+    let (head, req_body) = read_request(&mut stream)?;
+    let mut first = head.lines().next().unwrap_or("").split_whitespace();
+    let method = first.next().unwrap_or("GET");
+    let target = first.next().unwrap_or("/");
     let (route, query) = match target.split_once('?') {
         Some((r, q)) => (r, q),
         None => (target, ""),
@@ -171,6 +183,16 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
         "/api/optimize" => match run_optimize(ctx, query) {
             Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
             Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
+        },
+        // 实测数据读写（园区录入 → 标定输入）。GET 读回某处理区的稀疏 observed；
+        // POST 写出规范稀疏 CSV（EQC 权威拥有格式，前端只递交结构化数据）。
+        "/api/observations" => match method {
+            "GET" => ("200 OK", "application/json; charset=utf-8", read_observations(ctx, query)),
+            "POST" => match write_observations(ctx, query, &req_body) {
+                Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
+                Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
+            },
+            _ => ("405 Method Not Allowed", "text/plain; charset=utf-8", "Method Not Allowed".to_string()),
         },
         _ => ("404 Not Found", "text/plain; charset=utf-8", "Not Found".to_string()),
     };
@@ -427,6 +449,219 @@ fn error_html(msg: &str) -> String {
     )
 }
 
+/// 读完整 HTTP 请求：返回 (头部文本, 请求体字节)。
+/// 手写最小实现：先读到空行（头部结束），解析 `Content-Length`，再补足请求体。
+/// （原实现只读一个 2048 缓冲、不读 body；POST 录入需要完整 body。）
+fn read_request(stream: &mut TcpStream) -> std::io::Result<(String, Vec<u8>)> {
+    let mut data: Vec<u8> = Vec::new();
+    let mut buf = [0u8; 4096];
+    let mut head_end: Option<usize> = None;
+    loop {
+        let n = stream.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        data.extend_from_slice(&buf[..n]);
+        if let Some(p) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+            head_end = Some(p + 4);
+            break;
+        }
+        if data.len() > 64 * 1024 {
+            break; // 头部异常大，止损
+        }
+    }
+    let he = match head_end {
+        Some(x) => x,
+        None => return Ok((String::from_utf8_lossy(&data).into_owned(), Vec::new())),
+    };
+    let head = String::from_utf8_lossy(&data[..he]).into_owned();
+    let content_len = head
+        .lines()
+        .find_map(|l| {
+            let lower = l.to_ascii_lowercase();
+            lower
+                .strip_prefix("content-length:")
+                .map(|v| v.trim().parse::<usize>().unwrap_or(0))
+        })
+        .unwrap_or(0);
+    const MAX_BODY: usize = 8 * 1024 * 1024; // 8MB 止损
+    let want = content_len.min(MAX_BODY);
+    let mut body = data[he..].to_vec();
+    while body.len() < want {
+        let n = stream.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        body.extend_from_slice(&buf[..n]);
+    }
+    body.truncate(want);
+    Ok((head, body))
+}
+
+/// 处理区名消毒：只允许字母/数字/下划线/连字符，长度 1..=64（防路径穿越）。
+fn sanitize_zone(z: &str) -> Option<String> {
+    let z = z.trim();
+    if z.is_empty() || z.len() > 64 {
+        return None;
+    }
+    if z.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+        Some(z.to_string())
+    } else {
+        None
+    }
+}
+
+/// `?zone=A` → 消毒后的区名；缺省/非法 → "default"。
+fn parse_zone(query: &str) -> String {
+    for kv in query.split('&') {
+        if let Some(v) = kv.strip_prefix("zone=") {
+            if let Some(z) = sanitize_zone(&url_decode(v)) {
+                return z;
+            }
+        }
+    }
+    "default".to_string()
+}
+
+/// 读回某处理区已录入的稀疏实测数据（JSON）。文件不存在 → 空集（非错误）。
+fn read_observations(ctx: &Ctx, query: &str) -> String {
+    let zone = parse_zone(query);
+    let path = ctx.data_dir.join(format!("{zone}.csv"));
+    if !path.exists() {
+        return serde_json::json!({ "zone": zone, "exists": false, "observations": {}, "days": [] })
+            .to_string();
+    }
+    match crate::scenario::load_observed_csv(&path) {
+        Ok(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let mut obs = serde_json::Map::new();
+            let mut days: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+            for k in keys {
+                let series = &map[k];
+                let arr: Vec<serde_json::Value> =
+                    series.iter().map(|(d, v)| serde_json::json!([d, v])).collect();
+                for (d, _) in series {
+                    days.insert(*d);
+                }
+                obs.insert(k.clone(), serde_json::Value::Array(arr));
+            }
+            let days: Vec<usize> = days.into_iter().collect();
+            serde_json::json!({ "zone": zone, "exists": true, "observations": obs, "days": days })
+                .to_string()
+        }
+        Err(e) => error_json(&format!("读取实测数据失败: {e}")),
+    }
+}
+
+/// 写出某处理区的稀疏实测 CSV（园区录入 → 标定输入）。EQC 拥有格式，前端只递交结构化数据：
+/// body = `{ "columns": ["Y","TDM",...], "rows": [ {"DAT":30,"Y":1.2,"TDM":12.5}, ... ] }`。
+/// 校验：列名须是模型变量、DAT 正整数、值有限；按 DAT 排序去重；原子替换写盘。
+fn write_observations(ctx: &Ctx, query: &str, body: &[u8]) -> Result<String, String> {
+    let zone = parse_zone(query);
+    let v: serde_json::Value =
+        serde_json::from_slice(body).map_err(|e| format!("请求体不是合法 JSON: {e}"))?;
+
+    let columns: Vec<String> = v
+        .get("columns")
+        .and_then(|c| c.as_array())
+        .ok_or_else(|| "缺 columns 数组".to_string())?
+        .iter()
+        .filter_map(|x| x.as_str().map(|s| s.trim().to_string()))
+        .collect();
+    if columns.is_empty() {
+        return Err("columns 为空".into());
+    }
+    // 列名须是模型变量（防笔误、保证 CSV 可被 calibrate 消费）
+    let files = load_files(&ctx.path)?;
+    let file = files.first().ok_or_else(|| "无模型".to_string())?;
+    for c in &columns {
+        if c.is_empty() || c.contains(',') || c.contains('\n') || c.eq_ignore_ascii_case("DAT") {
+            return Err(format!("非法列名: '{c}'"));
+        }
+        if !file.variables.contains_key(c) {
+            return Err(format!("列 '{c}' 不是模型变量"));
+        }
+    }
+
+    let rows = v
+        .get("rows")
+        .and_then(|r| r.as_array())
+        .ok_or_else(|| "缺 rows 数组".to_string())?;
+    let (csv, nrows) = build_observed_csv(&columns, rows)?;
+
+    std::fs::create_dir_all(&ctx.data_dir).map_err(|e| format!("建目录失败: {e}"))?;
+    let path = ctx.data_dir.join(format!("{zone}.csv"));
+    let tmp = ctx.data_dir.join(format!(".{zone}.csv.tmp"));
+    std::fs::write(&tmp, csv.as_bytes()).map_err(|e| format!("写临时文件失败: {e}"))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("替换文件失败: {e}"))?;
+    Ok(serde_json::json!({
+        "ok": true, "zone": zone, "path": path.display().to_string(),
+        "rows": nrows, "columns": columns
+    })
+    .to_string())
+}
+
+/// 把结构化行装成规范稀疏 CSV（首列 DAT + 各列；空格=未测）。返回 (CSV 文本, 数据行数)。
+/// 同 DAT 合并（后写覆盖），按 DAT 升序；整行无值则跳过。纯函数、便于单测。
+fn build_observed_csv(
+    columns: &[String],
+    rows: &[serde_json::Value],
+) -> Result<(String, usize), String> {
+    let mut by_day: std::collections::BTreeMap<i64, HashMap<String, f64>> =
+        std::collections::BTreeMap::new();
+    for (ri, row) in rows.iter().enumerate() {
+        let obj = row
+            .as_object()
+            .ok_or_else(|| format!("第 {} 行不是对象", ri + 1))?;
+        let dat = obj
+            .get("DAT")
+            .or_else(|| obj.get("dat"))
+            .and_then(|d| d.as_f64())
+            .ok_or_else(|| format!("第 {} 行缺 DAT", ri + 1))?;
+        if dat <= 0.0 || dat.fract() != 0.0 {
+            return Err(format!("第 {} 行 DAT 须为正整数: {dat}", ri + 1));
+        }
+        let entry = by_day.entry(dat as i64).or_default();
+        for c in columns {
+            if let Some(val) = obj.get(c) {
+                if val.is_null() {
+                    continue;
+                }
+                let f = val
+                    .as_f64()
+                    .ok_or_else(|| format!("第 {} 行列 '{c}' 不是数值", ri + 1))?;
+                if !f.is_finite() {
+                    return Err(format!("第 {} 行列 '{c}' 非有限值", ri + 1));
+                }
+                entry.insert(c.clone(), f);
+            }
+        }
+    }
+    let mut csv = String::from("DAT");
+    for c in columns {
+        csv.push(',');
+        csv.push_str(c);
+    }
+    csv.push('\n');
+    let mut nrows = 0usize;
+    for (day, vals) in &by_day {
+        if columns.iter().all(|c| !vals.contains_key(c)) {
+            continue; // 整行空，跳过
+        }
+        csv.push_str(&day.to_string());
+        for c in columns {
+            csv.push(',');
+            if let Some(f) = vals.get(c) {
+                csv.push_str(&format!("{f}"));
+            }
+        }
+        csv.push('\n');
+        nrows += 1;
+    }
+    Ok((csv, nrows))
+}
+
 /// 监听指纹：单文件取其 mtime；目录取所有 `.eq.yaml` 的最大 mtime。
 fn fingerprint(path: &Path) -> Option<SystemTime> {
     if path.is_file() {
@@ -509,5 +744,57 @@ mod tests {
         assert_eq!(parse_layout("layout=layered"), LayoutKind::Layered);
         assert_eq!(parse_layout(""), LayoutKind::Layered); // 缺省回退
         assert_eq!(parse_layout("vars=Y"), LayoutKind::Layered);
+    }
+
+    #[test]
+    fn test_sanitize_zone() {
+        assert_eq!(sanitize_zone("zone_A-1").as_deref(), Some("zone_A-1"));
+        assert_eq!(sanitize_zone("  A  ").as_deref(), Some("A"));
+        assert!(sanitize_zone("../etc").is_none()); // 路径穿越
+        assert!(sanitize_zone("a/b").is_none());
+        assert!(sanitize_zone("a.b").is_none());
+        assert!(sanitize_zone("").is_none());
+    }
+
+    #[test]
+    fn test_parse_zone() {
+        assert_eq!(parse_zone("zone=A1&_=1"), "A1");
+        assert_eq!(parse_zone("vars=Y"), "default");
+        assert_eq!(parse_zone("zone=../x"), "default"); // 非法 → default
+    }
+
+    #[test]
+    fn test_build_observed_csv() {
+        let cols = vec!["Y".to_string(), "TDM".to_string()];
+        let rows = vec![
+            serde_json::json!({"DAT": 60, "Y": 1.2}),
+            serde_json::json!({"DAT": 30, "TDM": 12.5}),
+            serde_json::json!({"DAT": 60, "TDM": 40.0}), // 同 DAT 合并
+        ];
+        let (csv, n) = build_observed_csv(&cols, &rows).unwrap();
+        assert_eq!(n, 2);
+        // 按 DAT 升序；列序 DAT,Y,TDM；DAT=30 行 Y 空（稀疏）
+        assert_eq!(csv, "DAT,Y,TDM\n30,,12.5\n60,1.2,40\n");
+        // 往返：写出的 CSV 能被 load_observed_csv 解析回来
+        let dir = std::env::temp_dir().join("eqc_obs_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let p = dir.join("rt.csv");
+        std::fs::write(&p, &csv).unwrap();
+        let back = crate::scenario::load_observed_csv(&p).unwrap();
+        assert_eq!(back["TDM"], vec![(30, 12.5), (60, 40.0)]);
+        assert_eq!(back["Y"], vec![(60, 1.2)]);
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn test_build_observed_csv_rejects_bad() {
+        let cols = vec!["Y".to_string()];
+        assert!(build_observed_csv(&cols, &[serde_json::json!({"DAT": 1.5, "Y": 1.0})]).is_err()); // 非整 DAT
+        assert!(build_observed_csv(&cols, &[serde_json::json!({"Y": 1.0})]).is_err()); // 缺 DAT
+        assert!(build_observed_csv(&cols, &[serde_json::json!({"DAT": 10, "Y": "x"})]).is_err()); // 非数值
+        // 空表也能产出（只有表头）
+        let (csv, n) = build_observed_csv(&cols, &[]).unwrap();
+        assert_eq!(n, 0);
+        assert_eq!(csv, "DAT,Y\n");
     }
 }

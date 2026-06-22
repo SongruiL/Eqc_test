@@ -248,6 +248,11 @@ enum Commands {
         /// 参数覆盖 JSON
         #[arg(long)]
         params: Option<PathBuf>,
+
+        /// 实测数据存放目录（园区录入的 observed CSV 写到这里，每处理区一文件 <zone>.csv；
+        /// 缺省=模型同级的 observations/）。正是 `eqc calibrate --observed` 的输入。
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
     },
 
     /// 导出模型的 JSON 契约（前端/工具消费用，可检视）
@@ -365,8 +370,8 @@ fn main() {
         Commands::Sweep { input, drivers, param, range, sensitivity, percent, var, reduce, params, steps, output } => {
             run_sweep(&input, &drivers, param.as_deref(), range.as_deref(), sensitivity, percent, &var, &reduce, params.as_ref(), steps, &output)
         }
-        Commands::Serve { input, port, drivers, params } => {
-            equation_compiler::serve::serve(&input, port, drivers.as_ref(), params.as_ref())
+        Commands::Serve { input, port, drivers, params, data_dir } => {
+            equation_compiler::serve::serve(&input, port, drivers.as_ref(), params.as_ref(), data_dir.as_ref())
         }
         Commands::Export { input, output } => run_export(&input, output.as_ref()),
         Commands::Optimize { input, spec, drivers, steps, prescreen, output } => {
