@@ -215,6 +215,11 @@
   <section class="panel struct-panel">
     <h2>模型结构（Forrester 图 + 二维公式）
       <span class="tools">
+        <span class="seg" id="levelSeg" title="切换结构图粒度：变量/方程/模块">
+          <button data-level="variable">变量</button>
+          <button data-level="equation">方程</button>
+          <button data-level="module">模块</button>
+        </span>
         <span class="seg" id="layoutSeg" title="切换结构图布局">
           <button data-layout="forrester">Forrester</button>
           <button data-layout="force">力导向</button>
@@ -390,17 +395,30 @@ setInterval(async ()=>{
   } catch(e){}
 }, 1000);
 
-// 结构图布局切换：Forrester / 力导向 / 分层。选择存 localStorage，自动刷新后保留。
-function applyLayout(kind){
-  try { localStorage.setItem('eqc_layout', kind); } catch(e){}
-  document.querySelectorAll('#layoutSeg button').forEach(b=>{
-    b.classList.toggle('active', b.dataset.layout===kind);
-  });
-  document.getElementById('report').src = '/api/report?layout=' + encodeURIComponent(kind);
+// 结构图：粒度（变量/方程/模块）+ 布局（Forrester/力导向/分层）。选择存 localStorage、自动刷新后保留。
+let _layout = 'layered', _level = 'variable';
+try { _layout = localStorage.getItem('eqc_layout') || 'layered'; } catch(e){}
+try { _level  = localStorage.getItem('eqc_level')  || 'variable'; } catch(e){}
+function reloadReport(){
+  document.getElementById('report').src = '/api/report?layout=' + encodeURIComponent(_layout) + '&level=' + encodeURIComponent(_level);
 }
-document.querySelectorAll('#layoutSeg button').forEach(b=>{
-  b.addEventListener('click', ()=>applyLayout(b.dataset.layout));
-});
+function applyLayout(kind){
+  _layout = kind; try { localStorage.setItem('eqc_layout', kind); } catch(e){}
+  document.querySelectorAll('#layoutSeg button').forEach(b=> b.classList.toggle('active', b.dataset.layout===kind));
+  reloadReport();
+}
+function applyLevel(lvl){
+  _level = lvl; try { localStorage.setItem('eqc_level', lvl); } catch(e){}
+  document.querySelectorAll('#levelSeg button').forEach(b=> b.classList.toggle('active', b.dataset.level===lvl));
+  reloadReport();
+}
+function initStructSegs(){
+  document.querySelectorAll('#layoutSeg button').forEach(b=> b.classList.toggle('active', b.dataset.layout===_layout));
+  document.querySelectorAll('#levelSeg button').forEach(b=> b.classList.toggle('active', b.dataset.level===_level));
+  reloadReport();
+}
+document.querySelectorAll('#layoutSeg button').forEach(b=> b.addEventListener('click', ()=>applyLayout(b.dataset.layout)));
+document.querySelectorAll('#levelSeg button').forEach(b=> b.addEventListener('click', ()=>applyLevel(b.dataset.level)));
 
 // 缩放：控件在 Studio 工具栏，伸进同源 iframe 设置每张结构图 SVG 的显示宽度（容器自带滚动条平移）。
 // zoom=1 即"适应面板宽"。报告本身仍零 JS（缩放是 Studio 行为，离线报告不受影响）。
@@ -980,9 +998,7 @@ async function runAdvice(){
 }
 document.getElementById('adviceRun').addEventListener('click', runAdvice);
 
-let _savedLayout = 'layered';
-try { _savedLayout = localStorage.getItem('eqc_layout') || 'layered'; } catch(e){}
-applyLayout(_savedLayout);
+initStructSegs();   // 结构图：恢复粒度 + 布局并加载报告
 
 let _savedMode = 'park';   // 4A：默认进园区视图（园区员工为主；最后选择仍由 localStorage 记住）
 try { _savedMode = localStorage.getItem('eqc_mode') || 'park'; } catch(e){}

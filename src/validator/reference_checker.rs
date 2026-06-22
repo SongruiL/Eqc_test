@@ -174,6 +174,7 @@ mod tests {
             source_files: vec![],
             dt: 1.0,
             calibration: None,
+            modules: Default::default(),
         }
     }
 

@@ -65,6 +65,14 @@ pub struct Metadata {
     /// 标定状态（看懂输出的「可信度徽章」用）。缺省 None = 视为未标定。
     #[serde(default)]
     pub calibration: Option<Calibration>,
+
+    /// 子模块划分（DAG「模块级」视图用）：模块名 → 该模块的方程 id 列表。
+    ///
+    /// 作者声明（写在 `meta:` 下），如 `modules: {光合: [SB-01, SB-02], 水: [SB-ES, SB-VPD]}`。
+    /// DAG 模块级把每个方程节点折叠进其模块、聚合跨模块边 → 一眼看整体运算逻辑。
+    /// 未列入任何模块的方程归「未分组」。缺省空 = 无模块级视图（回退方程级）。
+    #[serde(default)]
+    pub modules: IndexMap<String, Vec<String>>,
 }
 
 /// 模型标定状态：诚实告知非数学用户「此结果可不可信」。
@@ -190,6 +198,7 @@ mod tests {
                 source_files: vec![],
                 dt: 1.0,
                 calibration: None,
+                modules: Default::default(),
             },
             parameters,
             variables: Default::default(),

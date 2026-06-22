@@ -2,4 +2,4 @@
 
 mod builder;
 
-pub use builder::{build_dag, Dag, DagEdge, DagNode, EdgeType, NodeType};
+pub use builder::{build_dag, collapse_dag, Dag, DagEdge, DagLevel, DagNode, EdgeType, NodeType};

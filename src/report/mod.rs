@@ -8,7 +8,7 @@ pub use layout::LayoutKind;
 use layout::{compute as compute_layout, Geom};
 
 use crate::ast::Expr;
-use crate::dag::Dag;
+use crate::dag::{Dag, DagLevel};
 use crate::schema::{EquationFile, VarClass};
 use std::collections::{HashMap, HashSet};
 
@@ -551,8 +551,19 @@ pub fn generate_report(files: &[EquationFile], dag: &Dag) -> String {
     generate_report_with(files, dag, LayoutKind::Layered)
 }
 
-/// 生成自包含 HTML 报告，指定结构图布局（Studio `?layout=` / `eqc report --layout` 用）。
+/// 生成自包含 HTML 报告，指定结构图布局（向后兼容：变量级）。
 pub fn generate_report_with(files: &[EquationFile], dag: &Dag, layout: LayoutKind) -> String {
+    generate_report_leveled(files, dag, layout, DagLevel::Variable)
+}
+
+/// 生成自包含 HTML 报告，指定布局 + 粒度层级（变量/方程/模块）。
+/// 调用方先用 [`crate::dag::collapse_dag`] 把 `dag` 折叠到对应粒度再传入。
+pub fn generate_report_leveled(
+    files: &[EquationFile],
+    dag: &Dag,
+    layout: LayoutKind,
+    level: DagLevel,
+) -> String {
     let title = files
         .first()
         .map(|f| {
@@ -567,18 +578,29 @@ pub fn generate_report_with(files: &[EquationFile], dag: &Dag, layout: LayoutKin
     // 结构图放在窄栏(.wrap)之外 → 占满整屏宽（「专注」全屏时不被 1100px 限住）；公式留在窄栏里好读。
     let mut body = String::new();
 
-    // Forrester 库存-流量图（动态结构：存量/速率/驱动/物质流）
-    body.push_str("<h2>Forrester 库存-流量图<span class=\"sub\">动态结构：存量·速率·驱动·物质流</span></h2>");
-    body.push_str(&forrester_legend());
-    body.push_str(&format!("<div class=\"dag\">{}</div>", forrester_svg(files, dag, layout)));
+    if level == DagLevel::Variable {
+        // Forrester 库存-流量图（动态结构：存量/速率/驱动/物质流）
+        body.push_str("<h2>Forrester 库存-流量图<span class=\"sub\">动态结构：存量·速率·驱动·物质流</span></h2>");
+        body.push_str(&forrester_legend());
+        body.push_str(&format!("<div class=\"dag\">{}</div>", forrester_svg(files, dag, layout)));
 
-    // 依赖关系图（按角色分色的拓扑 DAG）
-    body.push_str("<h2>依赖关系图 (DAG)<span class=\"sub\">按角色分色</span></h2>");
-    body.push_str("<div class=\"legend\">\
-        <span style=\"background:#ecfdf5\">参数</span>\
-        <span style=\"background:#eff6ff\">变量</span>\
-        <span style=\"background:#fef3c7\">方程</span></div>");
-    body.push_str(&format!("<div class=\"dag\">{}</div>", dag_svg(dag, layout)));
+        // 依赖关系图（按角色分色的拓扑 DAG）
+        body.push_str("<h2>依赖关系图 (DAG)<span class=\"sub\">按角色分色</span></h2>");
+        body.push_str("<div class=\"legend\">\
+            <span style=\"background:#ecfdf5\">参数</span>\
+            <span style=\"background:#eff6ff\">变量</span>\
+            <span style=\"background:#fef3c7\">方程</span></div>");
+        body.push_str(&format!("<div class=\"dag\">{}</div>", dag_svg(dag, layout)));
+    } else {
+        // 方程级 / 模块级：折叠后的依赖图（Forrester 为变量级专属，此处不画）
+        let (h, sub) = if level == DagLevel::Module {
+            ("模块级结构图", "子模块 + 跨模块数据流 —— 一眼看整体运算逻辑")
+        } else {
+            ("方程级结构图", "方程节点（隐去参数叶子）—— 计算骨架")
+        };
+        body.push_str(&format!("<h2>{h}<span class=\"sub\">{sub}</span></h2>"));
+        body.push_str(&format!("<div class=\"dag\">{}</div>", dag_svg(dag, layout)));
+    }
 
     // 公式区（窄栏，便于阅读）
     body.push_str("<div class=\"wrap\">");
@@ -685,6 +707,7 @@ mod tests {
                 source_files: vec![],
                 dt: 1.0,
                 calibration: None,
+                modules: Default::default(),
             },
             parameters: Default::default(),
             variables,
@@ -742,7 +765,7 @@ mod tests {
         variables.insert("X".into(), mk(Some(VarClass::State), VariableType::Output, Some("R"), Some(0.0)));
 
         let file = EquationFile {
-            meta: Metadata { id: "M".into(), model: "M".into(), name_cn: "动态".into(), name_en: None, version: "1.0".into(), description: None, reference: None, source_files: vec![], dt: 1.0, calibration: None },
+            meta: Metadata { id: "M".into(), model: "M".into(), name_cn: "动态".into(), name_en: None, version: "1.0".into(), description: None, reference: None, source_files: vec![], dt: 1.0, calibration: None, modules: Default::default() },
             parameters: Default::default(),
             variables,
             equations: vec![Equation { id: "E".into(), name: "速率".into(), output: "R".into(), expression: Expr::mul(Expr::var("T"), Expr::Const(2.0)), formula_display: None, reference: None }],

@@ -24,9 +24,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use crate::dag::build_dag;
+use crate::dag::{build_dag, collapse_dag, DagLevel};
 use crate::parser::{parse_directory, parse_file};
-use crate::report::{generate_report_with, LayoutKind};
+use crate::report::{generate_report_leveled, LayoutKind};
 use crate::schema::EquationFile;
 use crate::sim::{simulate, SimInput, SimOutput};
 
@@ -149,7 +149,7 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
             Ok(files) => ("200 OK", "application/json; charset=utf-8", crate::export::to_json_string(&files)),
             Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
         },
-        "/api/report" => match render_report(&ctx.path, parse_layout(query)) {
+        "/api/report" => match render_report(&ctx.path, parse_layout(query), parse_dag_level(query)) {
             Ok(h) => ("200 OK", "text/html; charset=utf-8", h),
             Err(e) => ("200 OK", "text/html; charset=utf-8", error_html(&e)),
         },
@@ -273,10 +273,11 @@ fn load_files(path: &Path) -> Result<Vec<EquationFile>, String> {
     Ok(files)
 }
 
-fn render_report(path: &Path, layout: LayoutKind) -> Result<String, String> {
+fn render_report(path: &Path, layout: LayoutKind, level: DagLevel) -> Result<String, String> {
     let files = load_files(path)?;
     let dag = build_dag(&files).map_err(|e| e.to_string())?;
-    Ok(generate_report_with(&files, &dag, layout))
+    let collapsed = collapse_dag(&dag, &files, level);
+    Ok(generate_report_leveled(&files, &collapsed, layout, level))
 }
 
 /// `?layout=force` → 对应布局（未提供/未知 → 分层）。
@@ -287,6 +288,16 @@ fn parse_layout(query: &str) -> LayoutKind {
         }
     }
     LayoutKind::Layered
+}
+
+/// `?level=module` → 对应粒度（未提供/未知 → 变量级）。
+fn parse_dag_level(query: &str) -> DagLevel {
+    for kv in query.split('&') {
+        if let Some(v) = kv.strip_prefix("level=") {
+            return DagLevel::parse(&url_decode(v));
+        }
+    }
+    DagLevel::Variable
 }
 
 /// 用预加载的驱动量 + 参数跑一次仿真（单模型，取第一个模块）。
@@ -938,6 +949,9 @@ mod tests {
         // 4：默认进园区 + 区级标定徽章
         assert!(STUDIO_HTML.contains("ZONE_CALIB"));
         assert!(STUDIO_HTML.contains("本区已标定"));
+        // DAG 粒度切换（变量/方程/模块）
+        assert!(STUDIO_HTML.contains("levelSeg"));
+        assert!(STUDIO_HTML.contains("&level="));
     }
 
     #[test]

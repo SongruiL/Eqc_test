@@ -238,6 +238,141 @@ pub fn build_dag(files: &[EquationFile]) -> CompileResult<Dag> {
     })
 }
 
+/// DAG 粒度层级（结构图「参数/方程/模块」切换用）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DagLevel {
+    /// 变量级（最细，现状）：每个变量/参数一个节点。
+    Variable,
+    /// 方程级：隐去参数叶子，只留"算什么→喂给谁"的计算骨架。
+    Equation,
+    /// 模块级：按 `meta.modules` 把方程折叠进各子模块、聚合跨模块边。
+    Module,
+}
+
+impl DagLevel {
+    /// 解析 `?level=`（未知/缺省 → 变量级）。
+    pub fn parse(s: &str) -> DagLevel {
+        match s.trim() {
+            "equation" => DagLevel::Equation,
+            "module" => DagLevel::Module,
+            _ => DagLevel::Variable,
+        }
+    }
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DagLevel::Variable => "variable",
+            DagLevel::Equation => "equation",
+            DagLevel::Module => "module",
+        }
+    }
+}
+
+/// 把变量级 DAG 折叠到指定粒度。变量级原样返回。
+pub fn collapse_dag(dag: &Dag, files: &[EquationFile], level: DagLevel) -> Dag {
+    match level {
+        DagLevel::Variable => dag.clone(),
+        DagLevel::Equation => collapse_to_equations(dag),
+        DagLevel::Module => collapse_to_modules(dag, files),
+    }
+}
+
+/// 方程级：丢掉参数节点（及其相连的边），只剩方程/变量/驱动/状态的计算骨架。
+fn collapse_to_equations(dag: &Dag) -> Dag {
+    let keep: HashSet<&str> = dag
+        .nodes
+        .iter()
+        .filter(|n| n.node_type != NodeType::Parameter)
+        .map(|n| n.id.as_str())
+        .collect();
+    let nodes = dag
+        .nodes
+        .iter()
+        .filter(|n| n.node_type != NodeType::Parameter)
+        .cloned()
+        .collect();
+    let edges = dag
+        .edges
+        .iter()
+        .filter(|e| keep.contains(e.from.as_str()) && keep.contains(e.to.as_str()))
+        .cloned()
+        .collect();
+    Dag { nodes, edges, topological_order: dag.topological_order.clone() }
+}
+
+/// 模块级：按 `meta.modules`（模块名→方程id）把每个节点归到子模块，折叠成模块节点 + 聚合跨模块边。
+/// 参数节点丢弃；驱动量归「驱动量」；状态/延迟量随其 rate/prev 来源的模块；未列入的归「未分组」。
+fn collapse_to_modules(dag: &Dag, files: &[EquationFile]) -> Dag {
+    // 1) 节点 id（MODULE.name）→ 子模块名
+    let mut sub: HashMap<String, String> = HashMap::new();
+    for f in files {
+        let mid = &f.meta.id;
+        // 方程 id → 模块名
+        let mut eqmod: HashMap<&str, &str> = HashMap::new();
+        for (mname, ids) in &f.meta.modules {
+            for id in ids {
+                eqmod.insert(id.as_str(), mname.as_str());
+            }
+        }
+        // 方程输出 → 模块
+        for eq in &f.equations {
+            let node = format!("{mid}.{}", eq.output);
+            let m = eqmod.get(eq.id.as_str()).copied().unwrap_or("未分组").to_string();
+            sub.insert(node, m);
+        }
+        // 驱动量（input）→「驱动量」
+        for (vname, var) in &f.variables {
+            if var.var_type == VariableType::Input {
+                sub.entry(format!("{mid}.{vname}")).or_insert_with(|| "驱动量".to_string());
+            }
+        }
+    }
+    // 状态/延迟量（无方程）→ 随其 rate/prev 来源的模块
+    for f in files {
+        let mid = &f.meta.id;
+        for (vname, var) in &f.variables {
+            let node = format!("{mid}.{vname}");
+            if sub.contains_key(&node) {
+                continue;
+            }
+            if let Some(s) = var.rate.as_ref().or(var.prev.as_ref()) {
+                if let Some(m) = sub.get(&format!("{mid}.{s}")).cloned() {
+                    sub.insert(node, m);
+                    continue;
+                }
+            }
+            sub.insert(node, "未分组".to_string());
+        }
+    }
+    // 2) 模块节点（不在 sub 里的节点=参数，已丢弃）
+    let mut modnames: Vec<String> =
+        sub.values().cloned().collect::<HashSet<_>>().into_iter().collect();
+    modnames.sort();
+    let nodes: Vec<DagNode> = modnames
+        .iter()
+        .map(|m| DagNode {
+            id: m.clone(),
+            node_type: NodeType::Equation,
+            module: m.clone(),
+            metadata: IndexMap::new(),
+        })
+        .collect();
+    // 3) 聚合跨模块边
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    let mut edges = Vec::new();
+    for e in &dag.edges {
+        if let (Some(a), Some(b)) = (sub.get(&e.from), sub.get(&e.to)) {
+            if a != b && seen.insert((a.clone(), b.clone())) {
+                edges.push(DagEdge {
+                    from: a.clone(),
+                    to: b.clone(),
+                    edge_type: EdgeType::DataFlow,
+                });
+            }
+        }
+    }
+    Dag { nodes, edges, topological_order: vec![] }
+}
+
 /// 计算拓扑排序
 fn compute_topological_order(nodes: &[DagNode], edges: &[DagEdge]) -> CompileResult<Vec<String>> {
     // 构建 petgraph 图
