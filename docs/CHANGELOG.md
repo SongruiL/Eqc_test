@@ -150,8 +150,15 @@
 - **`eqc validate` / `eqc report` 接受单文件**：原先无条件 `load_directory`，对单个 `.eq.yaml` 撞 `read_dir` 的「目录名无效」os-267；改为 `input.is_file()` → `load_file`、否则 `load_directory`（与 `eqc serve` 一致）。
 - **温室 `greenhouse_v1_ctrl` 季节门控 `Numeric×Boolean` 修复**（在 greenhouse-model 库）：GH-HEATSP/VENTSP/PHIINJ 的 `force+(sp−force)·lt(…)` / `phi·geq(…)` 改写为 `if(cond, then, else)` → 类型干净（之前 `validate` 报 3 错、只能 `simulate`）；**逐位一致**（lt/geq∈{0,1}，if-select ≡ 0/1 乘），优化脚本不受影响。耦合视图现可换上带控温的温室。
 
+### 耦合仿真 C1（多速率、单向）—— 见 docs/spec-coupled-simulation.md
+温室（快、秒级）↔ 作物（慢、日级）一次集成运行的地基。规范 D1–D6 已定。
+- **C1a `Stepper` 重构**：把单模型每步逻辑（DAT→驱动→延迟→拓扑序方程/积分→快照 prev）抽成可复用 `Stepper`，`simulate` 变薄封装。耦合与单模型逐步共用同一步进=单一真相源。**零回归**：草莓 v1 Y=6.7058324979969655 逐位一致、S4 向量路径 SHA1 相同。
+- **C1b 多速率耦合**：`Metadata.dt_seconds`（各模型自描述步长折秒：温室 10、日级作物 86400；耦合统一到秒，D1）。`sim::simulate_coupled`：双 `Stepper`，每慢步跑 R=dt_slow秒/dt_fast秒 个快步，快→慢 `mean`/`integral`（带 scale 单位换算）聚合喂作物，无反馈（C1 单向）。`Agg`/`CoupledLink`/`CoupledInput`/`CoupledOutput` + `SimError::Coupling`。CLI `eqc couple --fast --slow --weather --link to=from[:agg[:scale]]`。
+- **验证**：机制单测（R/mean/integral·dt_fast 解析命中）；金标准——温室→蓝莓 `eqc couple` 内联聚合的 T/Sr 与全精度 `aggregate_to_daily` 逻辑**逐位一致（最大绝对差 0）**，即一次集成运行复现离线两趟管道。214 lib + 3 + 4 + 100 全绿。
+- **下一步 C2**：双向滞后反馈（温室 `phi_ass` 转 input 接作物光合，先只 CO₂）。
+
 ## 工程基线
-- 测试：212 lib + 3 bin + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
+- 测试：214 lib + 3 bin + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
 - 远程：github.com/SongruiL/Eqc_test，SSH 推送。
 - 文档：见 `docs/USAGE.md`（架构与模块地图）、`docs/spec-*.md`（设计规格）。
 

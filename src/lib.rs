@@ -80,7 +80,10 @@ pub use parser::{parse_directory, parse_file};
 #[cfg(feature = "cli")]
 pub use schema::{DataType, Equation, EquationFile, Metadata, Parameter, VarClass, Variable, VariableType};
 #[cfg(feature = "cli")]
-pub use sim::{simulate, SimError, SimInput, SimOutput};
+pub use sim::{
+    simulate, simulate_coupled, Agg, CoupledInput, CoupledLink, CoupledOutput, SimError, SimInput,
+    SimOutput,
+};
 #[cfg(feature = "cli")]
 pub use validator::{validate, ExprType, ValidationError as ValidatorError};
 

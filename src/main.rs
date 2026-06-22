@@ -186,6 +186,39 @@ enum Commands {
         output: PathBuf,
     },
 
+    /// 耦合仿真（C1：多速率、单向）：快模型（温室，小 dt）↔ 慢模型（作物，大 dt）一次集成运行。
+    /// 每慢步跑 R=dt_slow秒/dt_fast秒 个快步、把温室气候聚合喂作物。见 docs/spec-coupled-simulation.md。
+    Couple {
+        /// 快模型（小 dt，如温室；须有 meta.dt_seconds）
+        #[arg(long)]
+        fast: PathBuf,
+
+        /// 慢模型（大 dt，如作物；须有 meta.dt_seconds）
+        #[arg(long)]
+        slow: PathBuf,
+
+        /// 快模型室外驱动 CSV（快分辨率，全程；行数 ≥ 慢步数·R）
+        #[arg(short, long)]
+        weather: PathBuf,
+
+        /// 快→慢链接，可重复：`to=from[:agg[:scale]]`（agg=mean|integral|last，缺省 mean；scale 缺省 1）。
+        /// 例：`--link T=T_air:mean --link Sr=Q_sun:integral:1e-6`
+        #[arg(long = "link")]
+        links: Vec<String>,
+
+        /// 慢步数（作物天数；缺省 = 室外驱动行数 / R）
+        #[arg(short, long)]
+        steps: Option<usize>,
+
+        /// 输出慢模型（作物）轨迹 CSV
+        #[arg(short, long, default_value = "couple_output.csv")]
+        output: PathBuf,
+
+        /// 另存喂给慢模型的聚合驱动 CSV（= 等效的离线 aggregate；便于核对）
+        #[arg(long)]
+        fed_out: Option<PathBuf>,
+    },
+
     /// 参数敏感性扫描：把一个标量参数在区间内取 N 点各跑一次仿真，输出对某变量的响应 CSV
     Sweep {
         /// 模型文件（单个 .eq.yaml）
@@ -364,6 +397,9 @@ fn main() {
         Commands::SexprSpec => run_sexpr_spec(),
         Commands::CheckDims { input, strict } => run_check_dims(&input, strict),
         Commands::Report { input, output, layout } => run_report(&input, &output, &layout),
+        Commands::Couple { fast, slow, weather, links, steps, output, fed_out } => {
+            run_couple(&fast, &slow, &weather, &links, steps, &output, fed_out.as_ref())
+        }
         Commands::Simulate { input, drivers, params, steps, output, dt, init } => {
             run_simulate(&input, &drivers, params.as_ref(), steps, &output, dt, init.as_deref())
         }
@@ -529,6 +565,123 @@ fn run_simulate(
         println!("   输出变量末值（第 {} 天）：", out.steps);
         for (name, _) in outputs {
             if let Some(v) = out.final_value(name) {
+                println!("     {name} = {v}");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 把轨迹/聚合驱动写成 CSV（首列 DAT，列序保 IndexMap 声明序）。
+#[cfg(feature = "cli")]
+fn write_traj_csv(
+    traj: &indexmap::IndexMap<String, Vec<f64>>,
+    steps: usize,
+    path: &PathBuf,
+) -> std::io::Result<()> {
+    let mut csv = String::from("DAT");
+    for name in traj.keys() {
+        csv.push(',');
+        csv.push_str(name);
+    }
+    csv.push('\n');
+    for n in 0..steps {
+        csv.push_str(&(n + 1).to_string());
+        for series in traj.values() {
+            csv.push(',');
+            csv.push_str(&format!("{}", series[n]));
+        }
+        csv.push('\n');
+    }
+    std::fs::write(path, csv)
+}
+
+/// `eqc couple`：多速率耦合仿真（C1 单向）。
+#[cfg(feature = "cli")]
+fn run_couple(
+    fast: &PathBuf,
+    slow: &PathBuf,
+    weather: &PathBuf,
+    links: &[String],
+    steps: Option<usize>,
+    output: &PathBuf,
+    fed_out: Option<&PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use equation_compiler::scenario::load_drivers_csv;
+    use equation_compiler::{parse_file, simulate_coupled, Agg, CoupledInput, CoupledLink};
+
+    let fast_file = parse_file(fast)?;
+    let slow_file = parse_file(slow)?;
+    println!("🔗 耦合仿真: 快 {} ↔ 慢 {}", fast_file.meta.id, slow_file.meta.id);
+
+    // 解析链接 to=from[:agg[:scale]]
+    let mut parsed: Vec<CoupledLink> = Vec::new();
+    for l in links {
+        let (to, rest) = l
+            .split_once('=')
+            .ok_or_else(|| format!("链接格式应为 to=from[:agg[:scale]]，得到: {l}"))?;
+        let parts: Vec<&str> = rest.split(':').collect();
+        let from = parts[0].trim();
+        let agg = match parts.get(1) {
+            Some(s) => Agg::parse(s).ok_or_else(|| format!("未知聚合 '{s}'（mean|integral|last）"))?,
+            None => Agg::Mean,
+        };
+        let scale = match parts.get(2) {
+            Some(s) => s.parse::<f64>().map_err(|e| format!("scale 非数值: {e}"))?,
+            None => 1.0,
+        };
+        parsed.push(CoupledLink { to: to.trim().to_string(), from: from.to_string(), agg, scale });
+    }
+    if parsed.is_empty() {
+        return Err("至少需要一条 --link（如 --link T=T_air:mean）".into());
+    }
+
+    // R = dt_slow秒 / dt_fast秒（定每慢步的快步数、默认慢步数）
+    let dtf = fast_file
+        .meta
+        .dt_seconds
+        .ok_or_else(|| format!("快模型 {} 缺 meta.dt_seconds", fast_file.meta.id))?;
+    let dts = slow_file
+        .meta
+        .dt_seconds
+        .ok_or_else(|| format!("慢模型 {} 缺 meta.dt_seconds", slow_file.meta.id))?;
+    let r = (dts / dtf).round().max(1.0) as usize;
+
+    let (rows, weather_map) = load_drivers_csv(weather)?;
+    let slow_steps = steps.unwrap_or(rows / r);
+    if slow_steps == 0 {
+        return Err(format!("室外驱动 {rows} 行不足一慢步（R={r}）").into());
+    }
+    let need = slow_steps * r;
+    if rows < need {
+        return Err(format!("室外驱动 {rows} 行 < 慢步数·R = {need}").into());
+    }
+    // 截到精确长度（多余的整步尾巴丢弃）
+    let weather_trunc: std::collections::HashMap<String, Vec<f64>> = weather_map
+        .into_iter()
+        .map(|(k, v)| (k, v[..need.min(v.len())].to_vec()))
+        .collect();
+
+    let inp = CoupledInput::new(&fast_file, &slow_file, parsed, weather_trunc, slow_steps);
+    let out = simulate_coupled(&inp).map_err(|e| format!("耦合仿真失败: {e}"))?;
+
+    write_traj_csv(&out.slow.trajectories, out.slow_steps, output)?;
+    if let Some(fo) = fed_out {
+        write_traj_csv(&out.fed_drivers, out.slow_steps, fo)?;
+    }
+
+    println!(
+        "✅ 耦合完成：{} 慢步 × R={} 快步/步（共 {} 快步）；作物轨迹 → {}",
+        out.slow_steps,
+        out.r,
+        out.slow_steps * out.r,
+        output.display()
+    );
+    let outputs = slow_file.output_variables();
+    if !outputs.is_empty() {
+        println!("   作物输出末值（第 {} 步）：", out.slow_steps);
+        for (name, _) in outputs.iter().take(8) {
+            if let Some(v) = out.slow.final_value(name) {
                 println!("     {name} = {v}");
             }
         }

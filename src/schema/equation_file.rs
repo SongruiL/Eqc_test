@@ -62,6 +62,12 @@ pub struct Metadata {
     #[serde(default = "default_dt")]
     pub dt: f64,
 
+    /// 步长折合**秒数**（耦合仿真用）。`dt` 是各模型自己时间单位下的步长（温室 dt=10 即 10s、
+    /// 日级作物 dt=1 即 1 天），单位不互通；多速率耦合需统一到秒，故模型自描述其步长的秒数
+    /// （温室=10、日级作物=86400、小时级=3600）。缺省 None = 单模型仿真不需要、不影响。
+    #[serde(default)]
+    pub dt_seconds: Option<f64>,
+
     /// 标定状态（看懂输出的「可信度徽章」用）。缺省 None = 视为未标定。
     #[serde(default)]
     pub calibration: Option<Calibration>,
@@ -197,6 +203,7 @@ mod tests {
                 reference: None,
                 source_files: vec![],
                 dt: 1.0,
+                dt_seconds: None,
                 calibration: None,
                 modules: Default::default(),
             },

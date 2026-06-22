@@ -745,6 +745,7 @@ mod tests {
                 reference: None,
                 source_files: vec![],
                 dt: 1.0,
+                dt_seconds: None,
                 calibration: None,
                 modules: Default::default(),
             },
@@ -804,7 +805,7 @@ mod tests {
         variables.insert("X".into(), mk(Some(VarClass::State), VariableType::Output, Some("R"), Some(0.0)));
 
         let file = EquationFile {
-            meta: Metadata { id: "M".into(), model: "M".into(), name_cn: "动态".into(), name_en: None, version: "1.0".into(), description: None, reference: None, source_files: vec![], dt: 1.0, calibration: None, modules: Default::default() },
+            meta: Metadata { id: "M".into(), model: "M".into(), name_cn: "动态".into(), name_en: None, version: "1.0".into(), description: None, reference: None, source_files: vec![], dt: 1.0, dt_seconds: None, calibration: None, modules: Default::default() },
             parameters: Default::default(),
             variables,
             equations: vec![Equation { id: "E".into(), name: "速率".into(), output: "R".into(), expression: Expr::mul(Expr::var("T"), Expr::Const(2.0)), formula_display: None, reference: None }],

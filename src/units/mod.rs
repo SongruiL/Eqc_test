@@ -875,6 +875,7 @@ mod tests {
                 reference: None,
                 source_files: vec![],
                 dt: 1.0,
+                dt_seconds: None,
                 calibration: None,
                 modules: Default::default(),
             },
@@ -989,6 +990,7 @@ mod tests {
                 reference: None,
                 source_files: vec![],
                 dt: 1.0,
+                dt_seconds: None,
                 calibration: None,
                 modules: Default::default(),
             }

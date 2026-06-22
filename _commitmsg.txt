@@ -1,0 +1,28 @@
+耦合仿真 C1：多速率单向（Stepper 重构 + simulate_coupled + eqc couple）
+
+实现 docs/spec-coupled-simulation.md 的 C1。温室（快/秒级）↔ 作物（慢/日级）
+一次集成运行的地基。
+
+C1a Stepper 重构（sim/mod.rs）：
+- 把单模型每步逻辑（DAT→驱动→延迟寄存器→拓扑序方程/积分→快照 prev）抽成可
+  复用 Stepper（持有 plan/env/prev/参数，外部按步喂驱动）。simulate 变薄封装。
+- simulate_coupled 与单模型逐步共用同一 Stepper = 单一真相源。
+- 零回归：草莓 v1 Y=6.7058324979969655 逐位一致、S4 向量路径 SHA1 相同。
+
+C1b 多速率耦合：
+- Metadata.dt_seconds（各模型自描述步长折秒：温室 10、日级作物 86400；耦合需
+  统一到秒，D1）。serde default；补 10 处测试 Metadata 字面构造。
+- sim::simulate_coupled：双 Stepper，每慢步跑 R=dt_slow秒/dt_fast秒 个快步，
+  快→慢 mean/integral（带 scale 单位换算）聚合喂作物；C1 单向、无反馈。
+  Agg / CoupledLink / CoupledInput / CoupledOutput + SimError::Coupling。
+- CLI eqc couple --fast --slow --weather --link to=from[:agg[:scale]] [--steps]
+  [--fed-out]。eqc validate/report 顺带支持单文件（前次已修）。
+
+验证：机制单测（R=3、mean/integral·dt_fast 解析命中、校验错误）；金标准——
+温室→蓝莓 eqc couple 内联聚合的 T/Sr 与全精度 aggregate_to_daily 逻辑逐位一致
+（最大绝对差 0），即一次集成运行复现离线两趟管道。cargo test 两配置全绿
+（214 lib + 3 bin + 4 + 100 sexpr）。
+
+配套模型 dt_seconds 在 greenhouse-model / crop-models。
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>

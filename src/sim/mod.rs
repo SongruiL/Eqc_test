@@ -53,6 +53,8 @@ pub enum SimError {
     UndeclaredOutput(String),
     /// 表达式求值出错。
     Eval { var: String, err: EvalError },
+    /// 耦合仿真错误（缺 dt_seconds、R 非整数、接口非标量、慢驱动无链接等）。
+    Coupling(String),
 }
 
 impl std::fmt::Display for SimError {
@@ -71,6 +73,7 @@ impl std::fmt::Display for SimError {
             SimError::Unresolved(n) => write!(f, "变量 {n} 在本步未被定值（方程缺失？）"),
             SimError::UndeclaredOutput(n) => write!(f, "方程输出变量 {n} 未在 variables: 中声明"),
             SimError::Eval { var, err } => write!(f, "求值变量 {var} 出错: {err}"),
+            SimError::Coupling(m) => write!(f, "耦合仿真: {m}"),
         }
     }
 }
@@ -235,19 +238,160 @@ pub fn build_plan(file: &EquationFile) -> Result<SimPlan<'_>, SimError> {
     Ok(SimPlan { steps, delays, drivers })
 }
 
+/// **单模型步进器**：持有一个模型的步进计划 + 跨步状态（env / prev / 参数），可被外部
+/// **按步驱动**（每步提供驱动量值），步后读任意变量当前值。`simulate`（单模型）与
+/// `simulate_coupled`（多速率耦合）共用它 → 耦合每步与单模型逐步**一致**（单一真相源）。
+///
+/// 每步语义与原 `simulate` 循环体逐位一致：DAT → 驱动 → 延迟寄存器 → 拓扑序方程/积分
+/// → 首步向量延迟形状修正 → 快照 prev。
+pub struct Stepper<'a> {
+    file: &'a EquationFile,
+    plan: SimPlan<'a>,
+    params: HashMap<&'a str, Value>,
+    init_overrides: HashMap<String, f64>,
+    dt: f64,
+    env: Env,
+    prev: HashMap<String, Value>,
+    n: usize,
+}
+
+impl<'a> Stepper<'a> {
+    /// 新建步进器：编译计划、装入参数（向量参数→Vector，标量→可被覆盖）。
+    pub fn new(
+        file: &'a EquationFile,
+        dt: f64,
+        param_overrides: &HashMap<String, f64>,
+        init_overrides: &HashMap<String, f64>,
+    ) -> Result<Self, SimError> {
+        let plan = build_plan(file)?;
+        let mut params: HashMap<&str, Value> = HashMap::new();
+        for (pname, p) in &file.parameters {
+            let v = match &p.values {
+                Some(vals) => Value::Vector(vals.clone()),
+                None => Value::Scalar(param_overrides.get(pname).copied().unwrap_or(p.default)),
+            };
+            params.insert(pname.as_str(), v);
+        }
+        let mut env = Env::new();
+        for (pname, v) in &params {
+            env.put(pname, v.clone());
+        }
+        Ok(Self {
+            file,
+            plan,
+            params,
+            init_overrides: init_overrides.clone(),
+            dt,
+            env,
+            prev: HashMap::new(),
+            n: 0,
+        })
+    }
+
+    /// 该模型需要外部每步供值的驱动量名。
+    pub fn drivers(&self) -> &[&'a str] {
+        &self.plan.drivers
+    }
+
+    /// 当前已完成的步数（= 下一步的 0 基下标；步后递增）。
+    pub fn step_index(&self) -> usize {
+        self.n
+    }
+
+    /// 推进一步。`get_driver(name)` 供本步每个驱动量的标量值（缺 → `MissingDriver`）。
+    /// 步后用 [`Stepper::get`] 读本步任意变量的值。
+    pub fn step(&mut self, get_driver: impl Fn(&str) -> Option<f64>) -> Result<(), SimError> {
+        let n = self.n;
+        // DAT = 第几天（1 起）
+        self.env.put("DAT", (n + 1) as f64);
+        // 驱动量（标量）
+        for &d in &self.plan.drivers {
+            let val = get_driver(d).ok_or_else(|| SimError::MissingDriver(d.to_string()))?;
+            self.env.put(d, val);
+        }
+        // 延迟寄存器：X[n] = src[n-1]（首步用 init 标量广播）
+        for &(name, src, init) in &self.plan.delays {
+            let init0 = self.init_overrides.get(name).copied().unwrap_or(init);
+            let v = if n == 0 {
+                Value::Scalar(init0)
+            } else {
+                self.prev
+                    .get(src)
+                    .cloned()
+                    .or_else(|| self.params.get(src).cloned())
+                    .ok_or_else(|| SimError::Unresolved(name.to_string()))?
+            };
+            self.env.put(name, v);
+        }
+        // 拓扑序求值方程与积分状态量（PlanStep 是 Copy，按下标取出即释放对 self.plan 的借用，
+        // 不与 self.env 可变借用冲突、也不每步分配）。
+        let dt = self.dt;
+        for i in 0..self.plan.steps.len() {
+            let step = self.plan.steps[i];
+            match step {
+                PlanStep::Equation { name, expr } => {
+                    let v = expr
+                        .eval_in(&mut self.env)
+                        .map_err(|err| SimError::Eval { var: name.to_string(), err })?;
+                    self.env.put(name, v);
+                }
+                PlanStep::Integrator { name, rate, init } => {
+                    let init0 = self.init_overrides.get(name).copied().unwrap_or(init);
+                    let prev_val = if n == 0 {
+                        Value::Scalar(init0)
+                    } else {
+                        self.prev
+                            .get(name)
+                            .cloned()
+                            .ok_or_else(|| SimError::Unresolved(name.to_string()))?
+                    };
+                    let rate_val =
+                        self.env.get(rate).ok_or_else(|| SimError::Unresolved(rate.to_string()))?;
+                    let x = value_binop(&prev_val, &rate_val, |a, b| a + b * dt)
+                        .map_err(|err| SimError::Eval { var: name.to_string(), err })?;
+                    self.env.put(name, x);
+                }
+            }
+        }
+        // 首步：向量延迟寄存器的标量 init 广播到来源形状（只修记录形状，不改数值）
+        if n == 0 {
+            for &(name, src, init) in &self.plan.delays {
+                let init0 = self.init_overrides.get(name).copied().unwrap_or(init);
+                if let Some(src_val) = self.env.get(src) {
+                    let shaped = value_binop(&Value::Scalar(init0), &src_val, |a, _| a)
+                        .map_err(|err| SimError::Eval { var: name.to_string(), err })?;
+                    self.env.put(name, shaped);
+                }
+            }
+        }
+        // 快照本步全部声明变量 → prev（供下一步积分/延迟）
+        let mut cur: HashMap<String, Value> = HashMap::new();
+        for name in self.file.variables.keys() {
+            let v = self.env.get(name).ok_or_else(|| SimError::Unresolved(name.clone()))?;
+            cur.insert(name.clone(), v);
+        }
+        self.prev = cur;
+        self.n += 1;
+        Ok(())
+    }
+
+    /// 读当前步某声明变量的 Value（步后调用）。
+    pub fn get(&self, name: &str) -> Option<Value> {
+        self.env.get(name)
+    }
+}
+
 /// 对一个动态模型做逐日仿真。
 ///
 /// 单模块求值：跨模块 `source` 耦合不在此处展开——任何未被方程产生、非跨步的
-/// 输入变量都必须由 [`SimInput::drivers`] 提供。
+/// 输入变量都必须由 [`SimInput::drivers`] 提供。**薄封装在 [`Stepper`] 上**（耦合仿真共用）。
 pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimError> {
-    // —— 1. 编译步进计划（与 eqc build 代码生成器共用，保证生成器与引擎逐步一致）——
-    let plan = build_plan(file)?;
-
     // 时间步长：SimInput.dt 覆盖 > 模型 meta.dt（缺省 1.0=日步长）。状态量积分用 X+=rate·dt。
     let dt = input.dt.unwrap_or(file.meta.dt);
+    let mut stepper = Stepper::new(file, dt, &input.param_overrides, &input.init_overrides)?;
 
-    // —— 2. 校验驱动量：每个驱动量须有长度=steps 的时间序列 ——
-    for &dn in &plan.drivers {
+    // 校验驱动量：每个驱动量须有长度=steps 的时间序列（保持原错误语义）。
+    for &dn in stepper.drivers() {
         match input.drivers.get(dn) {
             None => return Err(SimError::MissingDriver(dn.to_string())),
             Some(series) if series.len() != input.steps => {
@@ -261,103 +405,227 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
         }
     }
 
-    // —— 3. 逐步求值（Value 级，支持向量）——
-    // 参数值表（常量，每步相同）：有 values 的为向量，否则标量（可被标量覆盖）。
-    let mut params: HashMap<&str, Value> = HashMap::new();
-    for (pname, p) in &file.parameters {
-        let v = match &p.values {
-            Some(vals) => Value::Vector(vals.clone()),
-            None => Value::Scalar(input.param_overrides.get(pname).copied().unwrap_or(p.default)),
-        };
-        params.insert(pname.as_str(), v);
-    }
-
-    // 轨迹容器：标量变量记到 `name`，向量变量逐分量记到 `name[1]`、`name[2]`…（输出展平，便于绘图/CSV）。
     let mut traj: IndexMap<String, Vec<f64>> = IndexMap::new();
-    // 上一步各声明变量的完整 Value（积分/延迟跨步读取）。
-    let mut prev: HashMap<String, Value> = HashMap::new();
-
-    // 跨步复用同一 env（键只在首步分配、之后 `put` 复用）——省去每步重建 env 的大量 String 分配。
-    // 每步给所有变量（DAT/驱动/延迟/方程/积分）重新赋值，无残留；参数恒定故只设一次。
-    let mut env = Env::new();
-    for (pname, v) in &params {
-        env.put(pname, v.clone());
-    }
-
     for n in 0..input.steps {
-        // 4a-0. 内置只读变量 DAT = 第几天（1 起）。供物候/开花门控直接引用，无需手填驱动量。
-        env.put("DAT", (n + 1) as f64);
-        // 4b. 驱动量（标量逐日序列）
-        for &d in &plan.drivers {
-            env.put(d, input.drivers[d][n]);
-        }
-        // 4c. 延迟寄存器：X[n] = src[n-1]（首步用 init 标量广播；init 可被 init_overrides 覆盖）
-        for &(name, src, init) in &plan.delays {
-            let init0 = input.init_overrides.get(name).copied().unwrap_or(init);
-            let v = if n == 0 {
-                Value::Scalar(init0)
-            } else {
-                prev.get(src)
-                    .cloned()
-                    .or_else(|| params.get(src).cloned())
-                    .ok_or_else(|| SimError::Unresolved(name.to_string()))?
-            };
-            env.put(name, v);
-        }
-        // 4d. 按拓扑序求值方程与积分状态量（Value 级）
-        for &step in &plan.steps {
-            match step {
-                PlanStep::Equation { name, expr } => {
-                    // 热路径：就地求值（不克隆 env）。作用域 push/pop 平衡、出错即中止，
-                    // 故复用同一 env 安全。见 Expr::eval_in。
-                    let v = expr
-                        .eval_in(&mut env)
-                        .map_err(|err| SimError::Eval { var: name.to_string(), err })?;
-                    env.put(name, v);
-                }
-                PlanStep::Integrator { name, rate, init } => {
-                    // X[n] = X[n-1] + rate[n]（逐元素广播；首步 X[n-1]=init 标量广播）
-                    let init0 = input.init_overrides.get(name).copied().unwrap_or(init);
-                    let prev_val = if n == 0 {
-                        Value::Scalar(init0)
-                    } else {
-                        prev.get(name).cloned().ok_or_else(|| SimError::Unresolved(name.to_string()))?
-                    };
-                    let rate_val = env
-                        .get(rate)
-                        .ok_or_else(|| SimError::Unresolved(rate.to_string()))?;
-                    // X[n] = X[n-1] + rate[n]·dt（dt=1 时与旧行为逐位一致）
-                    let x = value_binop(&prev_val, &rate_val, |a, b| a + b * dt)
-                        .map_err(|err| SimError::Eval { var: name.to_string(), err })?;
-                    env.put(name, x);
-                }
-            }
-        }
-        // 4d-2. 首步：把延迟寄存器的标量 init 广播到其来源的形状（此时来源已算出），
-        // 保证向量延迟寄存器的输出形状跨步一致（如 RFG_prev 在第0步也是向量，而非标量）。
-        // 不影响数值：本步下游已用标量 init（广播）算过；这里只修正记录形状。
-        if n == 0 {
-            for &(name, src, init) in &plan.delays {
-                let init0 = input.init_overrides.get(name).copied().unwrap_or(init);
-                if let Some(src_val) = env.get(src) {
-                    let shaped = value_binop(&Value::Scalar(init0), &src_val, |a, _| a)
-                        .map_err(|err| SimError::Eval { var: name.to_string(), err })?;
-                    env.put(name, shaped);
-                }
-            }
-        }
-
-        // 4e. 记录本步：快照到 prev（供下一步）+ 展平到输出轨迹
-        let mut cur: HashMap<String, Value> = HashMap::new();
+        stepper.step(|d| input.drivers.get(d).map(|s| s[n]))?;
         for name in file.variables.keys() {
-            let v = env.get(name).ok_or_else(|| SimError::Unresolved(name.clone()))?;
+            let v = stepper.get(name).ok_or_else(|| SimError::Unresolved(name.clone()))?;
             flatten_into(&mut traj, name, &v);
-            cur.insert(name.clone(), v);
         }
-        prev = cur;
     }
 
     Ok(SimOutput { steps: input.steps, trajectories: traj })
+}
+
+// ============================================================================
+// 耦合仿真（C1：多速率、单向）—— 见 docs/spec-coupled-simulation.md
+// ============================================================================
+
+/// 快→慢聚合算子。`mean`=慢步内时均；`integral`=时间积分 `Σx·dt_fast·scale`；`last`=慢步末值。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Agg {
+    Mean,
+    Integral,
+    Last,
+}
+
+impl Agg {
+    /// 解析 `mean`/`integral`/`last`（未知 → None）。
+    pub fn parse(s: &str) -> Option<Agg> {
+        match s.trim() {
+            "mean" => Some(Agg::Mean),
+            "integral" => Some(Agg::Integral),
+            "last" => Some(Agg::Last),
+            _ => None,
+        }
+    }
+}
+
+/// 一条快→慢链接：慢模型驱动 `to` ← 快模型输出 `from`，按 `agg` 聚合，再乘 `scale`（单位换算）。
+/// 例：`Sr ← Q_sun, integral, scale=1e-6`（W/m²·s→MJ/m²）；`T ← T_air, mean, scale=1`。
+#[derive(Debug, Clone)]
+pub struct CoupledLink {
+    pub to: String,
+    pub from: String,
+    pub agg: Agg,
+    pub scale: f64,
+}
+
+/// 耦合仿真输入（C1：两模型、单向 快→慢）。
+pub struct CoupledInput<'a> {
+    /// 快模型（如温室，小 dt）。
+    pub fast: &'a EquationFile,
+    /// 慢模型（如作物，大 dt）。
+    pub slow: &'a EquationFile,
+    /// 快→慢链接（慢模型每个驱动量都须被某条链接覆盖）。
+    pub links: Vec<CoupledLink>,
+    /// 快模型室外驱动，每条长度须 = `slow_steps · R`。
+    pub fast_drivers: HashMap<String, Vec<f64>>,
+    /// 慢步数（作物天数）。
+    pub slow_steps: usize,
+    pub fast_params: HashMap<String, f64>,
+    pub slow_params: HashMap<String, f64>,
+    pub fast_init: HashMap<String, f64>,
+    pub slow_init: HashMap<String, f64>,
+}
+
+impl<'a> CoupledInput<'a> {
+    /// 便捷构造（只给两模型 + 链接 + 快驱动 + 步数；覆盖项空）。
+    pub fn new(
+        fast: &'a EquationFile,
+        slow: &'a EquationFile,
+        links: Vec<CoupledLink>,
+        fast_drivers: HashMap<String, Vec<f64>>,
+        slow_steps: usize,
+    ) -> Self {
+        Self {
+            fast,
+            slow,
+            links,
+            fast_drivers,
+            slow_steps,
+            fast_params: HashMap::new(),
+            slow_params: HashMap::new(),
+            fast_init: HashMap::new(),
+            slow_init: HashMap::new(),
+        }
+    }
+}
+
+/// 耦合仿真输出。
+pub struct CoupledOutput {
+    /// 慢步数。
+    pub slow_steps: usize,
+    /// 每慢步的快步数 R = dt_slow_秒 / dt_fast_秒。
+    pub r: usize,
+    /// 慢模型（作物）逐步轨迹。
+    pub slow: SimOutput,
+    /// 每慢步喂给慢模型的聚合驱动值（= 等效的离线 aggregate CSV，便于核对/插图）。
+    pub fed_drivers: IndexMap<String, Vec<f64>>,
+}
+
+/// 多速率耦合仿真（C1：单向 快→慢，无反馈）。
+///
+/// 每慢步：跑 R 个快步（快模型按室外驱动推进、累加链接聚合）→ 聚合收尾得慢模型本步驱动
+/// → 慢模型推进一步。复用 [`Stepper`]，故耦合每步与单模型 [`simulate`] 逐步一致。
+pub fn simulate_coupled(input: &CoupledInput) -> Result<CoupledOutput, SimError> {
+    let fast = input.fast;
+    let slow = input.slow;
+
+    // —— 时间尺度：各模型自描述 dt_seconds；R = dt_slow_秒 / dt_fast_秒（须为正整数）——
+    let dtf_s = fast.meta.dt_seconds.ok_or_else(|| {
+        SimError::Coupling(format!("快模型 {} 缺 meta.dt_seconds（耦合需统一到秒）", fast.meta.id))
+    })?;
+    let dts_s = slow.meta.dt_seconds.ok_or_else(|| {
+        SimError::Coupling(format!("慢模型 {} 缺 meta.dt_seconds", slow.meta.id))
+    })?;
+    if dtf_s <= 0.0 || dts_s <= 0.0 {
+        return Err(SimError::Coupling("dt_seconds 必须为正".into()));
+    }
+    if dts_s < dtf_s {
+        return Err(SimError::Coupling(format!(
+            "慢模型 dt_seconds={dts_s} 应 ≥ 快模型 dt_seconds={dtf_s}（fast/slow 角色弄反？）"
+        )));
+    }
+    let r_f = dts_s / dtf_s;
+    let r = r_f.round() as usize;
+    if r == 0 || (r_f - r as f64).abs() > 1e-9 {
+        return Err(SimError::Coupling(format!(
+            "dt_slow/dt_fast = {dts_s}/{dtf_s} = {r_f} 非整数，多速率需整数倍"
+        )));
+    }
+    let total_fast = input.slow_steps * r;
+
+    // —— 校验：慢模型每个驱动量都须被某条链接覆盖（C1 单向：作物气候全来自温室）——
+    let link_tos: HashSet<&str> = input.links.iter().map(|l| l.to.as_str()).collect();
+    {
+        let slow_stepper = Stepper::new(slow, slow.meta.dt, &input.slow_params, &input.slow_init)?;
+        for &d in slow_stepper.drivers() {
+            if !link_tos.contains(d) {
+                return Err(SimError::Coupling(format!(
+                    "慢模型驱动量 '{d}' 没有耦合链接（请在 links 里把它接到某快模型输出）"
+                )));
+            }
+        }
+    }
+    // —— 校验：快模型室外驱动齐全、长度 = total_fast ——
+    let mut fast_stepper = Stepper::new(fast, fast.meta.dt, &input.fast_params, &input.fast_init)?;
+    for &d in fast_stepper.drivers() {
+        match input.fast_drivers.get(d) {
+            None => return Err(SimError::MissingDriver(d.to_string())),
+            Some(s) if s.len() != total_fast => {
+                return Err(SimError::DriverLengthMismatch {
+                    name: d.to_string(),
+                    expected: total_fast,
+                    found: s.len(),
+                })
+            }
+            Some(_) => {}
+        }
+    }
+
+    let mut slow_stepper = Stepper::new(slow, slow.meta.dt, &input.slow_params, &input.slow_init)?;
+    let mut fed: IndexMap<String, Vec<f64>> = IndexMap::new();
+    let mut slow_traj: IndexMap<String, Vec<f64>> = IndexMap::new();
+
+    for s in 0..input.slow_steps {
+        // 累加器：mean/integral 用 sum，last 用末值
+        let mut acc = vec![0.0f64; input.links.len()];
+        let mut last = vec![0.0f64; input.links.len()];
+        for f in 0..r {
+            let gi = s * r + f;
+            fast_stepper.step(|d| input.fast_drivers.get(d).map(|v| v[gi]))?;
+            for (li, link) in input.links.iter().enumerate() {
+                let v = fast_stepper
+                    .get(&link.from)
+                    .ok_or_else(|| SimError::Coupling(format!("快模型无接口输出 '{}'", link.from)))?;
+                let x = match v {
+                    Value::Scalar(x) => x,
+                    _ => {
+                        return Err(SimError::Coupling(format!(
+                            "接口输出 '{}' 不是标量（耦合链接只支持标量）",
+                            link.from
+                        )))
+                    }
+                };
+                match link.agg {
+                    Agg::Mean | Agg::Integral => acc[li] += x,
+                    Agg::Last => last[li] = x,
+                }
+            }
+        }
+        // 聚合收尾 → 本慢步慢模型驱动值
+        let finalize = |li: usize| -> f64 {
+            let link = &input.links[li];
+            match link.agg {
+                Agg::Mean => (acc[li] / r as f64) * link.scale,
+                Agg::Integral => acc[li] * dtf_s * link.scale,
+                Agg::Last => last[li] * link.scale,
+            }
+        };
+        // 记录喂入值（按链接 to 名）
+        for (li, link) in input.links.iter().enumerate() {
+            fed.entry(link.to.clone()).or_default().push(finalize(li));
+        }
+        // 慢模型推进一步：驱动量按 to 名取聚合值
+        let get_slow_driver = |name: &str| -> Option<f64> {
+            input.links.iter().position(|l| l.to == name).map(finalize)
+        };
+        slow_stepper.step(get_slow_driver)?;
+        for name in slow.variables.keys() {
+            let v = slow_stepper
+                .get(name)
+                .ok_or_else(|| SimError::Unresolved(name.clone()))?;
+            flatten_into(&mut slow_traj, name, &v);
+        }
+    }
+
+    Ok(CoupledOutput {
+        slow_steps: input.slow_steps,
+        r,
+        slow: SimOutput { steps: input.slow_steps, trajectories: slow_traj },
+        fed_drivers: fed,
+    })
 }
 
 /// 把一个变量本步的 Value 展平记入轨迹：标量→`name`；向量→`name[1]`、`name[2]`…；矩阵→`name[r,c]`。
@@ -605,6 +873,71 @@ equations:
         let (_d, file) = write_model(yaml);
         let input = SimInput::new(2); // 没给 T
         assert_eq!(simulate(&file, &input), Err(SimError::MissingDriver("T".into())));
+    }
+
+    /// 耦合仿真（C1）：多速率 + mean/integral 聚合，结果解析可验。
+    /// 快模型 dt=10s、R=3；快输出 y=u；慢模型收 ybar=mean(y)、yint=integral(y)=Σy·dt_fast。
+    #[test]
+    fn test_coupled_multirate_aggregation() {
+        let fast_yaml = r#"
+meta: { id: FAST, model: F, name_cn: 快, dt: 10, dt_seconds: 10 }
+variables:
+  u: { type: input, class: driving }
+  y: { type: output }
+equations:
+  - { id: E, name: y, output: y, expression: { op: mul, args: [ { ref: u }, { const: 1 } ] } }
+"#;
+        let slow_yaml = r#"
+meta: { id: SLOW, model: S, name_cn: 慢, dt: 1, dt_seconds: 30 }
+variables:
+  ybar: { type: input, class: driving }
+  yint: { type: input, class: driving }
+  chk:  { type: output }
+equations:
+  - { id: E, name: chk, output: chk, expression: { op: add, args: [ { ref: ybar }, { ref: yint } ] } }
+"#;
+        let (_df, fast) = write_model(fast_yaml);
+        let (_ds, slow) = write_model(slow_yaml);
+        let links = vec![
+            CoupledLink { to: "ybar".into(), from: "y".into(), agg: Agg::Mean, scale: 1.0 },
+            CoupledLink { to: "yint".into(), from: "y".into(), agg: Agg::Integral, scale: 1.0 },
+        ];
+        let mut drv = HashMap::new();
+        drv.insert("u".to_string(), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]); // 2 慢步 × R=3
+        let inp = CoupledInput::new(&fast, &slow, links, drv, 2);
+        let out = simulate_coupled(&inp).unwrap();
+
+        assert_eq!(out.r, 3); // 30/10
+        // 慢步0：y=1,2,3 → mean=2、integral=(1+2+3)·10=60；慢步1：y=4,5,6 → mean=5、integral=150
+        assert_eq!(out.fed_drivers["ybar"], vec![2.0, 5.0]);
+        assert_eq!(out.fed_drivers["yint"], vec![60.0, 150.0]);
+        // 慢模型把它们相加：chk = ybar + yint = 62, 155
+        assert_eq!(out.slow.series("chk").unwrap(), &[62.0, 155.0]);
+        // 喂入值也进慢模型轨迹（驱动量被记录）
+        assert_eq!(out.slow.series("ybar").unwrap(), &[2.0, 5.0]);
+    }
+
+    /// 耦合：慢模型有未被链接覆盖的驱动 → 报错；缺 dt_seconds → 报错。
+    #[test]
+    fn test_coupled_validation_errors() {
+        let fast_yaml = r#"
+meta: { id: F, model: F, name_cn: x, dt: 1, dt_seconds: 1 }
+variables: { u: { type: input }, y: { type: output } }
+equations: [ { id: E, name: y, output: y, expression: { ref: u } } ]
+"#;
+        // 慢模型有两个驱动 a、b，但只给 a 一条链接 → b 无链接报错
+        let slow_yaml = r#"
+meta: { id: S, model: S, name_cn: x, dt: 1, dt_seconds: 2 }
+variables: { a: { type: input }, b: { type: input }, o: { type: output } }
+equations: [ { id: E, name: o, output: o, expression: { op: add, args: [ { ref: a }, { ref: b } ] } } ]
+"#;
+        let (_df, fast) = write_model(fast_yaml);
+        let (_ds, slow) = write_model(slow_yaml);
+        let links = vec![CoupledLink { to: "a".into(), from: "y".into(), agg: Agg::Mean, scale: 1.0 }];
+        let mut drv = HashMap::new();
+        drv.insert("u".to_string(), vec![1.0, 2.0]);
+        let inp = CoupledInput::new(&fast, &slow, links, drv, 1);
+        assert!(matches!(simulate_coupled(&inp), Err(SimError::Coupling(_))));
     }
 
     /// 速率方程引用自身状态量当前值 → 步内环。
