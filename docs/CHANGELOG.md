@@ -155,10 +155,15 @@
 - **C1a `Stepper` 重构**：把单模型每步逻辑（DAT→驱动→延迟→拓扑序方程/积分→快照 prev）抽成可复用 `Stepper`，`simulate` 变薄封装。耦合与单模型逐步共用同一步进=单一真相源。**零回归**：草莓 v1 Y=6.7058324979969655 逐位一致、S4 向量路径 SHA1 相同。
 - **C1b 多速率耦合**：`Metadata.dt_seconds`（各模型自描述步长折秒：温室 10、日级作物 86400；耦合统一到秒，D1）。`sim::simulate_coupled`：双 `Stepper`，每慢步跑 R=dt_slow秒/dt_fast秒 个快步，快→慢 `mean`/`integral`（带 scale 单位换算）聚合喂作物，无反馈（C1 单向）。`Agg`/`CoupledLink`/`CoupledInput`/`CoupledOutput` + `SimError::Coupling`。CLI `eqc couple --fast --slow --weather --link to=from[:agg[:scale]]`。
 - **验证**：机制单测（R/mean/integral·dt_fast 解析命中）；金标准——温室→蓝莓 `eqc couple` 内联聚合的 T/Sr 与全精度 `aggregate_to_daily` 逻辑**逐位一致（最大绝对差 0）**，即一次集成运行复现离线两趟管道。214 lib + 3 + 4 + 100 全绿。
-- **下一步 C2**：双向滞后反馈（温室 `phi_ass` 转 input 接作物光合，先只 CO₂）。
+### 耦合仿真 C2（双向滞后反馈，先只 CO₂）
+作物回拉温室 CO₂ → 闭环。单向离线管道做不到。
+- **C2a 引擎**：`simulate_coupled` 加 `feedback`（慢→快 hold，**滞后一慢步**：本慢步用作物上一步值、首步 init、日末更新——`_prev` 破环抬到耦合界面，无步内代数环）+ `FeedbackLink` + CLI `--feedback to=from[:scale[:init]]`。合成测试坐实滞后。
+- **C2b 引擎+建模**：`CoupledOutput.fast`（温室变量日均聚合）+ CLI `--fast-out`/`--fast-params`/`--slow-params`（温室控制旋钮，C3 优化要用）。温室变体 `greenhouse_v1_crop.eq.yaml`：`phi_ass` 改成由作物喂——`phi_ass=co2_uptake_in/(n_air·h_gh)`（复用 h_gh、n_air≈41.6）。番茄 T3：`dt_seconds=3600` + 接口 `co2_uptake_inst=(MC_AirBuf−全部回气呼吸)×(1000/30)`（净同化−生长/维持呼吸，mg CH2O/m²/s→µmol CO₂/m²/s）。
+- **验证（闭环 A/B，温室×番茄）**：白天反馈开→温室 CO₂ −5 ppm（作物吃 CO₂）、夜间 +0.9（呼吸释放）；CO₂ 降→番茄光合降（P_gross ON 261.5<OFF 263.2）=**自限双向效应**（单向管道做不到）。稳态 phi_inj−phi_ass=vent·(CO₂−CO₂_out) 验证 ON≈400/OFF=405。
+- **下一步 C3**：耦合优化（`simulate_coupled` 包成前向模型 → `eqc optimize` 搜温室环控、目标读作物产量，复用 DE/约束/Pareto/Studio）。
 
 ## 工程基线
-- 测试：214 lib + 3 bin + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
+- 测试：215 lib + 3 bin + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
 - 远程：github.com/SongruiL/Eqc_test，SSH 推送。
 - 文档：见 `docs/USAGE.md`（架构与模块地图）、`docs/spec-*.md`（设计规格）。
 

@@ -206,6 +206,19 @@ enum Commands {
         #[arg(long = "link")]
         links: Vec<String>,
 
+        /// 慢→快反馈（C2 双向，滞后一慢步），可重复：`to=from[:scale[:init]]`（scale 缺省 1、init 缺省 0）。
+        /// 例：`--feedback phi_ass=assim_flux_inst:1.0:0`（温室 phi_ass ← 作物瞬时光合通量）
+        #[arg(long = "feedback")]
+        feedback: Vec<String>,
+
+        /// 快模型（温室）参数覆盖 JSON（如环控设定点；C3 优化的旋钮即在此）
+        #[arg(long)]
+        fast_params: Option<PathBuf>,
+
+        /// 慢模型（作物）参数覆盖 JSON
+        #[arg(long)]
+        slow_params: Option<PathBuf>,
+
         /// 慢步数（作物天数；缺省 = 室外驱动行数 / R）
         #[arg(short, long)]
         steps: Option<usize>,
@@ -217,6 +230,10 @@ enum Commands {
         /// 另存喂给慢模型的聚合驱动 CSV（= 等效的离线 aggregate；便于核对）
         #[arg(long)]
         fed_out: Option<PathBuf>,
+
+        /// 另存快模型（温室）日均轨迹 CSV（看反馈对温室气候如 CO₂ 的影响）
+        #[arg(long)]
+        fast_out: Option<PathBuf>,
     },
 
     /// 参数敏感性扫描：把一个标量参数在区间内取 N 点各跑一次仿真，输出对某变量的响应 CSV
@@ -397,8 +414,8 @@ fn main() {
         Commands::SexprSpec => run_sexpr_spec(),
         Commands::CheckDims { input, strict } => run_check_dims(&input, strict),
         Commands::Report { input, output, layout } => run_report(&input, &output, &layout),
-        Commands::Couple { fast, slow, weather, links, steps, output, fed_out } => {
-            run_couple(&fast, &slow, &weather, &links, steps, &output, fed_out.as_ref())
+        Commands::Couple { fast, slow, weather, links, feedback, fast_params, slow_params, steps, output, fed_out, fast_out } => {
+            run_couple(&fast, &slow, &weather, &links, &feedback, fast_params.as_ref(), slow_params.as_ref(), steps, &output, fed_out.as_ref(), fast_out.as_ref())
         }
         Commands::Simulate { input, drivers, params, steps, output, dt, init } => {
             run_simulate(&input, &drivers, params.as_ref(), steps, &output, dt, init.as_deref())
@@ -598,17 +615,24 @@ fn write_traj_csv(
 
 /// `eqc couple`：多速率耦合仿真（C1 单向）。
 #[cfg(feature = "cli")]
+#[allow(clippy::too_many_arguments)]
 fn run_couple(
     fast: &PathBuf,
     slow: &PathBuf,
     weather: &PathBuf,
     links: &[String],
+    feedback: &[String],
+    fast_params: Option<&PathBuf>,
+    slow_params: Option<&PathBuf>,
     steps: Option<usize>,
     output: &PathBuf,
     fed_out: Option<&PathBuf>,
+    fast_out: Option<&PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use equation_compiler::scenario::load_drivers_csv;
-    use equation_compiler::{parse_file, simulate_coupled, Agg, CoupledInput, CoupledLink};
+    use equation_compiler::scenario::{load_drivers_csv, load_params_json};
+    use equation_compiler::{
+        parse_file, simulate_coupled, Agg, CoupledInput, CoupledLink, FeedbackLink,
+    };
 
     let fast_file = parse_file(fast)?;
     let slow_file = parse_file(slow)?;
@@ -634,6 +658,25 @@ fn run_couple(
     }
     if parsed.is_empty() {
         return Err("至少需要一条 --link（如 --link T=T_air:mean）".into());
+    }
+
+    // 解析反馈 to=from[:scale[:init]]（慢→快，C2 双向）
+    let mut fb: Vec<FeedbackLink> = Vec::new();
+    for l in feedback {
+        let (to, rest) = l
+            .split_once('=')
+            .ok_or_else(|| format!("反馈格式应为 to=from[:scale[:init]]，得到: {l}"))?;
+        let parts: Vec<&str> = rest.split(':').collect();
+        let from = parts[0].trim();
+        let scale = match parts.get(1) {
+            Some(s) => s.parse::<f64>().map_err(|e| format!("scale 非数值: {e}"))?,
+            None => 1.0,
+        };
+        let init = match parts.get(2) {
+            Some(s) => s.parse::<f64>().map_err(|e| format!("init 非数值: {e}"))?,
+            None => 0.0,
+        };
+        fb.push(FeedbackLink { to: to.trim().to_string(), from: from.to_string(), scale, init });
     }
 
     // R = dt_slow秒 / dt_fast秒（定每慢步的快步数、默认慢步数）
@@ -662,12 +705,22 @@ fn run_couple(
         .map(|(k, v)| (k, v[..need.min(v.len())].to_vec()))
         .collect();
 
-    let inp = CoupledInput::new(&fast_file, &slow_file, parsed, weather_trunc, slow_steps);
+    let mut inp = CoupledInput::new(&fast_file, &slow_file, parsed, weather_trunc, slow_steps);
+    inp.feedback = fb;
+    if let Some(fp) = fast_params {
+        inp.fast_params = load_params_json(fp)?;
+    }
+    if let Some(sp) = slow_params {
+        inp.slow_params = load_params_json(sp)?;
+    }
     let out = simulate_coupled(&inp).map_err(|e| format!("耦合仿真失败: {e}"))?;
 
     write_traj_csv(&out.slow.trajectories, out.slow_steps, output)?;
     if let Some(fo) = fed_out {
         write_traj_csv(&out.fed_drivers, out.slow_steps, fo)?;
+    }
+    if let Some(fo) = fast_out {
+        write_traj_csv(&out.fast.trajectories, out.slow_steps, fo)?;
     }
 
     println!(

@@ -451,6 +451,18 @@ pub struct CoupledLink {
     pub scale: f64,
 }
 
+/// 一条慢→快反馈（C2 双向）：快模型输入 `to` ← 慢模型输出 `from`，乘 `scale`（单位换算）。
+/// **滞后一慢步**：本慢步内快模型用慢模型**上一步**的值（常数 hold；首步用 `init`）——把引擎的
+/// `_prev` 破环哲学抬到耦合界面，无步内代数环。例：温室 `phi_ass ← 作物 assim_flux_inst`。
+#[derive(Debug, Clone)]
+pub struct FeedbackLink {
+    pub to: String,
+    pub from: String,
+    pub scale: f64,
+    /// 首慢步（作物尚未跑过）的 hold 值。
+    pub init: f64,
+}
+
 /// 耦合仿真输入（C1：两模型、单向 快→慢）。
 pub struct CoupledInput<'a> {
     /// 快模型（如温室，小 dt）。
@@ -459,6 +471,9 @@ pub struct CoupledInput<'a> {
     pub slow: &'a EquationFile,
     /// 快→慢链接（慢模型每个驱动量都须被某条链接覆盖）。
     pub links: Vec<CoupledLink>,
+    /// 慢→快反馈（C2 双向，滞后一慢步；空 = 单向 C1）。其 `to` 是快模型输入，由反馈供值
+    /// （故不必出现在 `fast_drivers` 里）。
+    pub feedback: Vec<FeedbackLink>,
     /// 快模型室外驱动，每条长度须 = `slow_steps · R`。
     pub fast_drivers: HashMap<String, Vec<f64>>,
     /// 慢步数（作物天数）。
@@ -482,6 +497,7 @@ impl<'a> CoupledInput<'a> {
             fast,
             slow,
             links,
+            feedback: Vec::new(),
             fast_drivers,
             slow_steps,
             fast_params: HashMap::new(),
@@ -500,6 +516,9 @@ pub struct CoupledOutput {
     pub r: usize,
     /// 慢模型（作物）逐步轨迹。
     pub slow: SimOutput,
+    /// 快模型（温室）轨迹，**日均聚合到慢分辨率**（D6；标量变量取慢步内时均）。
+    /// A/B 看反馈对温室气候（如 CO₂）的影响即用它。
+    pub fast: SimOutput,
     /// 每慢步喂给慢模型的聚合驱动值（= 等效的离线 aggregate CSV，便于核对/插图）。
     pub fed_drivers: IndexMap<String, Vec<f64>>,
 }
@@ -548,9 +567,27 @@ pub fn simulate_coupled(input: &CoupledInput) -> Result<CoupledOutput, SimError>
             }
         }
     }
-    // —— 校验：快模型室外驱动齐全、长度 = total_fast ——
+    // —— 反馈（慢→快，C2 双向，滞后一慢步）：初值 hold + 快模型输入校验 ——
     let mut fast_stepper = Stepper::new(fast, fast.meta.dt, &input.fast_params, &input.fast_init)?;
+    let fb_targets: HashSet<&str> = input.feedback.iter().map(|f| f.to.as_str()).collect();
+    let mut fb: HashMap<String, f64> = input.feedback.iter().map(|f| (f.to.clone(), f.init)).collect();
+    // 反馈 to 必须是快模型的输入（驱动量），否则反馈值无处可喂
+    {
+        let fast_driver_set: HashSet<&str> = fast_stepper.drivers().iter().copied().collect();
+        for f in &input.feedback {
+            if !fast_driver_set.contains(f.to.as_str()) {
+                return Err(SimError::Coupling(format!(
+                    "反馈目标 '{}' 不是快模型 {} 的输入（驱动量）",
+                    f.to, fast.meta.id
+                )));
+            }
+        }
+    }
+    // —— 校验：快模型每个驱动量要么有室外序列（长度 total_fast），要么由反馈供值 ——
     for &d in fast_stepper.drivers() {
+        if fb_targets.contains(d) {
+            continue; // 由反馈供值
+        }
         match input.fast_drivers.get(d) {
             None => return Err(SimError::MissingDriver(d.to_string())),
             Some(s) if s.len() != total_fast => {
@@ -567,14 +604,23 @@ pub fn simulate_coupled(input: &CoupledInput) -> Result<CoupledOutput, SimError>
     let mut slow_stepper = Stepper::new(slow, slow.meta.dt, &input.slow_params, &input.slow_init)?;
     let mut fed: IndexMap<String, Vec<f64>> = IndexMap::new();
     let mut slow_traj: IndexMap<String, Vec<f64>> = IndexMap::new();
+    // 快模型轨迹（日均聚合）：标量变量累加求均
+    let fast_vars: Vec<String> = fast.variables.keys().cloned().collect();
+    let mut fast_traj: IndexMap<String, Vec<f64>> = IndexMap::new();
 
     for s in 0..input.slow_steps {
         // 累加器：mean/integral 用 sum，last 用末值
         let mut acc = vec![0.0f64; input.links.len()];
         let mut last = vec![0.0f64; input.links.len()];
+        // 快模型变量日均累加（标量）
+        let mut fast_sum = vec![0.0f64; fast_vars.len()];
+        let mut fast_is_scalar = vec![true; fast_vars.len()];
         for f in 0..r {
             let gi = s * r + f;
-            fast_stepper.step(|d| input.fast_drivers.get(d).map(|v| v[gi]))?;
+            // 快模型输入：室外驱动 取本快步序列值；反馈目标 取 hold 值（本慢步内常数）
+            fast_stepper.step(|d| {
+                input.fast_drivers.get(d).map(|v| v[gi]).or_else(|| fb.get(d).copied())
+            })?;
             for (li, link) in input.links.iter().enumerate() {
                 let v = fast_stepper
                     .get(&link.from)
@@ -592,6 +638,21 @@ pub fn simulate_coupled(input: &CoupledInput) -> Result<CoupledOutput, SimError>
                     Agg::Mean | Agg::Integral => acc[li] += x,
                     Agg::Last => last[li] = x,
                 }
+            }
+            // 累加快模型各标量变量（供日均）
+            for (i, name) in fast_vars.iter().enumerate() {
+                if fast_is_scalar[i] {
+                    match fast_stepper.get(name) {
+                        Some(Value::Scalar(x)) => fast_sum[i] += x,
+                        _ => fast_is_scalar[i] = false,
+                    }
+                }
+            }
+        }
+        // 快模型日均 → 轨迹（仅标量变量）
+        for (i, name) in fast_vars.iter().enumerate() {
+            if fast_is_scalar[i] {
+                fast_traj.entry(name.clone()).or_default().push(fast_sum[i] / r as f64);
             }
         }
         // 聚合收尾 → 本慢步慢模型驱动值
@@ -618,12 +679,29 @@ pub fn simulate_coupled(input: &CoupledInput) -> Result<CoupledOutput, SimError>
                 .ok_or_else(|| SimError::Unresolved(name.clone()))?;
             flatten_into(&mut slow_traj, name, &v);
         }
+        // 反馈更新（滞后）：本慢步算完作物 → 更新 hold 值，供**下一**慢步快模型用
+        for link in &input.feedback {
+            let v = slow_stepper.get(&link.from).ok_or_else(|| {
+                SimError::Coupling(format!("反馈来源 '{}' 不是慢模型输出", link.from))
+            })?;
+            let x = match v {
+                Value::Scalar(x) => x,
+                _ => {
+                    return Err(SimError::Coupling(format!(
+                        "反馈来源 '{}' 不是标量",
+                        link.from
+                    )))
+                }
+            };
+            fb.insert(link.to.clone(), x * link.scale);
+        }
     }
 
     Ok(CoupledOutput {
         slow_steps: input.slow_steps,
         r,
         slow: SimOutput { steps: input.slow_steps, trajectories: slow_traj },
+        fast: SimOutput { steps: input.slow_steps, trajectories: fast_traj },
         fed_drivers: fed,
     })
 }
@@ -938,6 +1016,41 @@ equations: [ { id: E, name: o, output: o, expression: { op: add, args: [ { ref: 
         drv.insert("u".to_string(), vec![1.0, 2.0]);
         let inp = CoupledInput::new(&fast, &slow, links, drv, 1);
         assert!(matches!(simulate_coupled(&inp), Err(SimError::Coupling(_))));
+    }
+
+    /// 耦合 C2：双向滞后反馈——快模型 y=u+g，g 由慢模型 z 反馈（滞后一慢步，首步 init）。
+    #[test]
+    fn test_coupled_feedback_lagged() {
+        let fast_yaml = r#"
+meta: { id: F2, model: F, name_cn: 快, dt: 1, dt_seconds: 1 }
+variables:
+  u: { type: input, class: driving }
+  g: { type: input, class: driving }
+  y: { type: output }
+equations:
+  - { id: E, name: y, output: y, expression: { op: add, args: [ { ref: u }, { ref: g } ] } }
+"#;
+        let slow_yaml = r#"
+meta: { id: S2, model: S, name_cn: 慢, dt: 1, dt_seconds: 2 }
+variables:
+  ybar: { type: input, class: driving }
+  z: { type: output }
+equations:
+  - { id: E, name: z, output: z, expression: { op: mul, args: [ { ref: ybar }, { const: 2 } ] } }
+"#;
+        let (_df, fast) = write_model(fast_yaml);
+        let (_ds, slow) = write_model(slow_yaml);
+        let links = vec![CoupledLink { to: "ybar".into(), from: "y".into(), agg: Agg::Mean, scale: 1.0 }];
+        let mut drv = HashMap::new();
+        drv.insert("u".to_string(), vec![1.0; 6]); // 3 慢步 × R=2
+        let mut inp = CoupledInput::new(&fast, &slow, links, drv, 3);
+        inp.feedback = vec![FeedbackLink { to: "g".into(), from: "z".into(), scale: 1.0, init: 10.0 }];
+        let out = simulate_coupled(&inp).unwrap();
+
+        // 慢步0：g=init=10 → y=11、ybar=11、z=22；慢步1：g=22（上步 z）→ y=23、ybar=23、z=46；
+        // 慢步2：g=46 → y=47、ybar=47、z=94。反馈滞后一慢步。
+        assert_eq!(out.fed_drivers["ybar"], vec![11.0, 23.0, 47.0]);
+        assert_eq!(out.slow.series("z").unwrap(), &[22.0, 46.0, 94.0]);
     }
 
     /// 速率方程引用自身状态量当前值 → 步内环。
