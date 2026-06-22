@@ -40,6 +40,9 @@ const STUDIO_HTML: &str = include_str!("serve_assets/studio.html");
 #[derive(serde::Deserialize)]
 struct WorkspaceManifest {
     models: Vec<ManifestEntry>,
+    /// 耦合视图（step 3）：把多个模型连成一张大图（温室↔作物）。
+    #[serde(default)]
+    couplings: Vec<CouplingDecl>,
 }
 
 /// 清单中一条模型声明（路径相对清单所在目录解析）。
@@ -57,6 +60,33 @@ struct ManifestEntry {
     data_dir: Option<String>,
 }
 
+/// 耦合声明：`models` 引用上面 `models` 的 id，`links` 把作物驱动量接到温室输出。
+/// 视图层概念——**不改 canonical 模型**，serve 加载时在内存里给作物 Input 注入 `source`。
+#[derive(serde::Deserialize)]
+struct CouplingDecl {
+    id: String,
+    #[serde(default)]
+    name: Option<String>,
+    models: Vec<String>,
+    #[serde(default)]
+    links: Vec<LinkDecl>,
+}
+
+/// 一条跨模型链接：作物驱动 `to`（`CROP.invar`）← 温室输出 `from`（`GH.outvar`）。
+#[derive(serde::Deserialize)]
+struct LinkDecl {
+    from: String,
+    to: String,
+}
+
+/// 耦合视图的运行态：参与文件 + 内存注入的 source 链接。
+struct Coupling {
+    /// 参与耦合的模型文件（按 `models` 顺序）。
+    paths: Vec<PathBuf>,
+    /// (from = "GH.outvar", to = "CROP.invar")；加载后给 CROP.invar set source=from。
+    links: Vec<(String, String)>,
+}
+
 /// 花名册中的一个模型：路径 + 预载情景数据 + 本模型实测数据目录。
 /// 单模型模式 = 1 个条目的花名册（行为与历史逐位一致、零回归）。
 struct ModelEntry {
@@ -71,6 +101,9 @@ struct ModelEntry {
     /// 本模型园区录入的实测数据目录（每处理区一个 `<zone>.csv`，稀疏 observed）。
     /// `/api/observations` 在此读写；正是 `eqc calibrate --observed` 的输入。多模型按 id 隔离。
     data_dir: PathBuf,
+    /// `Some` = 耦合视图条目（step 3）：path/drivers/data_dir 不用；结构图把多模型连成一张大图。
+    /// 仿真/录入/标定对耦合条目返回友好错误（需单作物模型）。
+    coupling: Option<Coupling>,
 }
 
 /// 服务上下文：模型花名册 + 版本号。单/多模型统一成一份 roster（≥1 条）。
@@ -221,7 +254,15 @@ fn build_single_entry(
     let name = model_display_name(path).unwrap_or_else(|| {
         path.file_stem().and_then(|s| s.to_str()).unwrap_or("model").to_string()
     });
-    ModelEntry { id: "default".to_string(), name, path: path.to_path_buf(), drivers, params, data_dir }
+    ModelEntry {
+        id: "default".to_string(),
+        name,
+        path: path.to_path_buf(),
+        drivers,
+        params,
+        data_dir,
+        coupling: None,
+    }
 }
 
 /// 工作区模式：按清单逐条建模型（路径相对清单目录；实测目录缺省 `<清单目录>/observations/<id>/`）。
@@ -278,9 +319,84 @@ fn build_roster_from_manifest(manifest: &Path) -> Result<Vec<ModelEntry>, String
             .clone()
             .or_else(|| model_display_name(&path))
             .unwrap_or_else(|| e.id.clone());
-        out.push(ModelEntry { id: e.id, name, path, drivers, params, data_dir });
+        out.push(ModelEntry { id: e.id, name, path, drivers, params, data_dir, coupling: None });
+    }
+
+    // 耦合视图条目（step 3）：解析 models→已建模型条目的文件路径，校验 links。
+    for c in ws.couplings {
+        if !valid_model_id(&c.id) {
+            return Err(format!("非法耦合 id '{}'", c.id));
+        }
+        if !seen.insert(c.id.clone()) {
+            return Err(format!("id 重复（模型/耦合）：'{}'", c.id));
+        }
+        if c.models.len() < 2 {
+            return Err(format!("耦合 '{}' 至少需 2 个模型", c.id));
+        }
+        let mut paths = Vec::new();
+        for mid in &c.models {
+            match out.iter().find(|m| &m.id == mid && m.coupling.is_none()) {
+                Some(m) => paths.push(m.path.clone()),
+                None => return Err(format!("耦合 '{}' 引用了不存在的模型 id '{mid}'", c.id)),
+            }
+        }
+        let links: Vec<(String, String)> = c
+            .links
+            .iter()
+            .filter_map(|l| {
+                if l.from.contains('.') && l.to.contains('.') {
+                    Some((l.from.clone(), l.to.clone()))
+                } else {
+                    eprintln!("⚠️  耦合 '{}' 链接格式应为 MODULE.var：from='{}' to='{}'（已跳过）", c.id, l.from, l.to);
+                    None
+                }
+            })
+            .collect();
+        let name = c.name.clone().unwrap_or_else(|| c.id.clone());
+        out.push(ModelEntry {
+            id: c.id,
+            name,
+            path: PathBuf::new(),
+            drivers: None,
+            params: None,
+            data_dir: PathBuf::new(),
+            coupling: Some(Coupling { paths, links }),
+        });
     }
     Ok(out)
+}
+
+/// 加载某条目的方程文件：单模型 = 直接解析校验；耦合 = 加载各参与文件 + 按 links
+/// **在内存里**给作物 Input 注入 `source`（不落盘）→ `build_dag` 自然产出跨模型边 →
+/// 因两模块都在场，validator 不会报 source 模块缺失。
+fn load_model_files(m: &ModelEntry) -> Result<Vec<EquationFile>, String> {
+    match &m.coupling {
+        None => load_files(&m.path),
+        Some(c) => {
+            let mut files: Vec<EquationFile> = Vec::new();
+            for p in &c.paths {
+                files.push(parse_file(p).map_err(|e| e.to_string())?);
+            }
+            for (from, to) in &c.links {
+                if let Some((tomod, tovar)) = to.split_once('.') {
+                    let mut hit = false;
+                    for f in &mut files {
+                        if f.meta.id == tomod {
+                            if let Some(v) = f.variables.get_mut(tovar) {
+                                v.source = Some(from.clone());
+                                hit = true;
+                            }
+                        }
+                    }
+                    if !hit {
+                        eprintln!("⚠️  耦合链接 to='{to}' 在模型里找不到对应 Input 变量（已跳过）");
+                    }
+                }
+            }
+            crate::validator::validate(&files).map_err(|e| e.to_string())?;
+            Ok(files)
+        }
+    }
 }
 
 /// 整个花名册的监听指纹（各模型文件 mtime 的有序快照；任一变化即触发刷新）。
@@ -312,13 +428,27 @@ fn parse_model(query: &str) -> Option<String> {
 }
 
 /// 模型花名册 JSON（前端据此建顶部选择器；不硬编码作物清单——问 EQC 要）。
+/// `coupled` 标记耦合视图条目（前端可分组/提示其只看结构图）。
 fn models_json(ctx: &Ctx) -> String {
     let arr: Vec<serde_json::Value> = ctx
         .models
         .iter()
-        .map(|m| serde_json::json!({ "id": m.id, "name": m.name, "has_drivers": m.drivers.is_some() }))
+        .map(|m| {
+            serde_json::json!({
+                "id": m.id, "name": m.name,
+                "has_drivers": m.drivers.is_some(),
+                "coupled": m.coupling.is_some()
+            })
+        })
         .collect();
     serde_json::json!({ "models": arr }).to_string()
+}
+
+/// 耦合视图条目不支持仿真/录入/标定（需单作物模型）；返回友好错误串，否则 None。
+fn coupled_guard(m: &ModelEntry) -> Option<String> {
+    m.coupling.as_ref().map(|_| {
+        format!("「{}」是耦合视图，暂只支持结构图（仿真/录入/标定请选单个作物模型）", m.name)
+    })
 }
 
 /// 处理一个连接。
@@ -344,11 +474,11 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
         ),
         // 模型花名册（前端建顶部选择器用）。
         "/api/models" => ("200 OK", "application/json; charset=utf-8", models_json(ctx)),
-        "/api/model" => match load_files(&m.path) {
+        "/api/model" => match load_model_files(m) {
             Ok(files) => ("200 OK", "application/json; charset=utf-8", crate::export::to_json_string(&files)),
             Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
         },
-        "/api/report" => match render_report(&m.path, parse_layout(query), parse_dag_level(query)) {
+        "/api/report" => match load_model_files(m).and_then(|f| render_report(&f, parse_layout(query), parse_dag_level(query))) {
             Ok(h) => ("200 OK", "text/html; charset=utf-8", h),
             Err(e) => ("200 OK", "text/html; charset=utf-8", error_html(&e)),
         },
@@ -472,11 +602,10 @@ fn load_files(path: &Path) -> Result<Vec<EquationFile>, String> {
     Ok(files)
 }
 
-fn render_report(path: &Path, layout: LayoutKind, level: DagLevel) -> Result<String, String> {
-    let files = load_files(path)?;
-    let dag = build_dag(&files).map_err(|e| e.to_string())?;
-    let collapsed = collapse_dag(&dag, &files, level);
-    Ok(generate_report_leveled(&files, &collapsed, layout, level))
+fn render_report(files: &[EquationFile], layout: LayoutKind, level: DagLevel) -> Result<String, String> {
+    let dag = build_dag(files).map_err(|e| e.to_string())?;
+    let collapsed = collapse_dag(&dag, files, level);
+    Ok(generate_report_leveled(files, &collapsed, layout, level))
 }
 
 /// `?layout=force` → 对应布局（未提供/未知 → 分层）。
@@ -509,6 +638,9 @@ fn run_sim(
     init_ov: &HashMap<String, f64>,
     driver_ov: &HashMap<String, f64>,
 ) -> Result<SimOutput, String> {
+    if let Some(e) = coupled_guard(m) {
+        return Err(e);
+    }
     let files = load_files(&m.path)?;
     let file = files.first().ok_or_else(|| "无模型".to_string())?;
     let (steps, dmap) = m
@@ -538,6 +670,9 @@ fn run_sim(
 fn run_optimize(m: &ModelEntry, query: &str) -> Result<String, String> {
     use crate::optimize::{self, load_problem};
 
+    if let Some(e) = coupled_guard(m) {
+        return Err(e);
+    }
     let spec_arg = parse_spec(query)
         .ok_or_else(|| "缺少 spec 参数（/api/optimize?spec=problem.yaml）".to_string())?;
     // spec 路径：绝对直接用，否则相对模型所在目录
@@ -613,6 +748,9 @@ fn run_optimize(m: &ModelEntry, query: &str) -> Result<String, String> {
 fn run_calibrate(m: &ModelEntry, query: &str) -> Result<String, String> {
     use crate::optimize::{self, load_problem};
 
+    if let Some(e) = coupled_guard(m) {
+        return Err(e);
+    }
     let spec_arg = parse_spec(query)
         .ok_or_else(|| "缺少 spec 参数（/api/calibrate?spec=calib.yaml）".to_string())?;
     let zone = parse_zone(query);
@@ -864,6 +1002,9 @@ fn parse_zone(query: &str) -> String {
 
 /// 读回某处理区已录入的稀疏实测数据（JSON）。文件不存在 → 空集（非错误）。
 fn read_observations(m: &ModelEntry, query: &str) -> String {
+    if let Some(e) = coupled_guard(m) {
+        return error_json(&e);
+    }
     let zone = parse_zone(query);
     let path = m.data_dir.join(format!("{zone}.csv"));
     if !path.exists() {
@@ -897,6 +1038,9 @@ fn read_observations(m: &ModelEntry, query: &str) -> String {
 /// body = `{ "columns": ["Y","TDM",...], "rows": [ {"DAT":30,"Y":1.2,"TDM":12.5}, ... ] }`。
 /// 校验：列名须是模型变量、DAT 正整数、值有限；按 DAT 排序去重；原子替换写盘。
 fn write_observations(m: &ModelEntry, query: &str, body: &[u8]) -> Result<String, String> {
+    if let Some(e) = coupled_guard(m) {
+        return Err(e);
+    }
     let zone = parse_zone(query);
     let v: serde_json::Value =
         serde_json::from_slice(body).map_err(|e| format!("请求体不是合法 JSON: {e}"))?;
@@ -1038,6 +1182,9 @@ fn read_calib_status(data_dir: &Path, zone: &str) -> serde_json::Value {
 
 /// `GET /api/zone?zone=A` → 该区管理设置 + 是否已有观测 + 标定状态。
 fn read_zone(m: &ModelEntry, query: &str) -> String {
+    if let Some(e) = coupled_guard(m) {
+        return error_json(&e);
+    }
     let zone = parse_zone(query);
     let (params, drivers) = read_zone_management(&m.data_dir, &zone);
     let has_obs = m.data_dir.join(format!("{zone}.csv")).exists();
@@ -1054,6 +1201,9 @@ fn read_zone(m: &ModelEntry, query: &str) -> String {
 
 /// `POST /api/zone?zone=A` body `{params:{}, drivers:{}}` → 写 `<zone>.json`（原子替换）。
 fn write_zone(m: &ModelEntry, query: &str, body: &[u8]) -> Result<String, String> {
+    if let Some(e) = coupled_guard(m) {
+        return Err(e);
+    }
     let zone = parse_zone(query);
     let v: serde_json::Value =
         serde_json::from_slice(body).map_err(|e| format!("请求体不是合法 JSON: {e}"))?;
@@ -1156,6 +1306,8 @@ mod tests {
         assert!(STUDIO_HTML.contains("modelSel"));
         assert!(STUDIO_HTML.contains("applyModel"));
         assert!(STUDIO_HTML.contains("modelParam"));
+        // 耦合视图（step 3）：optgroup 分组 + 标题提示
+        assert!(STUDIO_HTML.contains("耦合视图"));
     }
 
     #[test]
@@ -1254,6 +1406,38 @@ mod tests {
         assert!(build_roster_from_manifest(&ws).is_err());
         // 空 models → 错误
         std::fs::write(&ws, "models: []\n").unwrap();
+        assert!(build_roster_from_manifest(&ws).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_build_roster_couplings() {
+        let dir = std::env::temp_dir().join("eqc_couple_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let ws = dir.join("eqc-workspace.yaml");
+        std::fs::write(
+            &ws,
+            "models:\n  - { id: gh, name: 温室, path: gh.eq.yaml }\n  - { id: bb, name: 蓝莓, path: bb.eq.yaml }\ncouplings:\n  - id: gh_bb\n    name: 温室x蓝莓\n    models: [gh, bb]\n    links:\n      - { from: GREENHOUSE_V1.T_air, to: BLUEBERRY_BB5.T }\n",
+        )
+        .unwrap();
+        let roster = build_roster_from_manifest(&ws).unwrap();
+        assert_eq!(roster.len(), 3); // 2 模型 + 1 耦合
+        let c = roster.iter().find(|m| m.id == "gh_bb").unwrap();
+        let cp = c.coupling.as_ref().expect("应是耦合条目");
+        assert_eq!(cp.paths.len(), 2);
+        assert_eq!(cp.links, vec![("GREENHOUSE_V1.T_air".to_string(), "BLUEBERRY_BB5.T".to_string())]);
+        assert!(coupled_guard(c).is_some()); // 耦合条目被仿真/录入守卫拦下
+        let single = roster.iter().find(|m| m.id == "gh").unwrap();
+        assert!(coupled_guard(single).is_none()); // 单模型放行
+
+        // 引用不存在的模型 → 错误
+        std::fs::write(&ws, "models:\n  - { id: gh, path: g.eq.yaml }\ncouplings:\n  - { id: x, models: [gh, nope] }\n").unwrap();
+        assert!(build_roster_from_manifest(&ws).is_err());
+        // <2 模型 → 错误
+        std::fs::write(&ws, "models:\n  - { id: gh, path: g.eq.yaml }\ncouplings:\n  - { id: x, models: [gh] }\n").unwrap();
+        assert!(build_roster_from_manifest(&ws).is_err());
+        // 耦合 id 与模型 id 撞 → 错误
+        std::fs::write(&ws, "models:\n  - { id: gh, path: g.eq.yaml }\n  - { id: bb, path: b.eq.yaml }\ncouplings:\n  - { id: gh, models: [gh, bb] }\n").unwrap();
         assert!(build_roster_from_manifest(&ws).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }

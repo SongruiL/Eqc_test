@@ -288,7 +288,11 @@ async function loadModels(){
   const sel = document.getElementById('modelSel');
   let saved = null; try { saved = localStorage.getItem('eqc_model'); } catch(e){}
   if(MODELS.length > 1){
-    sel.innerHTML = MODELS.map(m=>`<option value="${m.id}">${m.name||m.id}</option>`).join('');
+    // 单模型在前；耦合视图（step 3）归到「耦合视图」optgroup
+    const singles = MODELS.filter(m=>!m.coupled), coupled = MODELS.filter(m=>m.coupled);
+    let html = singles.map(m=>`<option value="${m.id}">${m.name||m.id}</option>`).join('');
+    if(coupled.length) html += '<optgroup label="耦合视图">' + coupled.map(m=>`<option value="${m.id}">${m.name||m.id}</option>`).join('') + '</optgroup>';
+    sel.innerHTML = html;
     _model = MODELS.some(m=>m.id===saved) ? saved : MODELS[0].id;
     sel.value = _model;
     sel.hidden = false;
@@ -317,8 +321,15 @@ async function loadModel(){
     const m = await r.json();
     MODEL = m;
     const mod = (m.modules && m.modules[0]) || {};
-    document.getElementById('title').textContent = mod.name_cn || mod.model || 'EQC Studio';
-    document.getElementById('subtitle').textContent = mod.id ? ('· ' + mod.id) : '';
+    // 耦合视图（step 3）：标题用花名册名 + 提示「只看结构图」（右侧面板取首个模块、仿真守卫拦下）。
+    const ce = _model ? MODELS.find(x=>x.id===_model) : null;
+    if(ce && ce.coupled){
+      document.getElementById('title').textContent = ce.name || '耦合视图';
+      document.getElementById('subtitle').textContent = '· 耦合视图（结构图；仿真/录入请选单作物模型，建议在专家视图看）';
+    } else {
+      document.getElementById('title').textContent = mod.name_cn || mod.model || 'EQC Studio';
+      document.getElementById('subtitle').textContent = mod.id ? ('· ' + mod.id) : '';
+    }
     buildVarList(mod.variables || []);
     buildScenario(mod.parameters || [], mod.variables || []);
     buildEntryHead();            // 园区录入网格列（按模型 measurable）
