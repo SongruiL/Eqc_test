@@ -251,7 +251,7 @@ fn module_legend(dag: &Dag) -> String {
     s
 }
 
-fn dag_svg(dag: &Dag, kind: LayoutKind) -> String {
+fn dag_svg(files: &[EquationFile], dag: &Dag, kind: LayoutKind) -> String {
     if dag.nodes.is_empty() {
         return "<p class=\"empty\">（无节点）</p>".to_string();
     }
@@ -260,7 +260,14 @@ fn dag_svg(dag: &Dag, kind: LayoutKind) -> String {
     let nodes: Vec<&str> = dag.nodes.iter().map(|n| n.id.as_str()).collect();
     let edges: Vec<(&str, &str)> =
         dag.edges.iter().map(|e| (e.from.as_str(), e.to.as_str())).collect();
-    let lay = compute_layout(&nodes, &edges, kind, g);
+    // Forrester 布局需节点分类（存量/速率/边界=主干）；角色 DAG 也走主干布局（含方程级）。
+    // 模块级节点非变量 → class_of 落到辅助 → 主干不足 → compute_forrester 内部回退力导向。
+    let class: std::collections::HashMap<&str, VarClass> =
+        dag.nodes.iter().map(|n| (n.id.as_str(), class_of(files, &n.id))).collect();
+    let lay = match kind {
+        LayoutKind::Forrester => layout::compute_forrester(&nodes, &edges, &class, g),
+        _ => compute_layout(&nodes, &edges, kind, g),
+    };
     let pos = &lay.pos;
 
     let mut s = format!(
@@ -621,7 +628,7 @@ pub fn generate_report_leveled(
         // 依赖关系图（按子模块分色的拓扑 DAG；节点名=变量label→方程中文名→代号）
         body.push_str("<h2>依赖关系图 (DAG)<span class=\"sub\">按子模块分色 · 节点名取方程中文名</span></h2>");
         body.push_str(&module_legend(dag));
-        body.push_str(&format!("<div class=\"dag\">{}</div>", dag_svg(dag, layout)));
+        body.push_str(&format!("<div class=\"dag\">{}</div>", dag_svg(files, dag, layout)));
     } else {
         // 方程级 / 模块级：折叠后的依赖图（Forrester 为变量级专属，此处不画）；按子模块分色
         let (h, sub) = if level == DagLevel::Module {
@@ -631,7 +638,7 @@ pub fn generate_report_leveled(
         };
         body.push_str(&format!("<h2>{h}<span class=\"sub\">{sub}</span></h2>"));
         body.push_str(&module_legend(dag));
-        body.push_str(&format!("<div class=\"dag\">{}</div>", dag_svg(dag, layout)));
+        body.push_str(&format!("<div class=\"dag\">{}</div>", dag_svg(files, dag, layout)));
     }
 
     // 公式区（窄栏，便于阅读）
