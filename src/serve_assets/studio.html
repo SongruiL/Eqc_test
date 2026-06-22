@@ -133,6 +133,19 @@
       </div>
     </div>
   </section>
+
+  <section class="panel park-panel">
+    <h2>用田间数据标定模型
+      <span class="tools">
+        <input id="calibSpec" class="spec" placeholder="标定 spec（相对模型目录）" value="calib_s8_park.yaml">
+        <button class="btn on" id="calibRun">用本区数据标定</button>
+      </span>
+    </h2>
+    <div class="body">
+      <div class="hint" id="calibStatus">用本处理区刚录的数据反推模型参数、看拟合误差。spec（哪些参数当旋钮、误差目标）由科研人员预先写好；DE 搜参数可能数十秒。</div>
+      <div id="calibResult"></div>
+    </div>
+  </section>
 </div>
 
 <div id="expertView">
@@ -728,6 +741,34 @@ document.getElementById('addRow').addEventListener('click', ()=>addEntryRow());
 document.getElementById('saveObs').addEventListener('click', saveObs);
 document.getElementById('zoneLoad').addEventListener('click', loadZone);
 document.getElementById('zoneInput').addEventListener('change', loadZone);
+
+// —— 用田间数据标定（接 eqc calibrate；本处理区录入的数据作 observed）——
+function paramLabel(name){
+  const mod=(MODEL&&MODEL.modules&&MODEL.modules[0])||{};
+  const p=(mod.parameters||[]).find(x=>x.name===name);
+  return p&&p.name_cn ? (p.name_cn+'（'+name+'）') : name;
+}
+async function runCalibrate(){
+  const spec=document.getElementById('calibSpec').value.trim();
+  const st=document.getElementById('calibStatus'), box=document.getElementById('calibResult');
+  if(!spec){ st.innerHTML='<span class="err">请填标定 spec 路径（相对模型目录）。</span>'; return; }
+  const btn=document.getElementById('calibRun'); btn.disabled=true;
+  st.textContent='⏳ 标定中…（DE 搜参数，可能数十秒）'; box.innerHTML='';
+  try{
+    const r=await fetch('/api/calibrate?spec='+encodeURIComponent(spec)+'&zone='+encodeURIComponent(curZone())+'&_='+Date.now(),{cache:'no-store'});
+    const j=await r.json();
+    if(j.error){ st.innerHTML='<span class="err">标定失败：'+esc(j.error)+'</span>'; return; }
+    st.textContent='✅ 标定完成（'+(j.optimizer?('DE pop='+j.optimizer.pop+' iters='+j.optimizer.iters):'')+'，观测点 '+(j.n_obs||0)+'）';
+    let h='<table class="opt-tbl"><tr><th>参数</th><th>拟合值</th><th>边界</th></tr>';
+    (j.best_knobs||[]).forEach(k=>{ h+='<tr><td>'+esc(paramLabel(k.var))+'</td><td>'+fmtNum(k.value)+(k.unit?(' '+esc(k.unit)):'')+'</td><td>['+fmtNum(k.bounds[0])+', '+fmtNum(k.bounds[1])+']</td></tr>'; });
+    h+='</table>';
+    h+='<div class="opt-summary" style="margin-top:8px">拟合误差（'+esc(j.objective.sense)+' '+esc(j.objective.expr)+'）：<b>'+(j.objective_value!=null?fmtNum(j.objective_value):'—')+'</b></div>';
+    if(j.convergence_svg) h+='<div class="opt-conv">'+j.convergence_svg+'</div>';
+    box.innerHTML=h;
+  }catch(e){ st.innerHTML='<span class="err">标定请求失败</span>'; }
+  finally{ btn.disabled=false; }
+}
+document.getElementById('calibRun').addEventListener('click', runCalibrate);
 
 let _savedLayout = 'layered';
 try { _savedLayout = localStorage.getItem('eqc_layout') || 'layered'; } catch(e){}

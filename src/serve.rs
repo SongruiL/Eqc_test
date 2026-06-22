@@ -184,6 +184,11 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
             Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
             Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
         },
+        // 用某处理区录入的实测数据标定模型参数（录入→标定闭环的「标定」端）。
+        "/api/calibrate" => match run_calibrate(ctx, query) {
+            Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
+            Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
+        },
         // 实测数据读写（园区录入 → 标定输入）。GET 读回某处理区的稀疏 observed；
         // POST 写出规范稀疏 CSV（EQC 权威拥有格式，前端只递交结构化数据）。
         "/api/observations" => match method {
@@ -378,6 +383,83 @@ fn run_optimize(ctx: &Ctx, query: &str) -> Result<String, String> {
             "convergence_svg".to_string(),
             serde_json::Value::String(crate::chart::convergence_chart_svg(&res.history, 720.0, 300.0)),
         );
+    }
+    Ok(j.to_string())
+}
+
+/// `/api/calibrate?spec=<路径>&zone=<处理区>`：用某处理区录入的实测数据标定模型参数。
+/// 与 `eqc calibrate` 共用 `optimize::run_obs`。observed **优先**取该处理区录入的 CSV
+/// （录入→标定闭环），否则回退 spec 的 `observed:`；同期天气取 spec 的 `environment:`，
+/// 否则启动级 `--drivers`。返回与 `eqc calibrate` 同结构的结果 JSON + 注入收敛曲线 SVG。
+fn run_calibrate(ctx: &Ctx, query: &str) -> Result<String, String> {
+    use crate::optimize::{self, load_problem};
+
+    let spec_arg = parse_spec(query)
+        .ok_or_else(|| "缺少 spec 参数（/api/calibrate?spec=calib.yaml）".to_string())?;
+    let zone = parse_zone(query);
+    let model_dir: PathBuf = if ctx.path.is_dir() {
+        ctx.path.clone()
+    } else {
+        ctx.path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."))
+    };
+    let spec_path = {
+        let p = PathBuf::from(&spec_arg);
+        if p.is_absolute() {
+            p
+        } else {
+            model_dir.join(&spec_arg)
+        }
+    };
+
+    let problem = load_problem(&spec_path)?;
+    if problem.is_multi() {
+        return Err("标定暂为单目标（误差最小化）：spec 请用单个 objective".into());
+    }
+    let files = load_files(&ctx.path)?;
+    let file = files.first().ok_or_else(|| "无模型".to_string())?;
+    let spec_dir = spec_path.parent().unwrap_or_else(|| Path::new("."));
+
+    // 同期天气：spec 的 environment（相对 spec 目录）优先，否则启动级 --drivers
+    let (steps, driver_map) = match &problem.environment {
+        Some(env) => crate::scenario::load_drivers_csv(&spec_dir.join(env))?,
+        None => match &ctx.drivers {
+            Some((rows, map)) => (*rows, map.clone()),
+            None => {
+                return Err("标定 spec 无 environment 且启动时未提供 --drivers——无同期天气".into())
+            }
+        },
+    };
+
+    // 实测数据：本处理区录入的 observed CSV 优先（录入→标定闭环），否则 spec 的 observed
+    let zone_csv = ctx.data_dir.join(format!("{zone}.csv"));
+    let obs_path: PathBuf = if zone_csv.exists() {
+        zone_csv
+    } else {
+        match &problem.observed {
+            Some(o) => spec_dir.join(o),
+            None => {
+                return Err(format!(
+                    "处理区 '{zone}' 暂无实测数据，且 spec 未写 observed:——请先在园区视图录入并保存"
+                ))
+            }
+        }
+    };
+    let observed_data = crate::scenario::load_observed_csv(&obs_path)?;
+    let n_obs: usize = observed_data.values().map(|v| v.len()).sum();
+
+    let res = optimize::run_obs(file, &problem, &driver_map, steps, &observed_data)?;
+    let mut j = optimize::result_json(file, &problem, &res);
+    if let Some(obj) = j.as_object_mut() {
+        obj.insert(
+            "convergence_svg".to_string(),
+            serde_json::Value::String(crate::chart::convergence_chart_svg(&res.history, 720.0, 300.0)),
+        );
+        obj.insert("zone".to_string(), serde_json::Value::String(zone));
+        obj.insert(
+            "observed_path".to_string(),
+            serde_json::Value::String(obs_path.display().to_string()),
+        );
+        obj.insert("n_obs".to_string(), serde_json::json!(n_obs));
     }
     Ok(j.to_string())
 }
@@ -715,10 +797,12 @@ mod tests {
         assert!(STUDIO_HTML.contains("optRun"));
         assert!(STUDIO_HTML.contains("/api/optimize?spec="));
         assert!(STUDIO_HTML.contains("renderParetoResult"));
-        // 园区/简明视图：视图切换 + 录入网格 + 实测数据端点
+        // 园区/简明视图：视图切换 + 录入网格 + 实测数据端点 + 标定
         assert!(STUDIO_HTML.contains("modeSeg"));
         assert!(STUDIO_HTML.contains("entryTable"));
         assert!(STUDIO_HTML.contains("/api/observations?zone="));
+        assert!(STUDIO_HTML.contains("calibRun"));
+        assert!(STUDIO_HTML.contains("/api/calibrate?spec="));
     }
 
     #[test]
