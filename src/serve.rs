@@ -807,6 +807,9 @@ mod tests {
         assert!(STUDIO_HTML.contains("calBadge"));
         assert!(STUDIO_HTML.contains("renderUnderstand"));
         assert!(STUDIO_HTML.contains("stress-lights"));
+        // 管理建议（大白话优化）
+        assert!(STUDIO_HTML.contains("adviceRun"));
+        assert!(STUDIO_HTML.contains("runAdvice"));
     }
 
     #[test]

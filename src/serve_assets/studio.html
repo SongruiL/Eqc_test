@@ -115,6 +115,10 @@
   .light.warn { background:#fffbeb; } .light.warn .dot { background:#f59e0b; }
   .light.bad { background:#fef2f2; } .light.bad .dot { background:#dc2626; }
   .light small { color:var(--sub); }
+  /* 管理建议（大白话优化） */
+  .advice-lead { font-size:14px; margin-bottom:6px; }
+  .advice-list { margin:0 0 8px; padding-left:22px; }
+  .advice-list li { margin:5px 0; font-size:14px; }
 </style>
 </head>
 <body>
@@ -171,6 +175,19 @@
     <div class="body">
       <div class="hint" id="calibStatus">用本处理区刚录的数据反推模型参数、看拟合误差。spec（哪些参数当旋钮、误差目标）由科研人员预先写好；DE 搜参数可能数十秒。</div>
       <div id="calibResult"></div>
+    </div>
+  </section>
+
+  <section class="panel park-panel">
+    <h2>管理建议（求最优）
+      <span class="tools">
+        <input id="adviceSpec" class="spec" placeholder="优化 spec（相对模型目录）" value="optimize_s8_park.yaml">
+        <button class="btn on" id="adviceRun">算最优管理</button>
+      </span>
+    </h2>
+    <div class="body">
+      <div class="hint" id="adviceStatus">求"怎么调管理最划算"。spec（目标 + 可调旋钮 + 边界）由科研人员预先写好；DE 搜索可能数十秒。未标定时建议仅供方向参考。</div>
+      <div id="adviceResult"></div>
     </div>
   </section>
 </div>
@@ -784,7 +801,8 @@ async function renderUnderstand(){
   if(!hl) return;
   hl.innerHTML=''; sl.innerHTML=''; hint.textContent='正在跑当前情景仿真…';
   let j;
-  try{ j=await (await fetch('/api/simulate?_='+Date.now(),{cache:'no-store'})).json(); }
+  // 带上情景覆盖（OVR/IOVR/DOVR）→ 采纳管理建议后「模型怎么说」随之刷新
+  try{ j=await (await fetch('/api/simulate?_='+Date.now()+overrideQuery(),{cache:'no-store'})).json(); }
   catch(e){ hint.innerHTML='<span class="err">无法仿真</span>'; return; }
   if(j.error||!j.series){ hint.textContent='提示：'+(j.error||'需要启动时加 --drivers 才能预测整季'); return; }
   const series=j.series, mod=(MODEL.modules&&MODEL.modules[0])||{}, vars=mod.variables||[];
@@ -839,6 +857,44 @@ async function runCalibrate(){
   finally{ btn.disabled=false; }
 }
 document.getElementById('calibRun').addEventListener('click', runCalibrate);
+
+// —— 管理建议：求最优（接 /api/optimize，大白话呈现 + 采纳叠加）——
+function knobLabel(name){
+  const mod=(MODEL&&MODEL.modules&&MODEL.modules[0])||{};
+  const v=(mod.variables||[]).find(x=>x.name===name);
+  if(v && (v.label||v.description)) return (v.label||v.description);
+  const p=(mod.parameters||[]).find(x=>x.name===name);
+  if(p && p.name_cn) return p.name_cn;
+  return name;
+}
+async function runAdvice(){
+  const spec=document.getElementById('adviceSpec').value.trim();
+  const st=document.getElementById('adviceStatus'), box=document.getElementById('adviceResult');
+  if(!spec){ st.innerHTML='<span class="err">请填优化 spec 路径（相对模型目录）。</span>'; return; }
+  const btn=document.getElementById('adviceRun'); btn.disabled=true;
+  st.textContent='⏳ 求最优中…（DE 搜索，可能数十秒）'; box.innerHTML='';
+  try{
+    const r=await fetch('/api/optimize?spec='+encodeURIComponent(spec)+'&_='+Date.now(),{cache:'no-store'});
+    const j=await r.json();
+    if(j.error){ st.innerHTML='<span class="err">求最优失败：'+esc(j.error)+'</span>'; return; }
+    if(j.multi_objective){ st.innerHTML='<span class="err">该 spec 是多目标，请到专家视图看 Pareto 前沿。</span>'; return; }
+    st.textContent='✅ 完成';
+    let h='<div class="advice-lead">为达成目标，建议这样调整管理：</div><ul class="advice-list">';
+    (j.best_knobs||[]).forEach(k=>{ h+='<li>把 <b>'+esc(knobLabel(k.var))+'</b> 调到 <b>'+fmtNum(k.value)+(k.unit?(' '+esc(k.unit)):'')+'</b></li>'; });
+    h+='</ul>';
+    const feas=j.feasible?'<span class="feas-ok">满足约束 ✓</span>':'<span class="feas-bad">违反约束 ✗</span>';
+    h+='<div class="opt-summary">预计目标（'+esc(j.objective.sense==='max'?'最大化':'最小化')+'）≈ <b>'+(j.objective_value!=null?fmtNum(j.objective_value):'—')+'</b>　'+feas+'</div>';
+    if(j.constraints&&j.constraints.length){ h+='<div class="opt-cons">';
+      j.constraints.forEach(c=>{ const ok=c.satisfied; h+='<div class="'+(ok?'ok':'bad')+'">'+(ok?'✓':'✗')+' '+esc(c.expr)+' = '+fmtNum(c.value)+' ≤ '+fmtNum(c.max)+'</div>'; });
+      h+='</div>'; }
+    h+='<button class="btn on" id="adviceApply" style="margin-top:10px">采纳建议</button>'
+      +'<span class="scn-note" style="margin-left:8px">把建议管理喂回，刷新上方「模型怎么说」</span>';
+    box.innerHTML=h;
+    const ap=document.getElementById('adviceApply'); if(ap) ap.addEventListener('click', ()=>{ applyBestKnobs(j.best_knobs); renderUnderstand(); st.textContent='已采纳建议——上方「模型怎么说」已按建议管理刷新（重置默认可还原）。'; });
+  }catch(e){ st.innerHTML='<span class="err">求最优请求失败</span>'; }
+  finally{ btn.disabled=false; }
+}
+document.getElementById('adviceRun').addEventListener('click', runAdvice);
 
 let _savedLayout = 'layered';
 try { _savedLayout = localStorage.getItem('eqc_layout') || 'layered'; } catch(e){}
