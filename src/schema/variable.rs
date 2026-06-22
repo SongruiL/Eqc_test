@@ -144,6 +144,21 @@ pub struct Variable {
     #[serde(default)]
     pub description: Option<String>,
 
+    /// 大白话短名（园区/简明视图、图例、录入网格列名显示用）。
+    ///
+    /// 变量本身只有代号（如 `Y`/`f_N`）和可能较长的 `description`；`label` 提供一个
+    /// 简短的中文名（如 "鲜重产量"），供非数学用户看懂。缺省时前端回退 `description`→变量名。
+    #[serde(default)]
+    pub label: Option<String>,
+
+    /// 是否为**可田间测量**的观测量。
+    ///
+    /// 标记该变量对应一个能在田间实测的物理量（如产量、干物质、叶面积、组织氮%）。
+    /// 园区录入网格据此列出可填列，也是 `eqc calibrate`/`identify` 的观测对象。
+    /// 默认 `false`；无任何变量标注时，前端回退到"输出变量"作候选。
+    #[serde(default)]
+    pub measurable: bool,
+
     /// 来源（仅 input 类型）：格式 "MODULE.variable"
     #[serde(default)]
     pub source: Option<String>,
@@ -248,6 +263,8 @@ mod tests {
             dtype: DataType::Float,
             unit: None,
             description: None,
+            label: None,
+            measurable: false,
             source: None,
             class: None,
             init: None,

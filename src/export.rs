@@ -64,6 +64,12 @@ pub struct VarJson {
     pub unit: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// 大白话短名（园区/简明视图显示用）；缺省时前端回退 description→name。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// 是否可田间测量（录入网格列、标定观测对象）；false 时省略以保持契约干净。
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub measurable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub init: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -125,6 +131,8 @@ fn module_json(f: &EquationFile) -> ModuleJson {
                 dynamic: v.is_dynamic(),
                 unit: v.unit.clone(),
                 description: v.description.clone(),
+                label: v.label.clone(),
+                measurable: v.measurable,
                 init: v.init,
                 rate: v.rate.clone(),
                 prev: v.prev.clone(),
@@ -185,6 +193,8 @@ mod tests {
             dtype: DataType::Float,
             unit: Some("g/m2".into()),
             description: Some("累积干物质".into()),
+            label: Some("总干物质".into()),
+            measurable: true,
             source: None,
             class: Some(crate::schema::VarClass::State),
             init: Some(19.9),
@@ -228,6 +238,8 @@ mod tests {
         assert_eq!(v.class, "state");
         assert!(v.dynamic);
         assert_eq!(v.rate.as_deref(), Some("DDM"));
+        assert_eq!(v.label.as_deref(), Some("总干物质"));
+        assert!(v.measurable);
 
         let eq = &m.modules[0].equations[0];
         assert!(eq.mathml.contains("<math"));
@@ -237,5 +249,7 @@ mod tests {
         let js = to_json_string(&files);
         assert!(js.contains("\"schema_version\""));
         assert!(js.contains("\"class\":\"state\""));
+        assert!(js.contains("\"label\":\"总干物质\""));
+        assert!(js.contains("\"measurable\":true"));
     }
 }

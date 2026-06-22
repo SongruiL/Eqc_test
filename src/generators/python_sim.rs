@@ -186,6 +186,8 @@ mod tests {
             dtype: DataType::Float,
             unit: None,
             description: None,
+            label: None,
+            measurable: false,
             source: None,
             class,
             init,
