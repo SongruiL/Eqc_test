@@ -375,6 +375,17 @@ fn collapse_to_modules(dag: &Dag) -> Dag {
 /// 方程输出→其 `meta.modules` 模块（未列入→「其他」）；驱动量→「驱动量」；参数→「参数」；
 /// 状态/延迟量→其 rate/prev 来源的模块。
 fn compute_submodules(files: &[EquationFile]) -> HashMap<String, String> {
+    // 多模型（耦合视图）时给**通用 auto-模块**（驱动量/参数/其他）加模型前缀，否则两模型的
+    // 「驱动量」等会按字符串折叠成一个 hub。命名模块（meta.modules 声明）本就不撞、不加前缀。
+    // 单模型（含目录合成的单一模型）= 1 个文件 → 不加前缀，行为与历史一致。
+    let multi = files.len() > 1;
+    let auto = |mid: &str, name: &str| -> String {
+        if multi {
+            format!("{mid}·{name}")
+        } else {
+            name.to_string()
+        }
+    };
     let mut sub: HashMap<String, String> = HashMap::new();
     for f in files {
         let mid = &f.meta.id;
@@ -385,21 +396,22 @@ fn compute_submodules(files: &[EquationFile]) -> HashMap<String, String> {
             }
         }
         for eq in &f.equations {
-            sub.insert(
-                format!("{mid}.{}", eq.output),
-                eqmod.get(eq.id.as_str()).copied().unwrap_or("其他").to_string(),
-            );
+            let module = match eqmod.get(eq.id.as_str()).copied() {
+                Some(name) => name.to_string(), // 命名模块：不加前缀
+                None => auto(mid, "其他"),
+            };
+            sub.insert(format!("{mid}.{}", eq.output), module);
         }
         for (vname, var) in &f.variables {
             if var.var_type == VariableType::Input {
-                sub.entry(format!("{mid}.{vname}")).or_insert_with(|| "驱动量".to_string());
+                sub.entry(format!("{mid}.{vname}")).or_insert_with(|| auto(mid, "驱动量"));
             }
         }
         for name in f.parameters.keys() {
-            sub.entry(format!("{mid}.{name}")).or_insert_with(|| "参数".to_string());
+            sub.entry(format!("{mid}.{name}")).or_insert_with(|| auto(mid, "参数"));
         }
     }
-    // 状态/延迟量随 rate/prev 来源
+    // 状态/延迟量随 rate/prev 来源（继承其来源的模块串——已含前缀，无需再加）
     for f in files {
         let mid = &f.meta.id;
         for (vname, var) in &f.variables {
@@ -413,7 +425,7 @@ fn compute_submodules(files: &[EquationFile]) -> HashMap<String, String> {
                     continue;
                 }
             }
-            sub.insert(node, "其他".to_string());
+            sub.insert(node, auto(mid, "其他"));
         }
     }
     sub
