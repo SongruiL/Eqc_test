@@ -433,7 +433,13 @@ fn run_build(
 fn run_validate(input: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     println!("🔍 验证方程文件: {}", input.display());
 
-    let compiler = Compiler::new().load_directory(input)?.validate()?;
+    // 单文件用 load_file，目录用 load_directory（否则单文件会撞 read_dir 的「目录名无效」os-267）。
+    let loaded = if input.is_file() {
+        Compiler::new().load_file(input)?
+    } else {
+        Compiler::new().load_directory(input)?
+    };
+    let compiler = loaded.validate()?;
 
     println!("✅ 验证通过");
     println!("   - 模块数: {}", compiler.files().len());
@@ -448,7 +454,12 @@ fn run_report(
     output: &PathBuf,
     layout: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let compiler = Compiler::new().load_directory(input)?.validate()?.build_dag()?;
+    let loaded = if input.is_file() {
+        Compiler::new().load_file(input)?
+    } else {
+        Compiler::new().load_directory(input)?
+    };
+    let compiler = loaded.validate()?.build_dag()?;
     let dag = compiler.dag().ok_or("DAG 未构建")?;
     let kind = equation_compiler::report::LayoutKind::parse(layout);
     let html = equation_compiler::report::generate_report_with(compiler.files(), dag, kind);
