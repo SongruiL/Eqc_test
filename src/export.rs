@@ -76,6 +76,9 @@ pub struct VarJson {
     /// 胁迫/健康信号（"factor" 1=好 / "risk" 0=好）；前端据此画红绿灯。非信号则省略。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stress_factor: Option<String>,
+    /// 红绿灯取整季哪个值（"min"/"max"/"final"）；缺省由 kind 推断（factor→min/risk→max）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stress_reduce: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub init: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -140,6 +143,7 @@ fn module_json(f: &EquationFile) -> ModuleJson {
                 label: v.label.clone(),
                 measurable: v.measurable,
                 stress_factor: v.stress_factor.clone(),
+                stress_reduce: v.stress_reduce.clone(),
                 init: v.init,
                 rate: v.rate.clone(),
                 prev: v.prev.clone(),
@@ -204,6 +208,7 @@ mod tests {
             label: Some("总干物质".into()),
             measurable: true,
             stress_factor: None,
+            stress_reduce: None,
             source: None,
             class: Some(crate::schema::VarClass::State),
             init: Some(19.9),

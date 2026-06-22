@@ -190,6 +190,7 @@ mod tests {
             label: None,
             measurable: false,
             stress_factor: None,
+            stress_reduce: None,
             source: None,
             class,
             init,

@@ -794,15 +794,21 @@ async function renderUnderstand(){
   head.forEach(v=>{ const s=series[v.name]; if(!s||!s.length) return;
     const val=s[s.length-1];
     hl.innerHTML+='<div class="hl-item"><div class="hl-val">'+fmtNum(val)+' <span class="hl-unit">'+esc(v.unit||'')+'</span></div><div class="hl-lab">'+esc(v.label||v.description||v.name)+'</div></div>'; });
-  // 胁迫红绿灯：factor 看全季最小值（1=好），risk 看全季最大值（0=好）
+  // 胁迫红绿灯：stress_factor 定极性+阈值（factor 高=好 / risk 低=好），
+  // stress_reduce 定取整季哪个值（缺省 factor→min、risk→max；相位/单调变量用 final）。
   const stress=vars.filter(v=>v.stress_factor);
   stress.forEach(v=>{ const s=series[v.name]; if(!s||!s.length) return;
-    let worst,light,txt;
-    if(v.stress_factor==='risk'){ worst=Math.max.apply(null,s); if(worst<=0.1){light='ok';txt='安全';}else if(worst<=0.4){light='warn';txt='注意';}else{light='bad';txt='高风险';} }
-    else { worst=Math.min.apply(null,s); if(worst>=0.9){light='ok';txt='充足';}else if(worst>=0.6){light='warn';txt='偏紧';}else{light='bad';txt='缺乏';} }
-    sl.innerHTML+='<div class="light '+light+'"><span class="dot"></span>'+esc(v.label||v.name)+'：'+txt+' <small>('+fmtNum(worst)+')</small></div>'; });
+    const reduce = v.stress_reduce || (v.stress_factor==='risk'?'max':'min');
+    let val;
+    if(reduce==='final') val=s[s.length-1];
+    else if(reduce==='max') val=Math.max.apply(null,s);
+    else val=Math.min.apply(null,s);
+    let light,txt;
+    if(v.stress_factor==='risk'){ if(val<=0.1){light='ok';txt='安全';}else if(val<=0.4){light='warn';txt='注意';}else{light='bad';txt='高风险';} }
+    else { if(val>=0.9){light='ok';txt='充足';}else if(val>=0.6){light='warn';txt='偏紧';}else{light='bad';txt='缺乏';} }
+    sl.innerHTML+='<div class="light '+light+'"><span class="dot"></span>'+esc(v.label||v.name)+'：'+txt+' <small>('+fmtNum(val)+')</small></div>'; });
   if(!stress.length) sl.innerHTML='<span class="scn-note">（模型未标注胁迫信号）</span>';
-  hint.textContent='基于当前情景整季仿真'+(j.steps?('（'+j.steps+' 天）'):'')+'；红绿灯取全季最差值。未标定时数值仅供方向参考。';
+  hint.textContent='基于当前情景整季仿真'+(j.steps?('（'+j.steps+' 天）'):'')+'；红绿灯按各信号设定取全季最差或终值。未标定时数值仅供方向参考。';
 }
 document.getElementById('refreshUnderstand').addEventListener('click', renderUnderstand);
 

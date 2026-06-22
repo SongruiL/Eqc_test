@@ -166,6 +166,14 @@ pub struct Variable {
     #[serde(default)]
     pub stress_factor: Option<String>,
 
+    /// 红绿灯取整季哪个值：`"min"` / `"max"` / `"final"`（终值）。
+    ///
+    /// 与 [`Self::stress_factor`] 正交（后者定极性+阈值，本字段定"取哪个值"）。缺省由 kind 推断：
+    /// factor→min、risk→max。**相位/单调变量需显式覆盖**：需冷 f_chill（单调升，min=0 是早季伪影）
+    /// 用 `final`；果实 BER/缺钙（早季无果护栏伪影，max=1）用 `final`。
+    #[serde(default)]
+    pub stress_reduce: Option<String>,
+
     /// 来源（仅 input 类型）：格式 "MODULE.variable"
     #[serde(default)]
     pub source: Option<String>,
@@ -273,6 +281,7 @@ mod tests {
             label: None,
             measurable: false,
             stress_factor: None,
+            stress_reduce: None,
             source: None,
             class: None,
             init: None,
