@@ -852,6 +852,7 @@ async function onZoneChange(){
   try{ saved=await (await fetch('/api/zone?zone='+encodeURIComponent(curZone())+'&_='+Date.now(),{cache:'no-store'})).json(); }catch(e){}
   if(saved.params) Object.keys(saved.params).forEach(k=>OVR[k]=saved.params[k]);
   if(saved.drivers) Object.keys(saved.drivers).forEach(k=>DOVR[k]=saved.drivers[k]);
+  ZONE_CALIB = (saved && saved.calibration) ? saved.calibration : null;  // 4B：本区标定状态
   buildMgmtEditor(saved);
   loadZone();
   renderUnderstand();
@@ -861,8 +862,16 @@ document.getElementById('zoneLoad').addEventListener('click', onZoneChange);
 document.getElementById('zoneInput').addEventListener('change', onZoneChange);
 
 // —— 看懂卡：标定徽章 + 头条输出 + 胁迫红绿灯（全部取自 /api/model 契约 + /api/simulate）——
+let ZONE_CALIB=null;   // 本区标定状态（跑过本区标定后置上；切区时按 <zone>.calib.json 重设）
 function calBadgeHtml(){
   const mod=(MODEL&&MODEL.modules&&MODEL.modules[0])||{};
+  // 区级：本区跑过标定 → 绿徽章（诚实标注：模型整体仍以 meta 为准、可能待跨区联合标定）
+  if(ZONE_CALIB){
+    const err = ZONE_CALIB.error!=null ? ('误差 '+fmtNum(ZONE_CALIB.error)) : '';
+    let dt=''; try{ if(ZONE_CALIB.at) dt=' · '+new Date(ZONE_CALIB.at*1000).toLocaleDateString(); }catch(e){}
+    return '<span class="badge-cal ok">✓ 本区已标定'+(err?(' · '+err):'')+dt+'</span>'
+      + '<span class="scn-note" style="margin-left:6px">（模型整体仍待跨区联合标定）</span>';
+  }
   const c=mod.calibration;
   if(c&&c.calibrated) return '<span class="badge-cal ok">✓ 已标定'+(c.note?(' · '+esc(c.note)):'')+'</span>';
   const note=(c&&c.note)?c.note:'参数为占位值，结果仅供方向参考';
@@ -926,6 +935,8 @@ async function runCalibrate(){
     h+='<div class="opt-summary" style="margin-top:8px">拟合误差（'+esc(j.objective.sense)+' '+esc(j.objective.expr)+'）：<b>'+(j.objective_value!=null?fmtNum(j.objective_value):'—')+'</b></div>';
     if(j.convergence_svg) h+='<div class="opt-conv">'+j.convergence_svg+'</div>';
     box.innerHTML=h;
+    // 4B：标定成功 → 本区徽章即刻翻「本区已标定」（serve 已写 <zone>.calib.json，切回也保留）
+    if(j.objective_value!=null){ ZONE_CALIB={ error:j.objective_value, at:j.calibrated_at, n_obs:j.n_obs }; renderUnderstand(); }
   }catch(e){ st.innerHTML='<span class="err">标定请求失败</span>'; }
   finally{ btn.disabled=false; }
 }
@@ -973,8 +984,8 @@ let _savedLayout = 'layered';
 try { _savedLayout = localStorage.getItem('eqc_layout') || 'layered'; } catch(e){}
 applyLayout(_savedLayout);
 
-let _savedMode = 'expert';
-try { _savedMode = localStorage.getItem('eqc_mode') || 'expert'; } catch(e){}
+let _savedMode = 'park';   // 4A：默认进园区视图（园区员工为主；最后选择仍由 localStorage 记住）
+try { _savedMode = localStorage.getItem('eqc_mode') || 'park'; } catch(e){}
 applyMode(_savedMode);
 
 loadModel();

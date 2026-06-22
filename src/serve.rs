@@ -476,12 +476,37 @@ fn run_calibrate(ctx: &Ctx, query: &str) -> Result<String, String> {
             "convergence_svg".to_string(),
             serde_json::Value::String(crate::chart::convergence_chart_svg(&res.history, 720.0, 300.0)),
         );
-        obj.insert("zone".to_string(), serde_json::Value::String(zone));
+        obj.insert("zone".to_string(), serde_json::Value::String(zone.clone()));
         obj.insert(
             "observed_path".to_string(),
             serde_json::Value::String(obs_path.display().to_string()),
         );
         obj.insert("n_obs".to_string(), serde_json::json!(n_obs));
+    }
+
+    // 4B：标定成功 → 持久化本区标定状态（<zone>.calib.json）；看懂卡徽章据此翻「本区已标定」。
+    // 模型级 meta.calibration 仍诚实保持"整体未标定"（区级 ≠ 跨区联合标定）。
+    if res.outcome.objective.is_some() {
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let calib = serde_json::json!({
+            "spec": spec_arg,
+            "error": res.outcome.objective,
+            "objective": problem.objective.expr,
+            "n_obs": n_obs,
+            "knobs": j.get("best_knobs").cloned().unwrap_or(serde_json::Value::Null),
+            "at": at,
+        });
+        let _ = std::fs::create_dir_all(&ctx.data_dir);
+        let _ = std::fs::write(
+            ctx.data_dir.join(format!("{zone}.calib.json")),
+            serde_json::to_string_pretty(&calib).unwrap_or_default(),
+        );
+        if let Some(obj) = j.as_object_mut() {
+            obj.insert("calibrated_at".to_string(), serde_json::json!(at));
+        }
     }
     Ok(j.to_string())
 }
@@ -793,7 +818,15 @@ fn read_zone_management(ctx: &Ctx, zone: &str) -> (HashMap<String, f64>, HashMap
     (params, drivers)
 }
 
-/// `GET /api/zone?zone=A` → 该区管理设置 + 是否已有观测。
+/// 读某处理区的标定状态 `<zone>.calib.json`（4B）；缺/坏 → `null`。
+fn read_calib_status(ctx: &Ctx, zone: &str) -> serde_json::Value {
+    match std::fs::read_to_string(ctx.data_dir.join(format!("{zone}.calib.json"))) {
+        Ok(txt) => serde_json::from_str(&txt).unwrap_or(serde_json::Value::Null),
+        Err(_) => serde_json::Value::Null,
+    }
+}
+
+/// `GET /api/zone?zone=A` → 该区管理设置 + 是否已有观测 + 标定状态。
 fn read_zone(ctx: &Ctx, query: &str) -> String {
     let zone = parse_zone(query);
     let (params, drivers) = read_zone_management(ctx, &zone);
@@ -802,7 +835,11 @@ fn read_zone(ctx: &Ctx, query: &str) -> String {
         params.into_iter().map(|(k, v)| (k, serde_json::json!(v))).collect();
     let dj: serde_json::Map<String, serde_json::Value> =
         drivers.into_iter().map(|(k, v)| (k, serde_json::json!(v))).collect();
-    serde_json::json!({ "zone": zone, "params": pj, "drivers": dj, "has_observed": has_obs }).to_string()
+    serde_json::json!({
+        "zone": zone, "params": pj, "drivers": dj,
+        "has_observed": has_obs, "calibration": read_calib_status(ctx, &zone)
+    })
+    .to_string()
 }
 
 /// `POST /api/zone?zone=A` body `{params:{}, drivers:{}}` → 写 `<zone>.json`（原子替换）。
@@ -898,6 +935,9 @@ mod tests {
         assert!(STUDIO_HTML.contains("zone-bar"));
         assert!(STUDIO_HTML.contains("mgmtEditor"));
         assert!(STUDIO_HTML.contains("/api/zone?zone="));
+        // 4：默认进园区 + 区级标定徽章
+        assert!(STUDIO_HTML.contains("ZONE_CALIB"));
+        assert!(STUDIO_HTML.contains("本区已标定"));
     }
 
     #[test]
