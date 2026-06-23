@@ -142,6 +142,36 @@ impl EquationFile {
             .collect()
     }
 
+    /// 某个名字（变量/参数/方程输出）的**友好显示名**，优先级：
+    /// 变量 `label` → 方程中文名（该名字是某方程的 output）→ 参数 `name_cn` → 代号（兜底）。
+    ///
+    /// EQC 单一权威：DAG 节点标签（[`crate::dag::build_dag`] 后置）与 JSON 契约
+    /// （[`crate::export`] 的 `display_name`）共用此优先级，保证结构图/图表/勾选框显示一致。
+    /// 兜底回代号者 = 该变量缺 `label`/中文名 → 属逐作物补标注的建模缺口。
+    pub fn display_name(&self, name: &str) -> String {
+        if let Some(v) = self.variables.get(name) {
+            if let Some(label) = &v.label {
+                return label.clone();
+            }
+        }
+        if let Some(eq) = self.equations.iter().find(|e| e.output == name) {
+            return eq.name.clone();
+        }
+        if let Some(p) = self.parameters.get(name) {
+            return p.name_cn.clone();
+        }
+        // 延迟寄存器（`prev: 源`）无 label → 派生「源的友好名（上一步）」，
+        // 这样给源变量标一次 label 就顺带覆盖它的 *_prev 寄存器（如 C_Buf → C_Buf_prev=碳缓冲库（上一步））。
+        if let Some(v) = self.variables.get(name) {
+            if let Some(src) = &v.prev {
+                if src != name {
+                    return format!("{}（上一步）", self.display_name(src));
+                }
+            }
+        }
+        name.to_string()
+    }
+
     /// 将方程表达式中引用了「参数名」的 `Var` 节点重分类为 `Param`。
     ///
     /// EQC 解析单个名字时没有上下文（不知道 parameters 列表），所有 `{ref: x}` 先一律
@@ -225,5 +255,136 @@ mod tests {
         assert!(pref.contains(&"Tbase".to_string()), "Tbase 应被重分类为参数: {pref:?}");
         assert!(vref.contains(&"Tavg".to_string()), "Tavg 仍应是变量");
         assert!(!vref.contains(&"Tbase".to_string()), "Tbase 不应再是变量");
+    }
+
+    #[test]
+    fn test_display_name_priority() {
+        use crate::schema::Variable;
+        // 最小变量构造（label 可选）
+        let var = |label: Option<&str>| Variable {
+            var_type: super::super::VariableType::Output,
+            dtype: DataType::Float,
+            unit: None,
+            description: Some("一段较长的描述".into()),
+            label: label.map(|s| s.to_string()),
+            measurable: false,
+            stress_factor: None,
+            stress_reduce: None,
+            source: None,
+            class: None,
+            init: None,
+            rate: None,
+            prev: None,
+        };
+        let mut variables = IndexMap::new();
+        variables.insert("Y".to_string(), var(Some("鲜重产量"))); // ① 有 label
+        variables.insert("DM".to_string(), var(None)); // ② 无 label，是方程输出
+        let mut parameters = IndexMap::new();
+        parameters.insert(
+            "Kc".to_string(),
+            Parameter {
+                name_cn: "作物系数".into(),
+                name_en: None,
+                dtype: DataType::Float,
+                default: 1.0,
+                values: None,
+                unit: None,
+                bounds: None,
+                optimizable: true,
+                management: false,
+                description: None,
+            }, // ③ 参数 → name_cn
+        );
+        let file = EquationFile {
+            meta: Metadata {
+                id: "M".into(),
+                model: "M".into(),
+                name_cn: "".into(),
+                name_en: None,
+                version: "1.0".into(),
+                description: None,
+                reference: None,
+                source_files: vec![],
+                dt: 1.0,
+                dt_seconds: None,
+                calibration: None,
+                modules: Default::default(),
+            },
+            parameters,
+            variables,
+            equations: vec![Equation {
+                id: "E1".into(),
+                name: "干物质".into(),
+                output: "DM".into(),
+                expression: Expr::var("Y"),
+                formula_display: None,
+                reference: None,
+            }],
+        };
+        assert_eq!(file.display_name("Y"), "鲜重产量"); // ① 变量 label 最高优先
+        assert_eq!(file.display_name("DM"), "干物质"); // ② 回退到方程中文名（不取 description）
+        assert_eq!(file.display_name("Kc"), "作物系数"); // ③ 参数 name_cn
+        assert_eq!(file.display_name("ghost"), "ghost"); // ④ 三级皆缺 → 兜底代号
+    }
+
+    #[test]
+    fn test_display_name_prev_derive() {
+        use crate::schema::{VarClass, Variable, VariableType};
+        let state = Variable {
+            var_type: VariableType::Output,
+            dtype: DataType::Float,
+            unit: None,
+            description: None,
+            label: Some("碳缓冲库".into()),
+            measurable: false,
+            stress_factor: None,
+            stress_reduce: None,
+            source: None,
+            class: Some(VarClass::State),
+            init: Some(0.0),
+            rate: Some("rate_CBuf".into()),
+            prev: None,
+        };
+        let prev = Variable {
+            var_type: VariableType::Intermediate,
+            dtype: DataType::Float,
+            unit: None,
+            description: None,
+            label: None, // 无 label → 应派生
+            measurable: false,
+            stress_factor: None,
+            stress_reduce: None,
+            source: None,
+            class: Some(VarClass::SemiState),
+            init: Some(0.0),
+            rate: None,
+            prev: Some("C_Buf".into()),
+        };
+        let mut variables = IndexMap::new();
+        variables.insert("C_Buf".to_string(), state);
+        variables.insert("C_Buf_prev".to_string(), prev);
+        let file = EquationFile {
+            meta: Metadata {
+                id: "M".into(),
+                model: "M".into(),
+                name_cn: "".into(),
+                name_en: None,
+                version: "1.0".into(),
+                description: None,
+                reference: None,
+                source_files: vec![],
+                dt: 1.0,
+                dt_seconds: None,
+                calibration: None,
+                modules: Default::default(),
+            },
+            parameters: Default::default(),
+            variables,
+            equations: vec![],
+        };
+        // prev 寄存器派生「源 label（上一步）」
+        assert_eq!(file.display_name("C_Buf_prev"), "碳缓冲库（上一步）");
+        // 源本身用自己的 label
+        assert_eq!(file.display_name("C_Buf"), "碳缓冲库");
     }
 }

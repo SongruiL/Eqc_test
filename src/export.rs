@@ -45,6 +45,9 @@ pub struct ModuleJson {
 pub struct ParamJson {
     pub name: String,
     pub name_cn: String,
+    /// 友好显示名（参数即 `name_cn`，缺省兜底代号）。结构图/图表/勾选框统一显示用，
+    /// 代号 `name` 进 hover。由 [`crate::schema::EquationFile::display_name`] 计算（单一权威）。
+    pub display_name: String,
     pub default: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unit: Option<String>,
@@ -60,6 +63,10 @@ pub struct ParamJson {
 #[derive(Debug, Clone, Serialize)]
 pub struct VarJson {
     pub name: String,
+    /// 友好显示名：变量 label → 方程中文名 → 参数中文名 → 代号（兜底）。结构图/图表/勾选框
+    /// 统一显示用，代号 `name` 进 hover。由 [`crate::schema::EquationFile::display_name`]
+    /// 计算（与 DAG 节点标签同一权威逻辑）。
+    pub display_name: String,
     /// 数据流角色：input / intermediate / output。
     pub var_type: String,
     /// Forrester 动力学分类（state/rate/driving/auxiliary/parameter/control/semi_state/boundary）。
@@ -120,6 +127,7 @@ fn module_json(f: &EquationFile) -> ModuleJson {
         .map(|(name, p)| ParamJson {
             name: name.clone(),
             name_cn: p.name_cn.clone(),
+            display_name: f.display_name(name),
             default: p.default,
             unit: p.unit.clone(),
             values: p.values.clone(),
@@ -139,6 +147,7 @@ fn module_json(f: &EquationFile) -> ModuleJson {
             .to_string();
             VarJson {
                 name: name.clone(),
+                display_name: f.display_name(name),
                 var_type,
                 class: v.effective_class().as_str().to_string(),
                 dynamic: v.is_dynamic(),
@@ -260,6 +269,7 @@ mod tests {
         assert!(v.dynamic);
         assert_eq!(v.rate.as_deref(), Some("DDM"));
         assert_eq!(v.label.as_deref(), Some("总干物质"));
+        assert_eq!(v.display_name, "总干物质"); // 友好名 = 变量 label（优先级最高）
         assert!(v.measurable);
 
         let eq = &m.modules[0].equations[0];
@@ -271,6 +281,7 @@ mod tests {
         assert!(js.contains("\"schema_version\""));
         assert!(js.contains("\"class\":\"state\""));
         assert!(js.contains("\"label\":\"总干物质\""));
+        assert!(js.contains("\"display_name\":\"总干物质\""));
         assert!(js.contains("\"measurable\":true"));
     }
 }

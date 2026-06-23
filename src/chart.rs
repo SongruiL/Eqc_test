@@ -12,7 +12,17 @@ const COLORS: &[&str] = &[
 ];
 
 /// 把选定变量画成折线图 SVG。`vars` 里不存在的变量被跳过。
-pub fn line_chart_svg(out: &SimOutput, vars: &[&str], width: f64, height: f64) -> String {
+///
+/// `label_of` 把轨迹键（如 `Y` / `DF[2]` / `温室:CO2_air`）映射成**图例显示名**——
+/// 静态 SVG 没法 hover，所以图例直接显友好名，由调用方按契约 `display_name` 算好传入
+/// （单一权威）。需原样代号时传 `|k| k.to_string()`。
+pub fn line_chart_svg(
+    out: &SimOutput,
+    vars: &[&str],
+    width: f64,
+    height: f64,
+    label_of: impl Fn(&str) -> String,
+) -> String {
     // 收集要画的序列：标量变量直接取；向量变量（轨迹里展平成 name[1]/name[2]…）展开成多条分量线。
     let mut series: Vec<(String, &[f64])> = Vec::new();
     for v in vars {
@@ -136,7 +146,7 @@ pub fn line_chart_svg(out: &SimOutput, vars: &[&str], width: f64, height: f64) -
              <text x=\"{:.0}\" y=\"{:.0}\" font-size=\"10\" fill=\"#374151\">{}</text>",
             lx + 14.0,
             ly + 9.0,
-            xml_escape(name)
+            xml_escape(&label_of(name))
         ));
     }
 
@@ -392,16 +402,24 @@ mod tests {
     #[test]
     fn test_line_chart_basic() {
         let o = out(&[("Y", vec![0.0, 1.0, 2.0, 3.0]), ("TDM", vec![10.0, 12.0, 14.0, 16.0])]);
-        let svg = line_chart_svg(&o, &["Y", "TDM"], 640.0, 320.0);
+        let svg = line_chart_svg(&o, &["Y", "TDM"], 640.0, 320.0, |k| k.to_string());
         assert!(svg.contains("<svg"));
         assert_eq!(svg.matches("<polyline").count(), 2, "两条折线");
         assert!(svg.contains("DAT"));
     }
 
     #[test]
+    fn test_line_chart_legend_label() {
+        // 图例显示 label_of 的友好名，而非代号
+        let o = out(&[("Y", vec![0.0, 1.0, 2.0, 3.0])]);
+        let svg = line_chart_svg(&o, &["Y"], 640.0, 320.0, |k| if k == "Y" { "鲜重产量".into() } else { k.to_string() });
+        assert!(svg.contains("鲜重产量"), "图例应显友好名");
+    }
+
+    #[test]
     fn test_line_chart_empty() {
         let o = out(&[("Y", vec![1.0, 2.0])]);
-        let svg = line_chart_svg(&o, &["NotThere"], 640.0, 320.0);
+        let svg = line_chart_svg(&o, &["NotThere"], 640.0, 320.0, |k| k.to_string());
         assert!(svg.contains("无可绘制数据"));
     }
 

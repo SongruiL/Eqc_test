@@ -169,8 +169,18 @@
 - **耦合仿真/优化接进 Studio（C1–C3 上界面）**：清单耦合条目升级为**可仿真**（`fast`/`slow`/`weather`/`links`(带 agg)/`feedback`/`fast_params`）；`fast` 存在即启用。serve：`Coupling.sim`、`/api/couple`（跑 `simulate_coupled` → 作物+温室合成轨迹）、`/api/couple.svg`（轨迹图）、`/api/couple-optimize`（spec 的 knobs/objective → `run_coupled` DE）、`/api/models` 加 `sim_capable` 标记。**视图升级**：可仿真耦合的结构图用 fast/slow + **links 和 feedback** 注入 source → 画出**双向边**（含作物→温室反馈边），`greenhouse_v1_crop` 因 co2_uptake_in 被反馈 source 化而校验通过。studio.html：选中可仿真耦合 → 「耦合仿真/优化」面板（跑仿真画温室 CO₂+作物轨迹、跑优化显示最优旋钮+收敛），隐藏单模型轨迹/决策面板。视图专用耦合（蓝莓/草莓，无反馈）保持现状。活体：温室×番茄 `/api/couple` 48 步、`/api/couple-optimize` 找到 phi_inj=0.102（=CLI 一致）。217 lib 全绿、node --check 过。
 - **下一步 C4（后续）**：紧耦合（步内迭代 / sub-day 作物快通量）去滞后、提精度——仅当滞后误差被证明要紧时。
 
+### 友好显示名（图表勾选框/图例/DAG 统一显中文，代号进 hover）
+首席科学家反馈：图表变量勾选框、参数级 DAG 节点显的是**代号**（`rate_CBuf`/`t_FGP_1`/`温室:phi_ass`），非数学用户看不懂。原 `build_dag` 后置已为 DAG 节点算友好标签，但 JSON 契约没暴露这个"显示名"，故图表/勾选框只能用代号。原则：**EQC 单一权威拥有显示名**（一处优先级逻辑），前端只显示。
+- **`EquationFile::display_name(name)` 单一权威**（`schema/equation_file.rs`）：优先级 `变量 label → 方程中文名 → 参数 name_cn → 延迟寄存器 prev 派生「源（上一步）」→ 代号`。`build_dag` 后置改调它（删去重复的 `compute_eqnames`，DAG 标签行为逐位不变）。
+- **契约暴露**：`VarJson`/`ParamJson` 各加 `display_name` 字段（恒有值，未标注时 == 代号）；`eqc export` JSON 即带出。
+- **cohort 友好名**：`cohort_expand` 复制成员时给 `label` 追加 `[i]`（与向量分量 `name[i]` 风格一致），故 cohort 基变量标一次 → 各分量 `果碳[1]`…`果碳[10]` 各不同名；与 prev 派生可组合（`果碳[3]（上一步）`）。
+- **图表 SVG 图例友好**（静态 SVG 无 hover）：`line_chart_svg` 加 `label_of` 解析器；serve 新增 `trajectory_label`（Rust 版，保留 `温室:` 前缀 + `[i]` 后缀、中间按契约 `display_name` 翻译），`/api/chart.svg`/`/api/couple.svg` 传入。
+- **前端薄展示**（`studio.html`）：勾选框/耦合勾选框显 `display_name`、代号进 `title` hover；`displayNameOf`/`coupleLabel` 翻译耦合轨迹键。
+- **逐作物补标注**（在 greenhouse-model / crop-models 库）：草莓 S8 / 番茄 T3 / 蓝莓 BB5 + 温室 v1/crop 给所有兜底基变量补 `label`（驱动量 + 状态量 + cohort 基量）。五模型 `eqc export` 兜底全部清零。
+- 测试：新增 `display_name` 四级优先级 + prev 派生 + cohort label `[i]` + 图例友好名共 5 个单测。**220 lib + 3 bin + 4 + 100 sexpr 两配置全绿**；加 label 不影响仿真数值（草莓/番茄冒烟一致）。
+
 ## 工程基线
-- 测试：217 lib + 3 bin + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
+- 测试：220 lib + 3 bin + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
 - 远程：github.com/SongruiL/Eqc_test，SSH 推送。
 - 文档：见 `docs/USAGE.md`（架构与模块地图）、`docs/spec-*.md`（设计规格）。
 

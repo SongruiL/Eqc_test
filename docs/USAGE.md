@@ -155,7 +155,7 @@ eqc sweep <模型.eq.yaml> --drivers w.csv --param LUE --range 1:5:9 --var Y [--
 eqc sweep <模型.eq.yaml> --drivers w.csv --sensitivity --var Y [--percent 10]  # 全局敏感性：各标量参数对 Y 的影响排序
 eqc serve <模型.eq.yaml> [--drivers w.csv] [--params s.json] [--port 7878]  # EQC Studio：浏览器里看模型 + 跑仿真画轨迹（单模型）
 eqc serve <eqc-workspace.yaml | 含该清单的目录>                              # 多模型工作区：Studio 顶部下拉切草莓/番茄/蓝莓/温室，免重启（每模型在清单里配自己的 path/drivers）
-eqc export <模型.eq.yaml> [-o model.json]                # 导出模型 JSON 契约（前端/工具消费用，可检视）
+eqc export <模型.eq.yaml> [-o model.json]                # 导出模型 JSON 契约（前端/工具消费用，可检视；每个变量/参数带 display_name 友好名）
 eqc optimize <模型.eq.yaml> --spec problem.yaml [--drivers w.csv] [--prescreen] [-o result.json]  # 仿真优化：DE 搜旋钮空间求目标最优（spec 含 objective2 则多目标 Pareto；--prescreen 先剔低敏感旋钮）
 eqc calibrate <模型.eq.yaml> --spec calib.yaml [--drivers w.csv] [--observed obs.csv] [-o result.json]  # 参数标定：用实测数据反推参数（旋钮=参数、目标=预测vs实测误差）
 eqc identify <模型.eq.yaml> --spec calib.yaml [--drivers w.csv] [--observables Y,LAI] [-o report.json]  # 可辨识性：标定前看「要定准哪个参数、最该测哪个变量」（服务实验设计）
@@ -171,6 +171,7 @@ eqc identify <模型.eq.yaml> --spec calib.yaml [--drivers w.csv] [--observables
 > - **情景探索器**：曲线下方「情景」面板自动列出**标量参数 + 状态量初值**（各一行滑块+数值框，向量参数跳过）；拖动/输入即**实时重算曲线**（防抖），改过标蓝，「重置默认」复位。机制：覆盖经 `/api/chart.svg?p=name:val,…&init=name:val,…&d=name:val,…`（`/api/simulate` 同）交给 EQC 重算——`--drivers`/`--params` 不再启动时冻结（`d=` 把某驱动整列设成常数，对应 `driver_const` 旋钮）。
 > - **决策优化面板**：页面底部「决策优化」面板——填决策 spec 路径（相对模型目录）点「运行优化」，跑 DE（数十秒，release 更快、编辑模型时暂不可用），显示**最优旋钮 + 目标值 + 可行性/逐约束 + 收敛曲线**（EQC 自生成 SVG）；「叠加最优旋钮到曲线」把最优旋钮喂回情景、在「整季仿真轨迹」里画出最优整季轨迹。**多目标**（spec 含 `objective2`）则画 **Pareto 前沿散点曲线**，点选某点即叠加该点的整季轨迹。后端 `/api/optimize` 与 CLI `eqc optimize` 共用同一计算与 JSON。
 > - **结构图拖拽**：拖**空白**=平移画布；拖**节点方框**=移动它、连线跟随（手动错开遮挡，会话内有效、刷新复位）；**轻点**节点=选中。三者按落点/位移自动区分。
+> - **友好显示名（非数学用户看懂）**：图表勾选框、耦合勾选框、图例、结构图节点统一显**中文名**（代号进 hover）。显示名由 EQC 单一权威算（契约 `display_name`：变量 `label` → 方程中文名 → 参数 `name_cn` → 延迟寄存器派生「源（上一步）」→ 代号兜底）；cohort 分量显 `果碳[1]`…`果碳[10]`、与向量分量风格一致。要给某变量定中文名 = 在模型里加 `label:`（缺省自动取方程中文名）。
 > - 原则：**EQC 始终是唯一权威**，前端只显示 EQC 生成的 SVG/MathML/JSON——前端与 EQC 之间只有一条「可检视、只增不改」的契约（`eqc export` 可随时打印它），所以随 EQC 升级而升级时低风险、易排查。后续增量：点节点高亮、浏览器内编辑、LLM 问答、GP 结构 diff。
 
 > `report`/`check-dims` 的"目录"是装 `.eq.yaml` 的文件夹（与 build/validate 同）。`report` 会把目录内所有文件合成一张 DAG，**指向一两个相关模块的小目录**，别指整个 `examples/`（52 模块图会过大）。

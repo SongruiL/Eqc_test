@@ -573,6 +573,30 @@ fn couple_trajectories(out: &crate::sim::CoupledOutput) -> IndexMap<String, Vec<
     t
 }
 
+/// 轨迹键 → 友好图例标签：保留「温室:」前缀 + 向量「[i]」后缀，中间变量名按契约
+/// `display_name` 翻译。与前端 studio.html 的 `coupleLabel` 同逻辑（Rust 这份服务端
+/// 渲染 SVG 图例用——静态 SVG 没有 hover，故图例直接显友好名）。
+fn trajectory_label(files: &[EquationFile], key: &str) -> String {
+    let (prefix, rest) = match key.strip_prefix("温室:") {
+        Some(r) => ("温室:", r),
+        None => ("", key),
+    };
+    let (base, suffix) = match rest.rfind('[') {
+        Some(p) if rest.ends_with(']') => (&rest[..p], &rest[p..]),
+        _ => (rest, ""),
+    };
+    let disp = files
+        .iter()
+        .find(|f| {
+            f.variables.contains_key(base)
+                || f.parameters.contains_key(base)
+                || f.equations.iter().any(|e| e.output == base)
+        })
+        .map(|f| f.display_name(base))
+        .unwrap_or_else(|| base.to_string());
+    format!("{prefix}{disp}{suffix}")
+}
+
 /// 加载某条目的方程文件：单模型 = 直接解析校验；耦合 = 加载各参与文件 + 按 links
 /// **在内存里**给作物 Input 注入 `source`（不落盘）→ `build_dag` 自然产出跨模型边 →
 /// 因两模块都在场，validator 不会报 source 模块缺失。
@@ -711,7 +735,8 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
             let svg = match run_sim(m, &pv, &iv, &dv) {
                 Ok(out) => {
                     let refs: Vec<&str> = vars.iter().map(|s| s.as_str()).collect();
-                    crate::chart::line_chart_svg(&out, &refs, 720.0, 360.0)
+                    let files = load_model_files(m).unwrap_or_default();
+                    crate::chart::line_chart_svg(&out, &refs, 720.0, 360.0, |k| trajectory_label(&files, k))
                 }
                 Err(e) => error_svg(&e),
             };
@@ -737,7 +762,8 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
                     let traj = couple_trajectories(&out);
                     let so = SimOutput { steps: out.slow_steps, trajectories: traj };
                     let refs: Vec<&str> = vars.iter().map(|s| s.as_str()).collect();
-                    crate::chart::line_chart_svg(&so, &refs, 720.0, 360.0)
+                    let files = load_model_files(m).unwrap_or_default();
+                    crate::chart::line_chart_svg(&so, &refs, 720.0, 360.0, |k| trajectory_label(&files, k))
                 }
                 Err(e) => error_svg(&e),
             };

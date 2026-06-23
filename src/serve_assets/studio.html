@@ -381,7 +381,8 @@ function buildVarList(vars){
       const def = hasY ? (v.name==='Y') : (v.var_type==='output');
       const id = 'v_'+v.name;
       const lab = document.createElement('label');
-      lab.innerHTML = `<input type="checkbox" id="${id}" value="${v.name}" ${def?'checked':''}><span>${v.name}</span><span class="cls">${v.unit||''}</span>`;
+      const disp = v.display_name || v.name;   // 友好名（契约 display_name），代号进 hover
+      lab.innerHTML = `<input type="checkbox" id="${id}" value="${v.name}" ${def?'checked':''}><span title="${esc(v.name)}">${esc(disp)}</span><span class="cls">${v.unit||''}</span>`;
       lab.querySelector('input').addEventListener('change', (e)=>{ setHl(v.name, e.target.checked); updateChart(); });
       box.appendChild(lab);
     });
@@ -548,6 +549,22 @@ function findEq(name){
     const e = (m.equations||[]).find(x=>x.output===name); if(e) return e;
   }
   return null;
+}
+// 某名字的友好显示名（取契约 display_name；缺则回退代号）。供耦合轨迹键翻译用。
+function displayNameOf(name){
+  const r = findVar(name);
+  if(!r) return name;
+  return (r.kind==='var' ? r.v.display_name : (r.p.display_name || r.p.name_cn)) || name;
+}
+// 耦合轨迹键 → 友好标签：保留「温室:」前缀 + 向量「[i]」后缀，只翻译中间的变量名。
+const GH_PREFIX = '温室:';
+function coupleLabel(key){
+  let prefix = '', base = key;
+  if(key.startsWith(GH_PREFIX)){ prefix = GH_PREFIX; base = key.slice(GH_PREFIX.length); }
+  let suffix = '';
+  const m = base.match(/(\[[^\]]*\])$/);   // 向量分量后缀，如 DF[2] / X[1,2]
+  if(m){ suffix = m[1]; base = base.slice(0, base.length - suffix.length); }
+  return prefix + displayNameOf(base) + suffix;
 }
 // 注释内容：全部取自已加载的 /api/model 契约（含方程 mathml）
 function tipHtml(name){
@@ -1094,7 +1111,7 @@ function buildCoupleVars(keys){
   const defaults=['温室:CO2_air','TDM','co2_uptake_inst','P_gross'];
   keys.forEach(k=>{
     const lab=document.createElement('label');
-    lab.innerHTML='<input type="checkbox" value="'+k+'"'+(defaults.includes(k)?' checked':'')+'><span>'+k+'</span>';
+    lab.innerHTML='<input type="checkbox" value="'+esc(k)+'"'+(defaults.includes(k)?' checked':'')+'><span title="'+esc(k)+'">'+esc(coupleLabel(k))+'</span>';
     lab.querySelector('input').addEventListener('change',drawCoupleChart);
     box.appendChild(lab);
   });

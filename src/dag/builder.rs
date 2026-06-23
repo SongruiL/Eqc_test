@@ -182,10 +182,10 @@ pub fn build_dag(files: &[EquationFile]) -> CompileResult<Dag> {
         }
     }
 
-    // 后置：给每个节点设**子模块**（上色 + 模块级折叠用）+ **友好标签**
-    // （变量 label → 方程中文名 → 参数中文名 → 代号；其余信息进悬停 tooltip）。
+    // 后置：给每个节点设**子模块**（上色 + 模块级折叠用）+ **友好标签**。
+    // 标签优先级（变量 label → 方程中文名 → 参数中文名 → 代号）抽进
+    // `EquationFile::display_name`，与 JSON 契约的 `display_name` 共用同一权威逻辑。
     let submod = compute_submodules(files);
-    let eqnames = compute_eqnames(files);
     for node in &mut nodes {
         if let Some(m) = submod.get(&node.id) {
             node.module = m.clone();
@@ -194,13 +194,7 @@ pub fn build_dag(files: &[EquationFile]) -> CompileResult<Dag> {
         let label = files
             .iter()
             .find(|f| f.meta.id == fmod)
-            .and_then(|f| {
-                f.variables
-                    .get(name)
-                    .and_then(|v| v.label.clone())
-                    .or_else(|| eqnames.get(&node.id).cloned())
-                    .or_else(|| f.parameters.get(name).map(|p| p.name_cn.clone()))
-            })
+            .map(|f| f.display_name(name))
             .unwrap_or_else(|| name.to_string());
         node.metadata.insert("label".to_string(), label);
     }
@@ -429,17 +423,6 @@ fn compute_submodules(files: &[EquationFile]) -> HashMap<String, String> {
         }
     }
     sub
-}
-
-/// 每个方程输出节点（MODULE.output）→ 方程中文名（节点标签兜底）。
-fn compute_eqnames(files: &[EquationFile]) -> HashMap<String, String> {
-    let mut m = HashMap::new();
-    for f in files {
-        for eq in &f.equations {
-            m.insert(format!("{}.{}", f.meta.id, eq.output), eq.name.clone());
-        }
-    }
-    m
 }
 
 /// 计算拓扑排序

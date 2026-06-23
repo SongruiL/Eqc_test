@@ -225,6 +225,11 @@ fn expand_decl_map(
                         }
                     }
                 }
+                // 友好名 label 追加下标，否则 size 份分量复制成同一个 label（无法区分成员）。
+                // 用 `[i]` 与向量分量 `name[i]` 的显示风格一致。例：label「果碳」→「果碳[1]」…「果碳[10]」。
+                if let Some(l) = get_str(&clone, "label") {
+                    clone.insert(Value::from("label"), Value::from(format!("{l}[{i}]")));
+                }
             }
             out.insert(Value::from(suffix(&name, i)), Value::Mapping(clone));
         }
@@ -438,7 +443,7 @@ mod tests {
 cohorts:
   fruit: { size: 3, index: q }
 variables:
-  TF:     { cohort: fruit, class: state, init: 0.0, rate: rateTF }
+  TF:     { cohort: fruit, class: state, init: 0.0, rate: rateTF, label: 果实库 }
   rateTF: { cohort: fruit, class: rate }
   GS:     { type: output }
 "#,
@@ -453,6 +458,9 @@ variables:
         // TF__2 的 rate 应后缀为 rateTF__2（同家族成员）
         let tf2 = vars.get("TF__2").unwrap().as_mapping().unwrap();
         assert_eq!(get_str(tf2, "rate").as_deref(), Some("rateTF__2"));
+        // label 追加 [i] 下标，避免分量同名（与向量分量 name[i] 风格一致）
+        assert_eq!(get_str(vars.get("TF__1").unwrap().as_mapping().unwrap(), "label").as_deref(), Some("果实库[1]"));
+        assert_eq!(get_str(tf2, "label").as_deref(), Some("果实库[2]"));
         // cohorts: 段已移除
         assert!(out.get("cohorts").is_none());
     }
