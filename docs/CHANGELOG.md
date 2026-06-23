@@ -160,10 +160,16 @@
 - **C2a 引擎**：`simulate_coupled` 加 `feedback`（慢→快 hold，**滞后一慢步**：本慢步用作物上一步值、首步 init、日末更新——`_prev` 破环抬到耦合界面，无步内代数环）+ `FeedbackLink` + CLI `--feedback to=from[:scale[:init]]`。合成测试坐实滞后。
 - **C2b 引擎+建模**：`CoupledOutput.fast`（温室变量日均聚合）+ CLI `--fast-out`/`--fast-params`/`--slow-params`（温室控制旋钮，C3 优化要用）。温室变体 `greenhouse_v1_crop.eq.yaml`：`phi_ass` 改成由作物喂——`phi_ass=co2_uptake_in/(n_air·h_gh)`（复用 h_gh、n_air≈41.6）。番茄 T3：`dt_seconds=3600` + 接口 `co2_uptake_inst=(MC_AirBuf−全部回气呼吸)×(1000/30)`（净同化−生长/维持呼吸，mg CH2O/m²/s→µmol CO₂/m²/s）。
 - **验证（闭环 A/B，温室×番茄）**：白天反馈开→温室 CO₂ −5 ppm（作物吃 CO₂）、夜间 +0.9（呼吸释放）；CO₂ 降→番茄光合降（P_gross ON 261.5<OFF 263.2）=**自限双向效应**（单向管道做不到）。稳态 phi_inj−phi_ass=vent·(CO₂−CO₂_out) 验证 ON≈400/OFF=405。
-- **下一步 C3**：耦合优化（`simulate_coupled` 包成前向模型 → `eqc optimize` 搜温室环控、目标读作物产量，复用 DE/约束/Pareto/Studio）。
+### 耦合仿真 C3（耦合优化 = "一个循环里"）—— 最小可用
+把 `simulate_coupled`（双向）包成 `eqc optimize` 的前向模型：DE 搜温室/作物参数旋钮、目标归约**作物轨迹**。= `optimize_force_de.py` 在 Python 外面用离线管道做的事，搬进 EQC 一个进程、一份声明式 spec、用测过的 DE。
+- **复用**：`de::differential_evolution`（通用）+ `objective::eval_objective`（归约对象换成作物 slow 轨迹、裸符号绑旋钮）。**新建** `optimize/coupled.rs`：`run_coupled`/`CoupledModel`/`CoupledOptimizeResult`（室外天气只克隆一次，每评估仅改 params）。
+- **spec**：决策 spec 加 `coupling:` 块（`fast/slow/weather/links/feedback/steps/fast_params/slow_params`，路径相对 spec 目录）；旋钮 `kind: fast_param/slow_param`；`eqc optimize <任意> --spec coupled.yaml` 自动走耦合路径（`run_optimize_coupled`）。`KnobKind::FastParam/SlowParam`（单模型路径拒绝）。
+- **范围 v1**：单目标、无约束（约束/Pareto/Studio 面板复用 = 后续，需把 `core` 抽象成前向模型无关）。
+- **验证（演示）**：温室×番茄，旋钮=CO₂ 注入 phi_inj，目标 `(sub (final TDM)(mul phi_inj co2cost))`。先 `eqc couple` 扫 TDM-vs-phi_inj 定 co2cost=2.0 → DE 找到**内部最优 phi_inj=0.102 ppm/s**（= 边际 TDM 增益 = co2cost 的交点，在双向前向模型上搜）。release 23s vs debug 2m44s（优化层用 release）。+2 单测（最优/拒绝坏旋钮）。217 lib 全绿。
+- **下一步 C4（后续）**：紧耦合（步内迭代 / sub-day 作物快通量）去滞后、提精度——仅当滞后误差被证明要紧时。
 
 ## 工程基线
-- 测试：215 lib + 3 bin + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
+- 测试：217 lib + 3 bin + 4 + 100 sexpr，`cargo test --features cli`（含特殊函数时加 `advanced_math`）全绿。
 - 远程：github.com/SongruiL/Eqc_test，SSH 推送。
 - 文档：见 `docs/USAGE.md`（架构与模块地图）、`docs/spec-*.md`（设计规格）。
 

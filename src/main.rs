@@ -955,9 +955,15 @@ fn run_optimize(
     use equation_compiler::parse_file;
     use equation_compiler::scenario::load_drivers_csv;
 
+    let mut problem = load_problem(spec)?;
+
+    // —— 耦合优化（C3）：spec 有 coupling 块 → 前向模型 = 多速率耦合仿真（input 忽略，模型在 coupling 里）——
+    if problem.coupling.is_some() {
+        return run_optimize_coupled(spec, &problem, output);
+    }
+
     println!("🎯 优化模型: {}", input.display());
     let file = parse_file(input)?;
-    let mut problem = load_problem(spec)?;
 
     // —— 解析环境驱动量：--drivers 优先，否则用 spec 里的 environment（相对 spec 目录解析）——
     let driver_path: PathBuf = match drivers {
@@ -1102,6 +1108,121 @@ fn run_optimize(
         println!("   结果已写入 {}", path.display());
     }
 
+    Ok(())
+}
+
+/// `eqc optimize <任意> --spec coupled.yaml`（spec 含 coupling 块）：耦合优化（C3）。
+/// 前向模型 = 多速率耦合仿真（温室↔作物，双向）；旋钮 = 温室/作物参数；目标归约作物轨迹。
+#[cfg(feature = "cli")]
+fn run_optimize_coupled(
+    spec: &PathBuf,
+    problem: &equation_compiler::optimize::Problem,
+    output: Option<&PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use equation_compiler::optimize::{run_coupled, CoupledModel};
+    use equation_compiler::parse_file;
+    use equation_compiler::scenario::load_drivers_csv;
+    use equation_compiler::sim::{Agg, CoupledLink, FeedbackLink};
+
+    let c = problem.coupling.as_ref().unwrap();
+    let spec_dir = spec.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let rel = |p: &str| spec_dir.join(p);
+
+    let fast = parse_file(&rel(&c.fast))?;
+    let slow = parse_file(&rel(&c.slow))?;
+    println!("🎯🔗 耦合优化: 温室 {} ↔ 作物 {}", fast.meta.id, slow.meta.id);
+
+    let weather_path = c
+        .weather
+        .as_ref()
+        .ok_or("耦合优化需在 coupling 块写 weather: 室外驱动 CSV")?;
+    let (rows, weather_map) = load_drivers_csv(&rel(weather_path))?;
+
+    // R = dt_slow秒/dt_fast秒；慢步数缺省 = 室外行数/R
+    let dtf = fast.meta.dt_seconds.ok_or("温室模型缺 meta.dt_seconds")?;
+    let dts = slow.meta.dt_seconds.ok_or("作物模型缺 meta.dt_seconds")?;
+    let r = (dts / dtf).round().max(1.0) as usize;
+    let slow_steps = c.steps.unwrap_or(rows / r);
+    let need = slow_steps * r;
+    if rows < need {
+        return Err(format!("室外驱动 {rows} 行 < 慢步数·R = {need}").into());
+    }
+    let weather: std::collections::HashMap<String, Vec<f64>> = weather_map
+        .into_iter()
+        .map(|(k, v)| (k, v[..need.min(v.len())].to_vec()))
+        .collect();
+
+    let links: Vec<CoupledLink> = c
+        .links
+        .iter()
+        .map(|l| {
+            Ok(CoupledLink {
+                to: l.to.clone(),
+                from: l.from.clone(),
+                agg: Agg::parse(&l.agg).ok_or_else(|| format!("未知聚合 '{}'", l.agg))?,
+                scale: l.scale,
+            })
+        })
+        .collect::<Result<_, String>>()?;
+    let feedback: Vec<FeedbackLink> = c
+        .feedback
+        .iter()
+        .map(|f| FeedbackLink { to: f.to.clone(), from: f.from.clone(), scale: f.scale, init: f.init })
+        .collect();
+
+    let base_fast_params: std::collections::HashMap<String, f64> =
+        c.fast_params.iter().map(|(k, v)| (k.clone(), *v)).collect();
+    let base_slow_params: std::collections::HashMap<String, f64> =
+        c.slow_params.iter().map(|(k, v)| (k.clone(), *v)).collect();
+    let model = CoupledModel {
+        fast: &fast,
+        slow: &slow,
+        links,
+        feedback,
+        weather,
+        slow_steps,
+        base_fast_params,
+        base_slow_params,
+    };
+    println!(
+        "   旋钮 {} 个 | {} 慢步 × R={} | DE pop={} iters={} seed={}",
+        problem.knobs.len(), slow_steps, r,
+        problem.optimizer.pop, problem.optimizer.iters, problem.optimizer.seed
+    );
+    println!("   目标: {} ({})", problem.objective.expr, problem.objective.sense.as_str());
+
+    let res = run_coupled(&model, problem)?;
+
+    println!("\n✅ 耦合优化完成");
+    println!("   最优目标值 = {:.6}", res.best_objective);
+    println!("   最优旋钮:");
+    for (k, v) in problem.knobs.iter().zip(&res.best_knobs) {
+        println!("     {:<16} = {:.6}{}", k.var, v, k.unit.as_deref().map(|u| format!(" {u}")).unwrap_or_default());
+    }
+    let hist = &res.history;
+    if hist.len() >= 2 {
+        println!("   收敛: 代价 {:.6} → {:.6}（{} 代）", hist[0], hist[hist.len() - 1], hist.len() - 1);
+    }
+
+    if let Some(path) = output {
+        let knobs: serde_json::Map<String, serde_json::Value> = problem
+            .knobs
+            .iter()
+            .zip(&res.best_knobs)
+            .map(|(k, v)| (k.var.clone(), serde_json::json!(v)))
+            .collect();
+        let j = serde_json::json!({
+            "coupled": true,
+            "fast": fast.meta.id, "slow": slow.meta.id,
+            "best_objective": res.best_objective,
+            "best_knobs": knobs,
+            "objective": problem.objective.expr,
+            "sense": problem.objective.sense.as_str(),
+            "history": res.history,
+        });
+        std::fs::write(path, serde_json::to_string_pretty(&j)?)?;
+        println!("   结果已写入 {}", path.display());
+    }
     Ok(())
 }
 

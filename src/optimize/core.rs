@@ -273,6 +273,8 @@ fn build_input(
             KnobKind::DriverConst => {
                 input.drivers.insert(k.var.clone(), vec![val; steps]);
             }
+            // 耦合优化专用旋钮——单模型路径不应到达（validate_problem 已拦），保险起见忽略。
+            KnobKind::FastParam | KnobKind::SlowParam => {}
         }
     }
     input
@@ -352,6 +354,13 @@ pub fn validate_problem(file: &EquationFile, problem: &Problem) -> Result<(), St
                         k.var, plan.drivers
                     ));
                 }
+            }
+            KnobKind::FastParam | KnobKind::SlowParam => {
+                return Err(format!(
+                    "旋钮 '{}' kind={} 只用于耦合优化（spec 须有 coupling 块）",
+                    k.var,
+                    k.kind.as_str()
+                ));
             }
         }
     }

@@ -65,8 +65,68 @@ pub struct Problem {
     /// 缺省 = 模型所有 `type: output` 标量变量。可被 CLI `--observables` 覆盖。
     #[serde(default)]
     pub observables: Option<Vec<String>>,
+    /// **耦合优化**（C3）：提供则前向模型 = 多速率耦合仿真（温室↔作物），旋钮为温室/作物
+    /// 参数（kind=`fast_param`/`slow_param`），目标归约作物轨迹。见 `docs/spec-coupled-simulation.md` §8。
+    #[serde(default)]
+    pub coupling: Option<CouplingSpec>,
     #[serde(default)]
     pub optimizer: OptimizerCfg,
+}
+
+/// 耦合优化的前向模型配置（spec 的 `coupling:` 块；路径相对 spec 目录解析）。
+#[derive(Debug, Clone, Deserialize)]
+pub struct CouplingSpec {
+    /// 快模型（温室）`.eq.yaml`。
+    pub fast: String,
+    /// 慢模型（作物）`.eq.yaml`。
+    pub slow: String,
+    /// 快模型室外驱动 CSV（相对 spec 目录）。
+    #[serde(default)]
+    pub weather: Option<String>,
+    /// 快→慢链接。
+    #[serde(default)]
+    pub links: Vec<LinkSpec>,
+    /// 慢→快反馈（双向）。
+    #[serde(default)]
+    pub feedback: Vec<FeedbackSpec>,
+    /// 慢步数（缺省 = 室外驱动行数 / R）。
+    #[serde(default)]
+    pub steps: Option<usize>,
+    /// 快模型（温室）**固定**参数覆盖（非旋钮的环控设置，如 Q_heat=0）；旋钮在其上再覆盖。
+    #[serde(default)]
+    pub fast_params: IndexMap<String, f64>,
+    /// 慢模型（作物）固定参数覆盖。
+    #[serde(default)]
+    pub slow_params: IndexMap<String, f64>,
+}
+
+/// 一条快→慢链接（spec）。
+#[derive(Debug, Clone, Deserialize)]
+pub struct LinkSpec {
+    pub to: String,
+    pub from: String,
+    #[serde(default = "default_agg")]
+    pub agg: String,
+    #[serde(default = "default_scale")]
+    pub scale: f64,
+}
+
+/// 一条慢→快反馈（spec）。
+#[derive(Debug, Clone, Deserialize)]
+pub struct FeedbackSpec {
+    pub to: String,
+    pub from: String,
+    #[serde(default = "default_scale")]
+    pub scale: f64,
+    #[serde(default)]
+    pub init: f64,
+}
+
+fn default_agg() -> String {
+    "mean".to_string()
+}
+fn default_scale() -> f64 {
+    1.0
 }
 
 /// 目标：一条 S 表达式 + 取向（最大化/最小化）。
@@ -88,6 +148,15 @@ pub enum Sense {
 impl Default for Sense {
     fn default() -> Self {
         Sense::Max
+    }
+}
+
+impl Sense {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Sense::Max => "max",
+            Sense::Min => "min",
+        }
     }
 }
 
@@ -113,6 +182,10 @@ pub enum KnobKind {
     Init,
     /// 恒定驱动：把某驱动量整列设成一个常数。
     DriverConst,
+    /// 耦合优化：快模型（温室）参数覆盖。
+    FastParam,
+    /// 耦合优化：慢模型（作物）参数覆盖。
+    SlowParam,
 }
 
 impl KnobKind {
@@ -121,6 +194,8 @@ impl KnobKind {
             KnobKind::Param => "param",
             KnobKind::Init => "init",
             KnobKind::DriverConst => "driver_const",
+            KnobKind::FastParam => "fast_param",
+            KnobKind::SlowParam => "slow_param",
         }
     }
 }

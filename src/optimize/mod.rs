@@ -15,10 +15,13 @@
 //! - [`de`]：**差分进化优化器**（确定性、免导数）。
 
 pub mod core;
+pub mod coupled;
 pub mod de;
 pub mod objective;
 pub mod problem;
 pub mod run;
+
+pub use coupled::{run_coupled, CoupledModel, CoupledOptimizeResult};
 
 pub use core::{
     evaluate, evaluate_mo, evaluate_mo_obs, evaluate_obs, simulate_candidate, validate_problem,
@@ -33,5 +36,6 @@ pub use objective::{
     eval_objective, eval_objective_obs, ObjError, ObservedData, ERROR_OPS, REDUCTIONS,
 };
 pub use problem::{
-    load_problem, parse_problem, Constraint, Knob, KnobKind, Objective, OptimizerCfg, Problem, Sense,
+    load_problem, parse_problem, Constraint, CouplingSpec, FeedbackSpec, Knob, KnobKind, LinkSpec,
+    Objective, OptimizerCfg, Problem, Sense,
 };
