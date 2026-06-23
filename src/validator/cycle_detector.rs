@@ -99,7 +99,7 @@ mod tests {
                     output: output.to_string(),
                     expression: expr,
                     formula_display: None,
-                    reference: None,
+                    reference: None, gp_target: None,
                 }
             })
             .collect();

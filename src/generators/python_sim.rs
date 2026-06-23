@@ -218,7 +218,7 @@ mod tests {
                 output: "R".into(),
                 expression: Expr::mul(Expr::var("T"), Expr::Const(2.0)),
                 formula_display: None,
-                reference: None,
+                reference: None, gp_target: None,
             }],
         };
         let code = generate_python_simulator(&file).expect("动态模型应生成仿真器");
@@ -248,7 +248,7 @@ mod tests {
                 output: "b".into(),
                 expression: Expr::var("a"),
                 formula_display: None,
-                reference: None,
+                reference: None, gp_target: None,
             }],
         };
         assert!(generate_python_simulator(&file).is_none());

@@ -228,7 +228,7 @@ mod tests {
                 output: "y".to_string(),
                 expression: Expr::add(Expr::param("p1"), Expr::var("x")),
                 formula_display: None,
-                reference: None,
+                reference: None, gp_target: None,
             }],
         };
 
@@ -248,7 +248,7 @@ mod tests {
                 output: "y".to_string(),
                 expression: Expr::param("p1"), // 引用未定义的参数
                 formula_display: None,
-                reference: None,
+                reference: None, gp_target: None,
             }],
         };
 
@@ -275,7 +275,7 @@ mod tests {
                 output: "y".to_string(),
                 expression: Expr::var("x"), // 引用未定义的变量
                 formula_display: None,
-                reference: None,
+                reference: None, gp_target: None,
             }],
         };
 
@@ -304,7 +304,7 @@ mod tests {
                     output: "a".to_string(),
                     expression: Expr::constant(1.0),
                     formula_display: None,
-                    reference: None,
+                    reference: None, gp_target: None,
                 },
                 Equation {
                     id: "E2".to_string(),
@@ -312,7 +312,7 @@ mod tests {
                     output: "b".to_string(),
                     expression: Expr::var("a"), // 引用 E1 的输出
                     formula_display: None,
-                    reference: None,
+                    reference: None, gp_target: None,
                 },
             ],
         };
@@ -354,7 +354,7 @@ mod tests {
                 // 引用保留内置变量 DAT（无需声明）
                 expression: Expr::mul(Expr::var("DAT"), Expr::constant(2.0)),
                 formula_display: None,
-                reference: None,
+                reference: None, gp_target: None,
             }],
         };
         let errors = check_references(&file);
@@ -374,7 +374,7 @@ mod tests {
                     output: "a".to_string(),
                     expression: Expr::constant(1.0),
                     formula_display: None,
-                    reference: None,
+                    reference: None, gp_target: None,
                 },
                 Equation {
                     id: "E1".to_string(), // 重复 ID
@@ -382,7 +382,7 @@ mod tests {
                     output: "b".to_string(),
                     expression: Expr::constant(2.0),
                     formula_display: None,
-                    reference: None,
+                    reference: None, gp_target: None,
                 },
             ],
         };

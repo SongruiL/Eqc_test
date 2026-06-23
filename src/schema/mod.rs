@@ -7,7 +7,7 @@ mod equation_file;
 mod parameter;
 mod variable;
 
-pub use equation::Equation;
+pub use equation::{Equation, GpTarget};
 pub use equation_file::{Calibration, EquationFile, Metadata};
 pub use parameter::Parameter;
 pub use variable::{DataType, VarClass, Variable, VariableType};

@@ -112,6 +112,9 @@ pub struct EqJson {
     /// 可读公式（仅供展示）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub formula_display: Option<String>,
+    /// GP 进化靶点标记（受约束 GP；缺省=机理基座冻结，则不输出此字段）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gp_target: Option<crate::schema::GpTarget>,
 }
 
 /// 把一组方程文件导出为契约 JSON 结构。
@@ -178,6 +181,7 @@ fn module_json(f: &EquationFile) -> ModuleJson {
                 refs,
                 reference: e.reference.clone(),
                 formula_display: e.formula_display.clone(),
+                gp_target: e.gp_target.clone(),
             }
         })
         .collect();
@@ -257,7 +261,7 @@ mod tests {
                 output: "DDM".into(),
                 expression: crate::ast::Expr::mul(crate::ast::Expr::var("I"), crate::ast::Expr::var("LUE")),
                 formula_display: None,
-                reference: None,
+                reference: None, gp_target: None,
             }],
         };
         let files = vec![file];
@@ -283,5 +287,86 @@ mod tests {
         assert!(js.contains("\"label\":\"总干物质\""));
         assert!(js.contains("\"display_name\":\"总干物质\""));
         assert!(js.contains("\"measurable\":true"));
+    }
+
+    /// G0：gp_target 进化靶点标记 —— 出现则导出、缺省则省略（additive 契约）。
+    #[test]
+    fn test_gp_target_contract() {
+        use crate::ast::Expr;
+        use crate::schema::GpTarget;
+        let mut monotone = IndexMap::new();
+        monotone.insert("ChillAccum".to_string(), "increasing".to_string());
+        let tagged = Equation {
+            id: "BB5-DORM".into(),
+            name: "休眠解除门控".into(),
+            output: "dormancy_released".into(),
+            expression: Expr::var("ChillAccum"),
+            formula_display: None,
+            reference: None,
+            gp_target: Some(GpTarget {
+                grammar: "monotone_gate".into(),
+                inputs: vec!["ChillAccum".into(), "GDD".into()],
+                output_bounds: Some([0.0, 1.0]),
+                monotone,
+                frozen: false,
+            }),
+        };
+        let plain = Equation {
+            id: "BB5-LAI".into(),
+            name: "叶面积".into(),
+            output: "LAI".into(),
+            expression: Expr::var("W_leaf"),
+            formula_display: None,
+            reference: None,
+            gp_target: None,
+        };
+        let mut variables = IndexMap::new();
+        variables.insert("dormancy_released".to_string(), dyn_var("r1"));
+        let file = EquationFile {
+            meta: Metadata {
+                id: "M".into(), model: "Demo".into(), name_cn: "演示".into(),
+                name_en: None, version: "1.0".into(), description: None, reference: None,
+                source_files: vec![], dt: 1.0, dt_seconds: None, calibration: None,
+                modules: Default::default(),
+            },
+            parameters: Default::default(),
+            variables,
+            equations: vec![tagged, plain],
+        };
+        let files = vec![file];
+        let m = to_model_json(&files);
+        // 标记方程：契约里带 gp_target
+        let gt = m.modules[0].equations[0].gp_target.as_ref().expect("tagged eq has gp_target");
+        assert_eq!(gt.grammar, "monotone_gate");
+        assert_eq!(gt.inputs, vec!["ChillAccum", "GDD"]);
+        assert_eq!(gt.output_bounds, Some([0.0, 1.0]));
+        assert!(!gt.frozen);
+        // 未标记方程：契约里无 gp_target（缺省冻结）
+        assert!(m.modules[0].equations[1].gp_target.is_none());
+        // JSON：标记方程出现键，整体只一处 gp_target（plain 省略）
+        let js = to_json_string(&files);
+        assert!(js.contains("\"gp_target\""));
+        assert!(js.contains("\"grammar\":\"monotone_gate\""));
+        assert_eq!(js.matches("\"gp_target\"").count(), 1);
+    }
+
+    /// G0：YAML 反序列化 gp_target（模型在 .eq.yaml 里声明的路径）。
+    #[test]
+    fn test_gp_target_yaml_roundtrip() {
+        use crate::schema::GpTarget;
+        let y = r#"
+grammar: monotone_gate
+inputs: [ChillAccum, GDD]
+output_bounds: [0.0, 1.0]
+monotone: { ChillAccum: increasing }
+"#;
+        let gt: GpTarget = serde_yaml::from_str(y).expect("parse gp_target");
+        assert_eq!(gt.grammar, "monotone_gate");
+        assert_eq!(gt.inputs.len(), 2);
+        assert_eq!(gt.monotone.get("ChillAccum").map(String::as_str), Some("increasing"));
+        assert!(!gt.frozen); // 默认可进化
+        // 最小声明：只给 grammar，其余默认
+        let gt2: GpTarget = serde_yaml::from_str("grammar: allocation_fraction\n").unwrap();
+        assert!(gt2.inputs.is_empty() && gt2.output_bounds.is_none() && !gt2.frozen);
     }
 }
