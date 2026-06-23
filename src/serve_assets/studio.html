@@ -60,6 +60,7 @@
     background:var(--card); border:1px solid var(--line); border-radius:8px;
     box-shadow:0 8px 28px rgba(0,0,0,.14); padding:10px 12px; font-size:13px; color:var(--ink); }
   #nodeTip .t-name { font-weight:700; font-size:14px; }
+  #nodeTip .t-id { color:var(--sub); font-size:11px; margin-top:1px; font-family:ui-monospace,Consolas,monospace; }
   #nodeTip .t-sub { color:var(--sub); font-size:12px; margin-top:2px; }
   #nodeTip .t-desc { margin-top:6px; line-height:1.45; }
   #nodeTip .t-eq { margin-top:8px; overflow-x:auto; }
@@ -569,22 +570,30 @@ function coupleLabel(key){
 // 注释内容：全部取自已加载的 /api/model 契约（含方程 mathml）
 function tipHtml(name){
   const info = findVar(name), eq = findEq(name);
-  let h = '<div class="t-name">' + esc(name) + '</div>';
+  const disp = displayNameOf(name);                                  // 标题用友好名
+  let h = '<div class="t-name">' + esc(disp) + '</div>';
+  if(disp !== name) h += '<div class="t-id">代号 ' + esc(name) + '</div>';   // 代号单列（与友好名不同才显）
   if(info && info.kind==='var'){
     const v = info.v, cls = CLS_CN[v.class] || v.class;
-    h += '<div class="t-sub">' + esc(cls) + (v.unit ? ' · ' + esc(v.unit) : '') + '</div>';
-    if(v.description) h += '<div class="t-desc">' + esc(v.description) + '</div>';
+    h += '<div class="t-sub">' + esc(cls) + (v.unit ? ' · 单位 ' + esc(v.unit) : '') + '</div>';
+    if(v.description) h += '<div class="t-desc"><b>物理意义</b>：' + esc(v.description) + '</div>';
   } else if(info && info.kind==='param'){
     const p = info.p;
-    h += '<div class="t-sub">参数' + (p.unit ? ' · ' + esc(p.unit) : '') + '</div>';
-    if(p.name_cn) h += '<div class="t-desc">' + esc(p.name_cn) + '</div>';
+    h += '<div class="t-sub">参数' + (p.unit ? ' · 单位 ' + esc(p.unit) : '') + '</div>';
     h += '<div class="t-desc">默认值 = ' + p.default + '</div>';
   }
   if(eq){
     h += '<div class="t-eq">' + eq.mathml + '</div>';      // mathml 来自契约，浏览器原生渲染
     if(eq.reference) h += '<div class="t-cite">📖 ' + esc(eq.reference) + '</div>';
-  } else if(info && info.kind!=='param'){
-    h += '<div class="t-cite t-none">（无方程：输入/驱动量）</div>';
+  } else if(info && info.kind==='var'){
+    // 无方程：解释它在模型里的角色（让非数学用户看懂这个量怎么来的）
+    const c = info.v.class;
+    let why = '（外部输入）';
+    if(c==='state') why = '（状态量：值由其速率逐步积分得到，无显式方程）';
+    else if(c==='semi_state') why = '（延迟寄存器：取来源变量的上一步值）';
+    else if(c==='driving') why = '（驱动量：来自外部输入/天气数据）';
+    else if(c==='control') why = '（控制量：可由用户/环控设定）';
+    h += '<div class="t-cite t-none">' + why + '</div>';
   }
   return h;
 }
