@@ -253,7 +253,7 @@
   </section>
 </div>
 
-<section class="panel opt-panel">
+<section class="panel opt-panel" id="decisionOptPanel">
   <h2>决策优化（差分进化 DE）
     <span class="tools">
       <input class="spec" id="optSpec" placeholder="problem.yaml（相对模型目录）">
@@ -265,6 +265,26 @@
     <div class="opt-grid" id="optResult" style="display:none">
       <div id="optLeft"></div>
       <div class="opt-conv" id="optConv"></div>
+    </div>
+  </div>
+</section>
+
+<!-- 耦合面板（仅可仿真耦合条目显示）：双向耦合仿真 + 耦合优化 -->
+<section class="panel opt-panel" id="couplePanel" hidden>
+  <h2>耦合仿真 / 优化（温室↔作物 双向）
+    <span class="tools">
+      <button class="btn on" id="coupleSimRun">跑耦合仿真</button>
+      <input class="spec" id="coupleOptSpec" placeholder="耦合优化 spec（serve 启动目录相对）">
+      <button class="btn" id="coupleOptRun">跑耦合优化</button>
+    </span>
+  </h2>
+  <div class="body">
+    <div class="hint" id="coupleStatus">这是「可仿真」耦合（温室=phi_ass 由作物喂的变体）。跑一次双向耦合仿真画温室气候+作物轨迹；或跑耦合优化在双向模型上搜最优环控。DE 可能数十秒。</div>
+    <div class="chart-wrap"><img id="coupleChart" alt="耦合轨迹"></div>
+    <div class="vars" id="coupleVars"></div>
+    <div class="opt-grid" id="coupleOptResult" style="display:none">
+      <div id="coupleOptLeft"></div>
+      <div class="opt-conv" id="coupleOptConv"></div>
     </div>
   </div>
 </section>
@@ -323,13 +343,20 @@ async function loadModel(){
     const mod = (m.modules && m.modules[0]) || {};
     // 耦合视图（step 3）：标题用花名册名 + 提示「只看结构图」（右侧面板取首个模块、仿真守卫拦下）。
     const ce = _model ? MODELS.find(x=>x.id===_model) : null;
+    const simCap = !!(ce && ce.sim_capable);
     if(ce && ce.coupled){
       document.getElementById('title').textContent = ce.name || '耦合视图';
-      document.getElementById('subtitle').textContent = '· 耦合视图（结构图；仿真/录入请选单作物模型，建议在专家视图看）';
+      document.getElementById('subtitle').textContent = simCap
+        ? '· 可仿真耦合（双向；结构图 + 跑耦合仿真/优化）'
+        : '· 耦合视图（结构图；仿真/录入请选单作物模型）';
     } else {
       document.getElementById('title').textContent = mod.name_cn || mod.model || 'EQC Studio';
       document.getElementById('subtitle').textContent = mod.id ? ('· ' + mod.id) : '';
     }
+    // 可仿真耦合：显示耦合面板、隐藏单模型的轨迹/决策优化面板（它们对耦合条目会报错）
+    const cpl = document.getElementById('couplePanel'); if(cpl) cpl.hidden = !simCap;
+    const chartP = document.querySelector('.chart-panel'); if(chartP) chartP.style.display = simCap ? 'none' : '';
+    const decOpt = document.getElementById('decisionOptPanel'); if(decOpt) decOpt.style.display = simCap ? 'none' : '';
     buildVarList(mod.variables || []);
     buildScenario(mod.parameters || [], mod.variables || []);
     buildEntryHead();            // 园区录入网格列（按模型 measurable）
@@ -1048,6 +1075,56 @@ async function runAdvice(){
   finally{ btn.disabled=false; }
 }
 document.getElementById('adviceRun').addEventListener('click', runAdvice);
+
+// —— 耦合面板（可仿真耦合条目）：双向耦合仿真画图 + 耦合优化 ——
+async function runCoupleSim(){
+  const st=document.getElementById('coupleStatus'), btn=document.getElementById('coupleSimRun');
+  st.textContent='跑耦合仿真中…'; btn.disabled=true;
+  try{
+    const j=await (await fetch('/api/couple?model='+encodeURIComponent(_model)+'&_='+Date.now(),{cache:'no-store'})).json();
+    if(j.error){ st.innerHTML='<span class="err">'+j.error+'</span>'; return; }
+    buildCoupleVars(Object.keys(j.series));
+    st.textContent='耦合仿真完成（'+j.steps+' 步）。勾选变量看温室气候+作物轨迹。';
+    drawCoupleChart();
+  }catch(e){ st.innerHTML='<span class="err">耦合仿真请求失败</span>'; }
+  finally{ btn.disabled=false; }
+}
+function buildCoupleVars(keys){
+  const box=document.getElementById('coupleVars'); box.innerHTML='';
+  const defaults=['温室:CO2_air','TDM','co2_uptake_inst','P_gross'];
+  keys.forEach(k=>{
+    const lab=document.createElement('label');
+    lab.innerHTML='<input type="checkbox" value="'+k+'"'+(defaults.includes(k)?' checked':'')+'><span>'+k+'</span>';
+    lab.querySelector('input').addEventListener('change',drawCoupleChart);
+    box.appendChild(lab);
+  });
+}
+function drawCoupleChart(){
+  const checked=Array.from(document.querySelectorAll('#coupleVars input:checked')).map(i=>i.value);
+  const img=document.getElementById('coupleChart');
+  if(!checked.length){ img.removeAttribute('src'); return; }
+  img.src='/api/couple.svg?model='+encodeURIComponent(_model)+'&vars='+encodeURIComponent(checked.join(','))+'&_='+Date.now();
+}
+async function runCoupleOpt(){
+  const spec=document.getElementById('coupleOptSpec').value.trim();
+  const st=document.getElementById('coupleStatus'), btn=document.getElementById('coupleOptRun');
+  if(!spec){ st.textContent='请填耦合优化 spec 路径（serve 启动目录相对）。'; return; }
+  st.textContent='耦合优化中（DE 在双向模型上搜，可能数十秒）…'; btn.disabled=true;
+  try{
+    const j=await (await fetch('/api/couple-optimize?model='+encodeURIComponent(_model)+'&spec='+encodeURIComponent(spec)+'&_='+Date.now(),{cache:'no-store'})).json();
+    if(j.error){ st.innerHTML='<span class="err">'+j.error+'</span>'; return; }
+    document.getElementById('coupleOptResult').style.display='grid';
+    let html='<div><b>最优目标值</b> = '+(+j.best_objective).toFixed(4)+'<br><b>最优旋钮</b>:<br>';
+    for(const k in j.best_knobs){ html+='&nbsp;&nbsp;'+k+' = '+(+j.best_knobs[k]).toFixed(4)+'<br>'; }
+    html+='<br><span class="scn-note">目标: '+(j.objective||'')+' ('+(j.sense||'')+')</span></div>';
+    document.getElementById('coupleOptLeft').innerHTML=html;
+    document.getElementById('coupleOptConv').innerHTML=j.convergence_svg||'';
+    st.textContent='耦合优化完成。';
+  }catch(e){ st.innerHTML='<span class="err">耦合优化请求失败</span>'; }
+  finally{ btn.disabled=false; }
+}
+document.getElementById('coupleSimRun').addEventListener('click', runCoupleSim);
+document.getElementById('coupleOptRun').addEventListener('click', runCoupleOpt);
 
 let _savedMode = 'park';   // 4A：默认进园区视图（园区员工为主；最后选择仍由 localStorage 记住）
 try { _savedMode = localStorage.getItem('eqc_mode') || 'park'; } catch(e){}

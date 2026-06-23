@@ -18,6 +18,8 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
+
+use indexmap::IndexMap;
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -28,7 +30,7 @@ use crate::dag::{build_dag, collapse_dag, DagLevel};
 use crate::parser::{parse_directory, parse_file};
 use crate::report::{generate_report_leveled, LayoutKind};
 use crate::schema::EquationFile;
-use crate::sim::{simulate, SimInput, SimOutput};
+use crate::sim::{simulate, simulate_coupled, CoupledInput, SimInput, SimOutput};
 
 /// 打包进二进制的 Studio 前端页面（零构建步骤；以后可换成真正的 `frontend/` 构建产物）。
 const STUDIO_HTML: &str = include_str!("serve_assets/studio.html");
@@ -60,31 +62,71 @@ struct ManifestEntry {
     data_dir: Option<String>,
 }
 
-/// 耦合声明：`models` 引用上面 `models` 的 id，`links` 把作物驱动量接到温室输出。
-/// 视图层概念——**不改 canonical 模型**，serve 加载时在内存里给作物 Input 注入 `source`。
+/// 耦合声明。两种：**视图专用**（`models`+`links`，画结构图）；**可仿真**（`fast`/`slow`/
+/// `weather`/`feedback`/`fast_params`，能跑 `/api/couple` 耦合仿真+优化，且视图用 fast/slow+反馈
+/// 注入 source → 画出**双向边**）。`fast` 存在 = 可仿真模式。
 #[derive(serde::Deserialize)]
 struct CouplingDecl {
     id: String,
     #[serde(default)]
     name: Option<String>,
+    // —— 视图专用模式 ——
+    #[serde(default)]
     models: Vec<String>,
     #[serde(default)]
     links: Vec<LinkDecl>,
+    // —— 可仿真模式（fast 存在即启用）——
+    #[serde(default)]
+    fast: Option<String>,
+    #[serde(default)]
+    slow: Option<String>,
+    #[serde(default)]
+    weather: Option<String>,
+    #[serde(default)]
+    feedback: Vec<LinkDecl>,
+    #[serde(default)]
+    fast_params: HashMap<String, f64>,
+    #[serde(default)]
+    slow_params: HashMap<String, f64>,
+    #[serde(default)]
+    steps: Option<usize>,
 }
 
-/// 一条跨模型链接：作物驱动 `to`（`CROP.invar`）← 温室输出 `from`（`GH.outvar`）。
+/// 一条跨模型链接：`to` ← `from`。视图：仅 from/to；仿真链接额外带 `agg`/`scale`，
+/// 反馈额外带 `scale`/`init`。
 #[derive(serde::Deserialize)]
 struct LinkDecl {
     from: String,
     to: String,
+    #[serde(default)]
+    agg: Option<String>,
+    #[serde(default)]
+    scale: Option<f64>,
+    #[serde(default)]
+    init: Option<f64>,
 }
 
-/// 耦合视图的运行态：参与文件 + 内存注入的 source 链接。
+/// 耦合的运行态：视图参与文件 + 内存注入的 source 链接 + （可选）仿真配置。
 struct Coupling {
-    /// 参与耦合的模型文件（按 `models` 顺序）。
+    /// 视图参与的模型文件。
     paths: Vec<PathBuf>,
-    /// (from = "GH.outvar", to = "CROP.invar")；加载后给 CROP.invar set source=from。
+    /// 视图 source 注入 (from = "MOD.out", to = "MOD.in")；双向都列。
     links: Vec<(String, String)>,
+    /// `Some` = 可仿真（`/api/couple` 跑 simulate_coupled）。
+    sim: Option<CoupledSim>,
+}
+
+/// 可仿真耦合的运行态配置（预载好）。
+struct CoupledSim {
+    fast: PathBuf,
+    slow: PathBuf,
+    /// 室外驱动（步数, 名->序列）。
+    weather: (usize, HashMap<String, Vec<f64>>),
+    links: Vec<crate::sim::CoupledLink>,
+    feedback: Vec<crate::sim::FeedbackLink>,
+    fast_params: HashMap<String, f64>,
+    slow_params: HashMap<String, f64>,
+    steps: Option<usize>,
 }
 
 /// 花名册中的一个模型：路径 + 预载情景数据 + 本模型实测数据目录。
@@ -322,7 +364,7 @@ fn build_roster_from_manifest(manifest: &Path) -> Result<Vec<ModelEntry>, String
         out.push(ModelEntry { id: e.id, name, path, drivers, params, data_dir, coupling: None });
     }
 
-    // 耦合视图条目（step 3）：解析 models→已建模型条目的文件路径，校验 links。
+    // 耦合条目（step 3 + Studio 耦合）：视图专用 或 可仿真（fast 存在）。
     for c in ws.couplings {
         if !valid_model_id(&c.id) {
             return Err(format!("非法耦合 id '{}'", c.id));
@@ -330,29 +372,88 @@ fn build_roster_from_manifest(manifest: &Path) -> Result<Vec<ModelEntry>, String
         if !seen.insert(c.id.clone()) {
             return Err(format!("id 重复（模型/耦合）：'{}'", c.id));
         }
-        if c.models.len() < 2 {
-            return Err(format!("耦合 '{}' 至少需 2 个模型", c.id));
-        }
-        let mut paths = Vec::new();
-        for mid in &c.models {
-            match out.iter().find(|m| &m.id == mid && m.coupling.is_none()) {
-                Some(m) => paths.push(m.path.clone()),
-                None => return Err(format!("耦合 '{}' 引用了不存在的模型 id '{mid}'", c.id)),
-            }
-        }
-        let links: Vec<(String, String)> = c
-            .links
-            .iter()
-            .filter_map(|l| {
-                if l.from.contains('.') && l.to.contains('.') {
-                    Some((l.from.clone(), l.to.clone()))
-                } else {
-                    eprintln!("⚠️  耦合 '{}' 链接格式应为 MODULE.var：from='{}' to='{}'（已跳过）", c.id, l.from, l.to);
-                    None
-                }
-            })
-            .collect();
         let name = c.name.clone().unwrap_or_else(|| c.id.clone());
+
+        let coupling = if let Some(fast_rel) = &c.fast {
+            // —— 可仿真模式：fast/slow + agg 链接 + 反馈 + 天气 ——
+            use crate::sim::{Agg, CoupledLink, FeedbackLink};
+            let slow_rel = c.slow.as_ref().ok_or_else(|| format!("耦合 '{}' 有 fast 但缺 slow", c.id))?;
+            let fast_path = resolve(fast_rel);
+            let slow_path = resolve(slow_rel);
+            let fast_file = parse_file(&fast_path).map_err(|e| format!("耦合 '{}' fast 解析失败: {e}", c.id))?;
+            let slow_file = parse_file(&slow_path).map_err(|e| format!("耦合 '{}' slow 解析失败: {e}", c.id))?;
+            let (fid, sid) = (fast_file.meta.id.clone(), slow_file.meta.id.clone());
+
+            let mut view_links: Vec<(String, String)> = Vec::new();
+            let mut sim_links: Vec<CoupledLink> = Vec::new();
+            for l in &c.links {
+                // 视图边：温室输出 → 作物输入（模块前缀）
+                view_links.push((format!("{fid}.{}", l.from), format!("{sid}.{}", l.to)));
+                sim_links.push(CoupledLink {
+                    to: l.to.clone(),
+                    from: l.from.clone(),
+                    agg: Agg::parse(l.agg.as_deref().unwrap_or("mean"))
+                        .ok_or_else(|| format!("耦合 '{}' 未知 agg '{:?}'", c.id, l.agg))?,
+                    scale: l.scale.unwrap_or(1.0),
+                });
+            }
+            let mut sim_fb: Vec<FeedbackLink> = Vec::new();
+            for f in &c.feedback {
+                // 视图边：作物输出 → 温室输入（双向，模块前缀）
+                view_links.push((format!("{sid}.{}", f.from), format!("{fid}.{}", f.to)));
+                sim_fb.push(FeedbackLink {
+                    to: f.to.clone(),
+                    from: f.from.clone(),
+                    scale: f.scale.unwrap_or(1.0),
+                    init: f.init.unwrap_or(0.0),
+                });
+            }
+            let weather = match &c.weather {
+                Some(w) => crate::scenario::load_drivers_csv(&resolve(w))
+                    .map_err(|e| format!("耦合 '{}' 天气加载失败: {e}", c.id))?,
+                None => return Err(format!("可仿真耦合 '{}' 缺 weather", c.id)),
+            };
+            Coupling {
+                paths: vec![fast_path.clone(), slow_path.clone()],
+                links: view_links,
+                sim: Some(CoupledSim {
+                    fast: fast_path,
+                    slow: slow_path,
+                    weather,
+                    links: sim_links,
+                    feedback: sim_fb,
+                    fast_params: c.fast_params.clone(),
+                    slow_params: c.slow_params.clone(),
+                    steps: c.steps,
+                }),
+            }
+        } else {
+            // —— 视图专用模式（现状）——
+            if c.models.len() < 2 {
+                return Err(format!("耦合 '{}' 至少需 2 个模型（或用 fast/slow 可仿真模式）", c.id));
+            }
+            let mut paths = Vec::new();
+            for mid in &c.models {
+                match out.iter().find(|m| &m.id == mid && m.coupling.is_none()) {
+                    Some(m) => paths.push(m.path.clone()),
+                    None => return Err(format!("耦合 '{}' 引用了不存在的模型 id '{mid}'", c.id)),
+                }
+            }
+            let links: Vec<(String, String)> = c
+                .links
+                .iter()
+                .filter_map(|l| {
+                    if l.from.contains('.') && l.to.contains('.') {
+                        Some((l.from.clone(), l.to.clone()))
+                    } else {
+                        eprintln!("⚠️  耦合 '{}' 链接格式应为 MODULE.var：from='{}' to='{}'（已跳过）", c.id, l.from, l.to);
+                        None
+                    }
+                })
+                .collect();
+            Coupling { paths, links, sim: None }
+        };
+
         out.push(ModelEntry {
             id: c.id,
             name,
@@ -360,10 +461,116 @@ fn build_roster_from_manifest(manifest: &Path) -> Result<Vec<ModelEntry>, String
             drivers: None,
             params: None,
             data_dir: PathBuf::new(),
-            coupling: Some(Coupling { paths, links }),
+            coupling: Some(coupling),
         });
     }
     Ok(out)
+}
+
+/// 跑一次耦合条目的仿真（`/api/couple`）。`param_ov` 叠加在 fast/slow 固定参数上
+/// （前缀 `gh:`→温室、`crop:`→作物；无前缀→两者都试）。
+fn run_couple(m: &ModelEntry, param_ov: &HashMap<String, f64>) -> Result<crate::sim::CoupledOutput, String> {
+    let sim = m
+        .coupling
+        .as_ref()
+        .and_then(|c| c.sim.as_ref())
+        .ok_or_else(|| "该条目不是可仿真耦合（清单需写 fast/slow/weather）".to_string())?;
+    let fast = parse_file(&sim.fast).map_err(|e| e.to_string())?;
+    let slow = parse_file(&sim.slow).map_err(|e| e.to_string())?;
+    let (rows, wmap) = &sim.weather;
+    let dtf = fast.meta.dt_seconds.ok_or("温室模型缺 meta.dt_seconds")?;
+    let dts = slow.meta.dt_seconds.ok_or("作物模型缺 meta.dt_seconds")?;
+    let r = (dts / dtf).round().max(1.0) as usize;
+    let slow_steps = sim.steps.unwrap_or(rows / r);
+    let need = slow_steps * r;
+    if *rows < need {
+        return Err(format!("室外天气 {rows} 行 < 慢步数·R = {need}"));
+    }
+    let weather: HashMap<String, Vec<f64>> =
+        wmap.iter().map(|(k, v)| (k.clone(), v[..need.min(v.len())].to_vec())).collect();
+
+    let mut input = CoupledInput::new(&fast, &slow, sim.links.clone(), weather, slow_steps);
+    input.feedback = sim.feedback.clone();
+    input.fast_params = sim.fast_params.clone();
+    input.slow_params = sim.slow_params.clone();
+    // 请求级覆盖：gh:name→温室、crop:name→作物
+    for (k, v) in param_ov {
+        if let Some(n) = k.strip_prefix("gh:") {
+            input.fast_params.insert(n.to_string(), *v);
+        } else if let Some(n) = k.strip_prefix("crop:") {
+            input.slow_params.insert(n.to_string(), *v);
+        }
+    }
+    simulate_coupled(&input).map_err(|e| format!("耦合仿真失败: {e}"))
+}
+
+/// `/api/couple-optimize?model=<耦合id>&spec=<决策spec路径>`：在耦合（双向）前向模型上跑 DE。
+/// spec（knobs/objective）按 CWD（serve 启动目录）解析；耦合配置取自清单的该条目。
+fn run_couple_optimize(m: &ModelEntry, query: &str) -> Result<String, String> {
+    use crate::optimize::{load_problem, run_coupled, CoupledModel};
+
+    let sim = m
+        .coupling
+        .as_ref()
+        .and_then(|c| c.sim.as_ref())
+        .ok_or_else(|| "该条目不是可仿真耦合（清单需写 fast/slow/weather）".to_string())?;
+    let spec_arg = parse_spec(query)
+        .ok_or_else(|| "缺少 spec 参数（/api/couple-optimize?spec=problem.yaml）".to_string())?;
+    let problem = load_problem(&PathBuf::from(&spec_arg))?;
+
+    let fast = parse_file(&sim.fast).map_err(|e| e.to_string())?;
+    let slow = parse_file(&sim.slow).map_err(|e| e.to_string())?;
+    let (rows, wmap) = &sim.weather;
+    let dtf = fast.meta.dt_seconds.ok_or("温室模型缺 meta.dt_seconds")?;
+    let dts = slow.meta.dt_seconds.ok_or("作物模型缺 meta.dt_seconds")?;
+    let r = (dts / dtf).round().max(1.0) as usize;
+    let slow_steps = sim.steps.unwrap_or(rows / r);
+    let need = slow_steps * r;
+    if *rows < need {
+        return Err(format!("室外天气 {rows} 行 < 慢步数·R = {need}"));
+    }
+    let weather: HashMap<String, Vec<f64>> =
+        wmap.iter().map(|(k, v)| (k.clone(), v[..need.min(v.len())].to_vec())).collect();
+
+    let model = CoupledModel {
+        fast: &fast,
+        slow: &slow,
+        links: sim.links.clone(),
+        feedback: sim.feedback.clone(),
+        weather,
+        slow_steps,
+        base_fast_params: sim.fast_params.clone(),
+        base_slow_params: sim.slow_params.clone(),
+    };
+    let res = run_coupled(&model, &problem)?;
+
+    let knobs: serde_json::Map<String, serde_json::Value> = problem
+        .knobs
+        .iter()
+        .zip(&res.best_knobs)
+        .map(|(k, v)| (k.var.clone(), serde_json::json!(v)))
+        .collect();
+    let j = serde_json::json!({
+        "coupled": true,
+        "best_objective": res.best_objective,
+        "best_knobs": knobs,
+        "objective": problem.objective.expr,
+        "sense": problem.objective.sense.as_str(),
+        "convergence_svg": crate::chart::convergence_chart_svg(&res.history, 720.0, 300.0),
+    });
+    Ok(j.to_string())
+}
+
+/// 把耦合输出（作物 slow + 温室 fast 日均）合成一份轨迹：作物变量原名，温室变量加 `温室:` 前缀。
+fn couple_trajectories(out: &crate::sim::CoupledOutput) -> IndexMap<String, Vec<f64>> {
+    let mut t: IndexMap<String, Vec<f64>> = IndexMap::new();
+    for (k, v) in &out.slow.trajectories {
+        t.insert(k.clone(), v.clone());
+    }
+    for (k, v) in &out.fast.trajectories {
+        t.insert(format!("温室:{k}"), v.clone());
+    }
+    t
 }
 
 /// 加载某条目的方程文件：单模型 = 直接解析校验；耦合 = 加载各参与文件 + 按 links
@@ -437,7 +644,8 @@ fn models_json(ctx: &Ctx) -> String {
             serde_json::json!({
                 "id": m.id, "name": m.name,
                 "has_drivers": m.drivers.is_some(),
-                "coupled": m.coupling.is_some()
+                "coupled": m.coupling.is_some(),
+                "sim_capable": m.coupling.as_ref().is_some_and(|c| c.sim.is_some())
             })
         })
         .collect();
@@ -509,6 +717,36 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
             };
             ("200 OK", "image/svg+xml; charset=utf-8", svg)
         }
+        // 耦合仿真（可仿真耦合条目）：跑 simulate_coupled → 作物+温室合成轨迹。
+        "/api/couple" => {
+            let pv = parse_overrides(query, "p");
+            match run_couple(m, &pv) {
+                Ok(out) => {
+                    let traj = couple_trajectories(&out);
+                    let so = SimOutput { steps: out.slow_steps, trajectories: traj };
+                    ("200 OK", "application/json; charset=utf-8", trajectory_json(&so))
+                }
+                Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
+            }
+        }
+        "/api/couple.svg" => {
+            let vars = parse_vars(query);
+            let pv = parse_overrides(query, "p");
+            let svg = match run_couple(m, &pv) {
+                Ok(out) => {
+                    let traj = couple_trajectories(&out);
+                    let so = SimOutput { steps: out.slow_steps, trajectories: traj };
+                    let refs: Vec<&str> = vars.iter().map(|s| s.as_str()).collect();
+                    crate::chart::line_chart_svg(&so, &refs, 720.0, 360.0)
+                }
+                Err(e) => error_svg(&e),
+            };
+            ("200 OK", "image/svg+xml; charset=utf-8", svg)
+        }
+        "/api/couple-optimize" => match run_couple_optimize(m, query) {
+            Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
+            Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
+        },
         "/api/optimize" => match run_optimize(m, query) {
             Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
             Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
@@ -1308,6 +1546,11 @@ mod tests {
         assert!(STUDIO_HTML.contains("modelParam"));
         // 耦合视图（step 3）：optgroup 分组 + 标题提示
         assert!(STUDIO_HTML.contains("耦合视图"));
+        // 耦合面板（可仿真耦合）：仿真 + 优化
+        assert!(STUDIO_HTML.contains("couplePanel"));
+        assert!(STUDIO_HTML.contains("/api/couple"));
+        assert!(STUDIO_HTML.contains("runCoupleSim"));
+        assert!(STUDIO_HTML.contains("/api/couple-optimize"));
     }
 
     #[test]

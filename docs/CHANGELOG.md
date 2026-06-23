@@ -166,6 +166,7 @@
 - **spec**：决策 spec 加 `coupling:` 块（`fast/slow/weather/links/feedback/steps/fast_params/slow_params`，路径相对 spec 目录）；旋钮 `kind: fast_param/slow_param`；`eqc optimize <任意> --spec coupled.yaml` 自动走耦合路径（`run_optimize_coupled`）。`KnobKind::FastParam/SlowParam`（单模型路径拒绝）。
 - **范围 v1**：单目标、无约束（约束/Pareto/Studio 面板复用 = 后续，需把 `core` 抽象成前向模型无关）。
 - **验证（演示）**：温室×番茄，旋钮=CO₂ 注入 phi_inj，目标 `(sub (final TDM)(mul phi_inj co2cost))`。先 `eqc couple` 扫 TDM-vs-phi_inj 定 co2cost=2.0 → DE 找到**内部最优 phi_inj=0.102 ppm/s**（= 边际 TDM 增益 = co2cost 的交点，在双向前向模型上搜）。release 23s vs debug 2m44s（优化层用 release）。+2 单测（最优/拒绝坏旋钮）。217 lib 全绿。
+- **耦合仿真/优化接进 Studio（C1–C3 上界面）**：清单耦合条目升级为**可仿真**（`fast`/`slow`/`weather`/`links`(带 agg)/`feedback`/`fast_params`）；`fast` 存在即启用。serve：`Coupling.sim`、`/api/couple`（跑 `simulate_coupled` → 作物+温室合成轨迹）、`/api/couple.svg`（轨迹图）、`/api/couple-optimize`（spec 的 knobs/objective → `run_coupled` DE）、`/api/models` 加 `sim_capable` 标记。**视图升级**：可仿真耦合的结构图用 fast/slow + **links 和 feedback** 注入 source → 画出**双向边**（含作物→温室反馈边），`greenhouse_v1_crop` 因 co2_uptake_in 被反馈 source 化而校验通过。studio.html：选中可仿真耦合 → 「耦合仿真/优化」面板（跑仿真画温室 CO₂+作物轨迹、跑优化显示最优旋钮+收敛），隐藏单模型轨迹/决策面板。视图专用耦合（蓝莓/草莓，无反馈）保持现状。活体：温室×番茄 `/api/couple` 48 步、`/api/couple-optimize` 找到 phi_inj=0.102（=CLI 一致）。217 lib 全绿、node --check 过。
 - **下一步 C4（后续）**：紧耦合（步内迭代 / sub-day 作物快通量）去滞后、提精度——仅当滞后误差被证明要紧时。
 
 ## 工程基线
