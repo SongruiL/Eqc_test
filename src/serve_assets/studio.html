@@ -83,6 +83,27 @@
   .opt-conv circle.pp:hover { stroke:#1d4ed8; stroke-width:2; }
   .opt-summary { font-size:13px; margin-bottom:4px; }
   .opt-summary .feas-ok { color:#16a34a; font-weight:600; } .opt-summary .feas-bad { color:#dc2626; font-weight:600; }
+  /* —— 受约束 GP 面板 —— */
+  .gp-targets { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  .gp-tgt { border:1px solid var(--line); border-radius:8px; padding:7px 10px; cursor:pointer; background:#fff; font-size:12px; max-width:340px; }
+  .gp-tgt:hover { background:#eef2ff; }
+  .gp-tgt.sel { border-color:var(--accent); background:#eef2ff; box-shadow:0 0 0 1px var(--accent) inset; }
+  .gp-tgt .tgt-name { font-weight:600; color:var(--ink); }
+  .gp-tgt .tgt-meta { color:var(--sub); margin-top:3px; }
+  .gp-tgt .tgt-gram { display:inline-block; background:#fef9c3; color:#854d0e; border-radius:10px; padding:0 7px; font-size:11px; }
+  .gp-cfg { font-size:12px; color:var(--sub); margin-left:6px; }
+  .gp-cfg input { width:58px; border:1px solid var(--line); border-radius:6px; padding:2px 5px; font-size:12px; }
+  .gp-sub { font-size:12px; color:var(--sub); font-weight:600; margin-bottom:6px; }
+  .gp-badge { font-size:12px; font-weight:600; padding:2px 10px; border-radius:12px; }
+  .gp-badge.redisc { background:#dcfce7; color:#166534; }
+  .gp-badge.newform { background:#fef9c3; color:#854d0e; }
+  .gp-badge.custom { background:#f1f5f9; color:#475569; }
+  .gp-fml { margin:8px 0; overflow-x:auto; font-size:15px; }
+  .gp-fit { width:100%; height:auto; display:block; border:1px solid var(--line); border-radius:8px; margin-top:8px; background:#fff; }
+  .gp-cmp { font-size:12px; color:var(--sub); margin-top:10px; line-height:1.7; }
+  .gp-cmp b { color:var(--ink); }
+  .gp-leg { font-size:11px; color:var(--sub); margin-top:4px; }
+  .gp-leg i { font-style:normal; font-weight:600; }
   /* 视图切换（园区/专家）放右上 */
   header #modeSeg { margin-left:auto; }
   /* 园区录入视图 */
@@ -270,6 +291,31 @@
   </div>
 </section>
 
+<!-- 受约束 GP（方程结构进化）：靶点列表→选→配置→Pareto 前沿→候选详情+rediscovery 徽章 -->
+<section class="panel opt-panel" id="gpPanel" hidden>
+  <h2>受约束 GP（方程结构进化）
+    <span class="tools">
+      <label class="gp-cfg">种群 <input id="gpPop" type="number" value="60" min="4"></label>
+      <label class="gp-cfg">代数 <input id="gpGens" type="number" value="40" min="1"></label>
+      <label class="gp-cfg">种子 <input id="gpSeed" type="number" value="1"></label>
+      <button class="btn" id="gpRun" disabled>开始进化</button>
+    </span>
+  </h2>
+  <div class="body">
+    <div class="hint" id="gpIntro">GP 在机理留白（🟠 进化靶点）处提议方程形式——你来挑前沿、判 rediscovery、采纳。观测取<b>当前处理区</b>录入数据（园区视图录入，拟合该靶点的输出变量）。memetic 暂不支持（计算量大，待异步）。</div>
+    <div class="gp-targets" id="gpTargets"></div>
+    <div class="hint" id="gpStatus"></div>
+    <div class="opt-grid" id="gpResult" style="display:none">
+      <div id="gpLeft">
+        <div class="gp-sub">Pareto 前沿 · 精度 vs 复杂度（点拐点看候选）</div>
+        <div class="opt-conv" id="gpPareto"></div>
+        <div class="hint" id="gpFrontInfo">点前沿上的点 → 右侧看该候选的公式 / 拟合 / 机理形式。</div>
+      </div>
+      <div id="gpDetail"><div class="hint">（选一个前沿点查看详情）</div></div>
+    </div>
+  </div>
+</section>
+
 <!-- 耦合面板（仅可仿真耦合条目显示）：双向耦合仿真 + 耦合优化 -->
 <section class="panel opt-panel" id="couplePanel" hidden>
   <h2>耦合仿真 / 优化（温室↔作物 双向）
@@ -359,6 +405,7 @@ async function loadModel(){
     const chartP = document.querySelector('.chart-panel'); if(chartP) chartP.style.display = simCap ? 'none' : '';
     const decOpt = document.getElementById('decisionOptPanel'); if(decOpt) decOpt.style.display = simCap ? 'none' : '';
     buildVarList(mod.variables || []);
+    buildGpTargets((ce && ce.coupled) ? [] : (mod.equations || []));   // GP 靶点列表（耦合视图无）
     buildScenario(mod.parameters || [], mod.variables || []);
     buildEntryHead();            // 园区录入网格列（按模型 measurable）
     onZoneChange();              // 载入本区：管理设置 + 观测网格 + 看懂卡
@@ -829,6 +876,132 @@ function applyBestKnobs(knobs){
   document.getElementById('optStatus').textContent = '已把最优旋钮叠加到「整季仿真轨迹」（情景面板已更新；重置默认可还原）。';
 }
 document.getElementById('optRun').addEventListener('click', runOptimize);
+
+// —— 受约束 GP 面板（S2）：靶点列表 → 选 → 配置 → /api/evolve → Pareto 前沿 → 候选详情 ——
+// 数据全来自 /api/evolve 契约（EQC 持有事实）；前端只拼装。观测取当前处理区录入。
+let GP_TARGETS = [], _gpTarget = null, _gpData = null;
+function buildGpTargets(eqs){
+  GP_TARGETS = (eqs || []).filter(e => e.gp_target);
+  const panel = document.getElementById('gpPanel');
+  const box = document.getElementById('gpTargets');
+  _gpTarget = null; _gpData = null;
+  document.getElementById('gpResult').style.display = 'none';
+  document.getElementById('gpStatus').textContent = '';
+  document.getElementById('gpRun').disabled = true;
+  document.getElementById('gpDetail').innerHTML = '<div class="hint">（选一个前沿点查看详情）</div>';
+  if(!GP_TARGETS.length){ panel.hidden = true; box.innerHTML = ''; return; }
+  panel.hidden = false;
+  box.innerHTML = GP_TARGETS.map(e=>{
+    const g = e.gp_target || {};
+    const ins = (g.inputs && g.inputs.length) ? g.inputs.join(', ') : (e.refs || []).join(', ');
+    return '<div class="gp-tgt" data-id="' + esc(e.id) + '">'
+      + '<div class="tgt-name">🟠 ' + esc(e.name || e.id) + ' <span class="tgt-gram">' + esc(g.grammar || '') + '</span></div>'
+      + '<div class="tgt-meta">输出 ' + esc(e.output) + '　·　输入 ' + esc(ins) + '</div>'
+      + '</div>';
+  }).join('');
+  box.querySelectorAll('.gp-tgt').forEach(el=>{
+    el.addEventListener('click', ()=>selectGpTarget(el.getAttribute('data-id')));
+  });
+}
+function selectGpTarget(id){
+  _gpTarget = id;
+  document.querySelectorAll('#gpTargets .gp-tgt').forEach(el=> el.classList.toggle('sel', el.getAttribute('data-id')===id));
+  document.getElementById('gpRun').disabled = false;
+  const e = GP_TARGETS.find(x=>x.id===id);
+  document.getElementById('gpStatus').innerHTML = '已选靶点 <b>' + esc(e ? (e.name||e.id) : id) + '</b>（输出 '
+    + esc(e ? e.output : '') + '）。点「开始进化」。';
+}
+async function runEvolve(){
+  if(!_gpTarget){ return; }
+  const pop = document.getElementById('gpPop').value || 60;
+  const gens = document.getElementById('gpGens').value || 40;
+  const seed = document.getElementById('gpSeed').value || 1;
+  const status = document.getElementById('gpStatus');
+  const btn = document.getElementById('gpRun');
+  btn.disabled = true;
+  status.innerHTML = '⏳ 进化中…（每候选每代一次完整仿真，可能十几~几十秒；release 构建更快）';
+  document.getElementById('gpResult').style.display = 'none';
+  const q = '/api/evolve?target=' + encodeURIComponent(_gpTarget)
+    + '&zone=' + encodeURIComponent(curZone()) + modelParam()
+    + '&pop=' + encodeURIComponent(pop) + '&gens=' + encodeURIComponent(gens) + '&seed=' + encodeURIComponent(seed)
+    + '&_=' + Date.now();
+  try {
+    const j = await (await fetch(q, {cache:'no-store'})).json();
+    if(j.error){ status.innerHTML = '<span class="err">进化失败：' + esc(j.error) + '</span>'; return; }
+    status.textContent = '✅ 完成 · 靶点 ' + esc(j.target) + '（' + esc(j.mode) + '）';
+    renderEvolveResult(j);
+  } catch(e){ status.innerHTML = '<span class="err">进化请求失败：' + esc(e) + '</span>'; }
+  finally { btn.disabled = false; }
+}
+function renderEvolveResult(j){
+  _gpData = j;
+  document.getElementById('gpResult').style.display = '';
+  document.getElementById('gpPareto').innerHTML = j.pareto_svg || '';
+  const n = j.pareto_front ? j.pareto_front.length : 0;
+  document.getElementById('gpFrontInfo').textContent = '前沿 ' + n + ' 个候选（' + esc(j.grammar)
+    + ' 语法 · 拟合 ' + esc(j.output) + ' · 实测 ' + (j.n_obs||0) + ' 点）。点某点看公式/拟合/形式。';
+  const svg = document.querySelector('#gpPareto svg');
+  if(svg){
+    svg.querySelectorAll('circle.pp').forEach(c=>{
+      c.addEventListener('click', ()=>{
+        const i = +c.getAttribute('data-i');
+        svg.querySelectorAll('circle.pp').forEach(x=>{ x.setAttribute('r','4'); x.setAttribute('fill','#2563eb'); });
+        c.setAttribute('r','6'); c.setAttribute('fill','#dc2626');
+        showCandidate(j, i);
+      });
+    });
+  }
+  if(n > 0) showCandidate(j, 0);   // 默认展示第一个（低复杂度端）
+}
+// 候选详情：rediscovery 徽章 + 2D 公式（MathML）+ 拟合轨迹叠观测 + 与现有形式对比。
+function showCandidate(j, i){
+  const e = j.pareto_front && j.pareto_front[i]; if(!e) return;
+  const cls = e.rediscovery ? 'redisc' : (e.mechanistic_form ? 'newform' : 'custom');
+  const badge = e.rediscovery ? '🟢 rediscovery（复原现有形式 = 机理验证）'
+    : (e.mechanistic_form ? '🟠 新形式假设（语法内另一种机理形式，待田间证伪）'
+                          : '🟠 自定义结构（不在标准形式集合，需人工审）');
+  let h = '<div class="gp-sub">候选详情</div>';
+  h += '<div><span class="gp-badge ' + cls + '">' + badge + '</span></div>';
+  h += '<div class="gp-fml">' + (e.formula_mathml || ('<code>' + esc(e.formula) + '</code>')) + '</div>';
+  h += '<div class="gp-cmp">机理形式：<b>' + esc(e.mechanistic_form || '自定义') + '</b>　·　复杂度 <b>'
+    + e.complexity + '</b>　·　rmse <b>' + fmtNum(e.error) + '</b></div>';
+  h += '<div class="gp-leg"><i style="color:#2563eb">━ 候选拟合</i>　<i style="color:#9ca3af">┄ 现有形式</i>　<i style="color:#f59e0b">● 实测</i></div>';
+  h += gpFitSvg(e.trajectory, j.baseline && j.baseline.trajectory, j.observed);
+  if(j.baseline){
+    h += '<div class="gp-cmp">现有形式' + (j.baseline.form ? ('（<b>' + esc(j.baseline.form) + '</b>）') : '')
+      + '：<br><code>' + esc(j.baseline.formula || '') + '</code></div>';
+  }
+  if(e.provenance_suggestion) h += '<div class="hint">溯源建议：' + esc(e.provenance_suggestion) + '</div>';
+  document.getElementById('gpDetail').innerHTML = h;
+}
+// 自画的拟合叠观测小图（候选实线 / 现有形式虚线 / 实测散点）；数据来自契约 trajectory/observed。
+function gpFitSvg(cand, base, obs){
+  const W=380, H=210, pad=32;
+  let xs=[], ys=[];
+  const add = s=>{ if(s && s.DAT) s.DAT.forEach((d,i)=>{ xs.push(d); ys.push(s.value[i]); }); };
+  add(cand); add(base); add(obs);
+  if(!xs.length) return '<div class="hint">无轨迹数据</div>';
+  const xmin=Math.min.apply(null,xs), xmax=Math.max.apply(null,xs);
+  let ymin=Math.min.apply(null,ys), ymax=Math.max.apply(null,ys);
+  if(ymin===ymax){ ymin-=1; ymax+=1; }
+  const px = d=> pad + (xmax>xmin?(d-xmin)/(xmax-xmin):0.5)*(W-2*pad);
+  const py = v=> H-pad - (v-ymin)/(ymax-ymin)*(H-2*pad);
+  const poly = (s,color,dash)=>{ if(!s||!s.DAT||!s.DAT.length) return '';
+    const pts = s.DAT.map((d,i)=> px(d).toFixed(1)+','+py(s.value[i]).toFixed(1)).join(' ');
+    return '<polyline points="'+pts+'" fill="none" stroke="'+color+'"'+(dash?' stroke-dasharray="5,4"':'')+' stroke-width="2"/>'; };
+  let svg = '<svg class="gp-fit" viewBox="0 0 '+W+' '+H+'">';
+  svg += '<line x1="'+pad+'" y1="'+(H-pad)+'" x2="'+(W-pad)+'" y2="'+(H-pad)+'" stroke="#cbd5e1"/>';
+  svg += '<line x1="'+pad+'" y1="'+pad+'" x2="'+pad+'" y2="'+(H-pad)+'" stroke="#cbd5e1"/>';
+  svg += poly(base, '#9ca3af', true);
+  svg += poly(cand, '#2563eb', false);
+  if(obs && obs.DAT) obs.DAT.forEach((d,i)=>{ svg += '<circle cx="'+px(d).toFixed(1)+'" cy="'+py(obs.value[i]).toFixed(1)+'" r="3.2" fill="#f59e0b"/>'; });
+  svg += '<text x="'+(pad-4)+'" y="'+(pad+4)+'" font-size="10" fill="#6b7280" text-anchor="end">'+ymax.toFixed(2)+'</text>';
+  svg += '<text x="'+(pad-4)+'" y="'+(H-pad)+'" font-size="10" fill="#6b7280" text-anchor="end">'+ymin.toFixed(2)+'</text>';
+  svg += '<text x="'+(W-pad)+'" y="'+(H-pad+15)+'" font-size="10" fill="#6b7280" text-anchor="end">DAT '+xmax+'</text>';
+  svg += '</svg>';
+  return svg;
+}
+document.getElementById('gpRun').addEventListener('click', runEvolve);
 
 // —— 视图切换：园区(简明) / 专家。选择存 localStorage、自动刷新后保留。——
 function applyMode(mode){

@@ -1147,6 +1147,7 @@ fn run_evolve(m: &ModelEntry, query: &str) -> Result<String, String> {
                 "error": e.error,
                 "consts": e.cand.consts,
                 "formula": gp::render_formula(&e.cand),
+                "formula_mathml": crate::report::expr_mathml(&candidate_expr(&e.cand)),
                 "mechanistic_form": report.form,
                 "rediscovery": report.rediscovery,
                 "provenance_suggestion": report.suggestion,
@@ -1157,17 +1158,19 @@ fn run_evolve(m: &ModelEntry, query: &str) -> Result<String, String> {
 
     // baseline：现模型当前形式（未 patch 的原方程）+ 其仿真轨迹（对比用）。
     let baseline = {
-        let formula = file
-            .equations
-            .iter()
-            .find(|e| e.id == target)
-            .map(|e| e.expression.to_python(""))
+        let eq = file.equations.iter().find(|e| e.id == target);
+        let formula = eq.map(|e| e.expression.to_python("")).unwrap_or_default();
+        let formula_mathml = eq
+            .map(|e| crate::report::expr_mathml(&e.expression))
             .unwrap_or_default();
         let traj = match simulate(file, &sim_input) {
             Ok(out) => series_to_traj(&out, &output),
             Err(_) => serde_json::Value::Null,
         };
-        serde_json::json!({ "formula": formula, "form": baseline_form, "trajectory": traj })
+        serde_json::json!({
+            "formula": formula, "formula_mathml": formula_mathml,
+            "form": baseline_form, "trajectory": traj,
+        })
     };
 
     // 观测散点（{DAT, value}）。
@@ -1190,6 +1193,15 @@ fn run_evolve(m: &ModelEntry, query: &str) -> Result<String, String> {
         "pareto_svg": pareto_svg,
     });
     Ok(j.to_string())
+}
+
+/// 把候选的可调常数 `__c{i}` 代回常数值，得到具体表达式（供 `expr_mathml` 渲染 2D 公式）。
+fn candidate_expr(cand: &crate::gp::Candidate) -> crate::ast::Expr {
+    let mut e = cand.expr.clone();
+    for (i, v) in cand.consts.iter().enumerate() {
+        e = e.substitute(&crate::gp::Candidate::const_name(i), &crate::ast::Expr::constant(*v));
+    }
+    e
 }
 
 /// 把一个 GP 候选 patch 进目标方程 → 仿真 → 抽 `output` 轨迹（{DAT, value}）。失败 → Null。
@@ -1829,6 +1841,12 @@ mod tests {
         assert!(STUDIO_HTML.contains("optRun"));
         assert!(STUDIO_HTML.contains("/api/optimize?spec="));
         assert!(STUDIO_HTML.contains("renderParetoResult"));
+        // 受约束 GP 面板（S2）：靶点列表 + 进化端点 + 候选详情/拟合叠图
+        assert!(STUDIO_HTML.contains("gpPanel"));
+        assert!(STUDIO_HTML.contains("buildGpTargets"));
+        assert!(STUDIO_HTML.contains("/api/evolve?target="));
+        assert!(STUDIO_HTML.contains("showCandidate"));
+        assert!(STUDIO_HTML.contains("gpFitSvg"));
         // 园区/简明视图：视图切换 + 录入网格 + 实测数据端点 + 标定
         assert!(STUDIO_HTML.contains("modeSeg"));
         assert!(STUDIO_HTML.contains("entryTable"));
