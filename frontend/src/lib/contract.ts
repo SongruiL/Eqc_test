@@ -34,6 +34,10 @@ export interface VarJson {
   description?: string
   label?: string
   measurable?: boolean
+  /** 胁迫/健康信号："factor"（1=好）/ "risk"（0=好）；前端据此画红绿灯。 */
+  stress_factor?: string
+  /** 红绿灯取整季哪个值："min"/"max"/"final"；缺省由 stress_factor 推断。 */
+  stress_reduce?: string
   init?: number
 }
 
@@ -156,12 +160,46 @@ export interface OptResult {
   calibrated_at?: number
 }
 
+// —— 园区视图（/api/simulate、/api/zone、/api/observations）契约 ——
+export interface SimSeries {
+  steps?: number
+  series?: Record<string, number[]>
+  error?: string
+}
+export interface ZoneCalib {
+  error?: number | null
+  at?: number
+  spec?: string
+  n_obs?: number
+}
+export interface ZoneInfo {
+  zone: string
+  params?: Record<string, number>
+  drivers?: Record<string, number>
+  has_observed?: boolean
+  calibration?: ZoneCalib | null
+}
+export interface ObservationsJson {
+  zone: string
+  exists: boolean
+  observations: Record<string, [number, number][]>
+  days: number[]
+  error?: string
+}
+
+export interface Calibration {
+  calibrated?: boolean
+  note?: string
+  date?: string
+}
+
 export interface ModuleJson {
   id: string
   model: string
   name_cn: string
   name_en?: string
   description?: string
+  calibration?: Calibration
   parameters: ParamJson[]
   variables: VarJson[]
   equations: EqJson[]

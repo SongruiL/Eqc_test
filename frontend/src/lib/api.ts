@@ -1,5 +1,5 @@
 // 对 EQC `/api/*` 契约的薄封装。前端只消费，不重实现逻辑（EQC 持有事实）。
-import type { ModelsJson, ModelJson, EvolveStatus, OptResult } from './contract'
+import type { ModelsJson, ModelJson, EvolveStatus, OptResult, SimSeries, ZoneInfo, ObservationsJson } from './contract'
 
 /** `?model=` / `&model=`（id 为空则省略）。 */
 export function modelQS(model: string, sep: '?' | '&' = '&'): string {
@@ -81,4 +81,40 @@ export async function runCalibrate(model: string, spec: string, zone: string): P
     modelQS(model) +
     `&_=${Date.now()}`
   return (await fetch(u, { cache: 'no-store' })).json()
+}
+
+// —— 园区视图 ——
+/** 整季仿真轨迹 JSON（{steps, series}）。`p`/`d` = 情景/处理区管理覆盖（参数/恒定驱动）。 */
+export async function fetchSimulate(
+  model: string,
+  p: Record<string, number> = {},
+  d: Record<string, number> = {}
+): Promise<SimSeries> {
+  const enc = (o: Record<string, number>) => Object.entries(o).map(([k, v]) => `${k}:${v}`).join(',')
+  let u = '/api/simulate?_=' + Date.now() + modelQS(model)
+  const ps = enc(p), ds = enc(d)
+  if (ps) u += `&p=${encodeURIComponent(ps)}`
+  if (ds) u += `&d=${encodeURIComponent(ds)}`
+  return (await fetch(u, { cache: 'no-store' })).json()
+}
+export async function fetchZone(model: string, zone: string): Promise<ZoneInfo> {
+  return (await fetch(`/api/zone?zone=${encodeURIComponent(zone)}` + modelQS(model) + `&_=${Date.now()}`, { cache: 'no-store' })).json()
+}
+export async function fetchObservations(model: string, zone: string): Promise<ObservationsJson> {
+  return (await fetch(`/api/observations?zone=${encodeURIComponent(zone)}` + modelQS(model) + `&_=${Date.now()}`, { cache: 'no-store' })).json()
+}
+export async function saveObservations(
+  model: string,
+  zone: string,
+  columns: string[],
+  rows: Record<string, number>[]
+): Promise<{ ok?: boolean; error?: string; rows?: number }> {
+  const u = `/api/observations?zone=${encodeURIComponent(zone)}` + modelQS(model)
+  return (
+    await fetch(u, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ columns, rows }),
+    })
+  ).json()
 }

@@ -9,6 +9,8 @@
   import Optimize from './workspaces/Optimize.svelte'
   import Calibrate from './workspaces/Calibrate.svelte'
   import Gp from './workspaces/Gp.svelte'
+  import Understand from './workspaces/Understand.svelte'
+  import Entry from './workspaces/Entry.svelte'
   import Placeholder from './workspaces/Placeholder.svelte'
 
   const LABELS: Record<string, string> = {
@@ -34,6 +36,10 @@
         <Calibrate />
       {:else if store.workspace === 'gp'}
         <Gp />
+      {:else if store.workspace === 'understand'}
+        <Understand />
+      {:else if store.workspace === 'entry'}
+        <Entry />
       {:else}
         <Placeholder name={store.workspace} label={LABELS[store.workspace] ?? store.workspace} />
       {/if}
