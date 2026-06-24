@@ -6,6 +6,7 @@
   import Nav from './components/Nav.svelte'
   import Structure from './workspaces/Structure.svelte'
   import Simulate from './workspaces/Simulate.svelte'
+  import Gp from './workspaces/Gp.svelte'
   import Placeholder from './workspaces/Placeholder.svelte'
 
   const LABELS: Record<string, string> = {
@@ -25,6 +26,8 @@
         <Structure />
       {:else if store.workspace === 'simulate'}
         <Simulate />
+      {:else if store.workspace === 'gp'}
+        <Gp />
       {:else}
         <Placeholder name={store.workspace} label={LABELS[store.workspace] ?? store.workspace} />
       {/if}

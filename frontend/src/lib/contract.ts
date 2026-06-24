@@ -37,12 +37,81 @@ export interface VarJson {
   init?: number
 }
 
+export interface GpTargetJson {
+  grammar: string
+  inputs: string[]
+  output_bounds?: [number, number]
+  monotone?: Record<string, string>
+  frozen?: boolean
+}
+
 export interface EqJson {
   id: string
   name: string
   output: string
   mathml: string
   refs: string[]
+  /** GP 进化靶点标记（仅 gp_target 方程有）。 */
+  gp_target?: GpTargetJson
+}
+
+// —— GP（/api/evolve[/start|/status]）契约 ——
+export interface GpTraj {
+  DAT: number[]
+  value: number[]
+}
+export interface GpBaseline {
+  formula?: string
+  formula_mathml?: string
+  form?: string | null
+  trajectory?: GpTraj | null
+  error?: number | null
+  complexity?: number | null
+}
+/** 一个候选（单靶 ParetoEntry 或联合的一个 slot 都满足）。 */
+export interface GpCandidate {
+  target?: string
+  output?: string
+  complexity: number
+  error?: number | null
+  formula: string
+  formula_mathml?: string
+  mechanistic_form?: string | null
+  rediscovery?: boolean
+  provenance_suggestion?: string
+  trajectory?: GpTraj | null
+  provenance_stub?: string
+  yaml_fragment?: string
+  consts?: number[]
+}
+/** 前沿一点：单靶=候选本身（扁平字段）；联合=含 slots。 */
+export interface GpFrontEntry extends Partial<GpCandidate> {
+  complexity: number
+  error?: number | null
+  slots?: GpCandidate[]
+}
+export interface EvolveResult {
+  target?: string
+  output?: string
+  grammar?: string
+  mode?: string
+  joint?: boolean
+  targets?: string[]
+  n_obs?: number
+  pareto_front: GpFrontEntry[]
+  baseline?: GpBaseline
+  baselines?: Record<string, GpBaseline>
+  observed?: GpTraj | Record<string, GpTraj>
+  pareto_svg?: string
+}
+export interface EvolveStatus {
+  status?: string
+  gen?: number
+  total_gens?: number
+  convergence_svg?: string
+  result?: EvolveResult
+  error?: string
+  task_id?: string
 }
 
 export interface ModuleJson {
