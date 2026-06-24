@@ -11,9 +11,11 @@
 
 pub mod constraints;
 pub mod grammar;
+pub mod operators;
 
 pub use constraints::{bounds_ok, check_candidate, monotone_ok, units_ok, CandidateCheck};
-pub use grammar::{form_count, sample, GpContext, KNOWN_GRAMMARS};
+pub use grammar::{form_count, sample, Candidate, GpContext, KNOWN_GRAMMARS};
+pub use operators::{complexity, crossover, mutate, perturb_constants};
 
 #[cfg(test)]
 mod tests {
@@ -87,12 +89,12 @@ mod tests {
     #[test]
     fn test_constraints_catch_violations() {
         use crate::ast::Expr;
-        // 单调：2·x 对 x 是升的 → 若期望"降"应判失败
+        // 单调：2·x 对 x 是升的 → 若期望"降"应判失败（consts 空）
         let rising = Expr::mul(Expr::constant(2.0), Expr::var("x"));
-        assert!(monotone_ok(&rising, "x", "increasing", &[], (0.0, 10.0), 11));
-        assert!(!monotone_ok(&rising, "x", "decreasing", &[], (0.0, 10.0), 11));
+        assert!(monotone_ok(&rising, &[], "x", "increasing", &[], (0.0, 10.0), 11));
+        assert!(!monotone_ok(&rising, &[], "x", "decreasing", &[], (0.0, 10.0), 11));
         // 有界：2·x 在 [0,1] 外 → 越界
-        assert!(!bounds_ok(&rising, &["x".to_string()], [0.0, 1.0], 10.0));
+        assert!(!bounds_ok(&rising, &[], &["x".to_string()], [0.0, 1.0], 10.0));
         // 量纲软过滤：两个已知物理量纲相加不兼容 → 拒；与无量纲常数 → 放行
         use crate::units::parse_dimension;
         let mut uenv = HashMap::new();
