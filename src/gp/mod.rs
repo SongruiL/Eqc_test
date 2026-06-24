@@ -11,11 +11,13 @@
 
 pub mod constraints;
 pub mod evolve;
+pub mod fitness;
 pub mod grammar;
 pub mod operators;
 
 pub use constraints::{bounds_ok, check_candidate, eval_candidate, monotone_ok, units_ok, CandidateCheck};
 pub use evolve::{evolve, EvolveConfig, EvolveResult};
+pub use fitness::{context_from_target, evaluate_in_model, patch_model, Observed};
 pub use grammar::{form_count, sample, Candidate, GpContext, KNOWN_GRAMMARS};
 pub use operators::{complexity, crossover, mutate, perturb_constants};
 

@@ -392,6 +392,32 @@ enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+
+    /// 受约束 GP 进化：在某 gp_target 方程的「假设留白」处进化方程结构，见 docs/spec-genetic-programming.md
+    Evolve {
+        /// 模型文件（单个 .eq.yaml；目标方程须带 gp_target）
+        input: PathBuf,
+
+        /// GP spec（YAML：target/output/observed/drivers/steps/evolve 配置）
+        #[arg(short, long)]
+        spec: PathBuf,
+
+        /// 同期天气驱动量 CSV（覆盖 spec 的 drivers:）
+        #[arg(short, long)]
+        drivers: Option<PathBuf>,
+
+        /// 实测数据 CSV（覆盖 spec 的 observed:；首列 DAT + 拟合变量列）
+        #[arg(long)]
+        observed: Option<PathBuf>,
+
+        /// 步数（默认取驱动量 CSV 行数）
+        #[arg(long)]
+        steps: Option<usize>,
+
+        /// 输出结果 JSON（最佳形式 + 常数 + 误差 + 收敛轨迹），缺省只打印
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[cfg(feature = "cli")]
@@ -435,6 +461,9 @@ fn main() {
         }
         Commands::Identify { input, spec, drivers, observables, steps, output } => {
             run_identify(&input, &spec, drivers.as_ref(), observables.as_deref(), steps, output.as_ref())
+        }
+        Commands::Evolve { input, spec, drivers, observed, steps, output } => {
+            run_evolve(&input, &spec, drivers.as_ref(), observed.as_ref(), steps, output.as_ref())
         }
     };
 
@@ -1228,6 +1257,153 @@ fn run_optimize_coupled(
 
 #[cfg(feature = "cli")]
 #[allow(clippy::too_many_arguments)]
+#[cfg(feature = "cli")]
+fn run_evolve(
+    input: &PathBuf,
+    spec: &PathBuf,
+    drivers: Option<&PathBuf>,
+    observed: Option<&PathBuf>,
+    steps: Option<usize>,
+    output: Option<&PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use equation_compiler::gp::{self, EvolveConfig};
+    use equation_compiler::parse_file;
+    use equation_compiler::scenario::{load_drivers_csv, load_observed_csv};
+    use equation_compiler::sim::SimInput;
+    use equation_compiler::units::{parse_dimension, Dimension};
+    use std::collections::HashMap;
+
+    #[derive(serde::Deserialize)]
+    struct EvoCfg {
+        pop: Option<usize>,
+        gens: Option<usize>,
+        seed: Option<u64>,
+        parsimony: Option<f64>,
+        sweep_hi: Option<f64>,
+    }
+    #[derive(serde::Deserialize)]
+    struct GpSpec {
+        target: String,
+        output: String,
+        observed: Option<String>,
+        drivers: Option<String>,
+        steps: Option<usize>,
+        evolve: Option<EvoCfg>,
+    }
+
+    println!("🧬 GP 进化: {}", input.display());
+    let file = parse_file(input)?;
+    let s: GpSpec = serde_yaml::from_str(&std::fs::read_to_string(spec)?)?;
+    let spec_dir = || spec.parent().unwrap_or_else(|| std::path::Path::new("."));
+
+    let (grammar, ctx) = gp::context_from_target(&file, &s.target)
+        .ok_or_else(|| format!("方程 {} 无 gp_target（不是进化靶点）", s.target))?;
+
+    // 驱动量：--drivers 优先，否则 spec drivers
+    let driver_path: PathBuf = match drivers {
+        Some(p) => p.clone(),
+        None => match &s.drivers {
+            Some(d) => spec_dir().join(d),
+            None => return Err("缺驱动量：请加 --drivers，或在 spec 写 drivers:".into()),
+        },
+    };
+    let (rows, driver_map) = load_drivers_csv(&driver_path)?;
+    let steps = steps.or(s.steps).unwrap_or(rows);
+
+    // 实测：--observed 优先，否则 spec observed
+    let obs_path: PathBuf = match observed {
+        Some(p) => p.clone(),
+        None => match &s.observed {
+            Some(o) => spec_dir().join(o),
+            None => return Err("缺实测：请加 --observed，或在 spec 写 observed:".into()),
+        },
+    };
+    let observed_data = load_observed_csv(&obs_path)?;
+
+    let mut sim_input = SimInput::new(steps);
+    sim_input.drivers = driver_map;
+
+    // 量纲环境（GP 量纲软过滤用）
+    let mut unit_env: HashMap<String, Dimension> = HashMap::new();
+    for (n, p) in &file.parameters {
+        if let Some(u) = &p.unit {
+            if let Some(d) = parse_dimension(u) {
+                unit_env.insert(n.clone(), d);
+            }
+        }
+    }
+    for (n, v) in &file.variables {
+        if let Some(u) = &v.unit {
+            if let Some(d) = parse_dimension(u) {
+                unit_env.insert(n.clone(), d);
+            }
+        }
+    }
+
+    let ec = s.evolve.unwrap_or(EvoCfg {
+        pop: None,
+        gens: None,
+        seed: None,
+        parsimony: None,
+        sweep_hi: None,
+    });
+    let cfg = EvolveConfig {
+        pop: ec.pop.unwrap_or(60),
+        gens: ec.gens.unwrap_or(40),
+        seed: ec.seed.unwrap_or(1),
+        parsimony: ec.parsimony.unwrap_or(0.0),
+        sweep_hi: ec.sweep_hi.unwrap_or(50.0),
+        ..Default::default()
+    };
+
+    println!(
+        "   靶点 {} [{}] | 语法 {} | 输入 {:?} | 驱动 {} ({} 步) | 实测 {} 点 | 种群 {}×{} 代",
+        s.target,
+        s.output,
+        grammar,
+        ctx.inputs,
+        driver_path.display(),
+        steps,
+        observed_data.get(&s.output).map(|v| v.len()).unwrap_or(0),
+        cfg.pop,
+        cfg.gens,
+    );
+
+    let target = s.target.clone();
+    let outv = s.output.clone();
+    let res = gp::evolve(&grammar, &ctx, &unit_env, &cfg, |cand| {
+        gp::evaluate_in_model(&file, &target, &outv, cand, &sim_input, &observed_data)
+    });
+
+    // 渲染最佳形式：把 __c{i} 代回常数值
+    let mut shown = res.best.expr.clone();
+    for (i, v) in res.best.consts.iter().enumerate() {
+        shown = shown.substitute(
+            &gp::Candidate::const_name(i),
+            &equation_compiler::ast::Expr::constant(*v),
+        );
+    }
+    let formula = shown.to_python("");
+
+    println!("\n✅ 进化完成");
+    println!("   最佳形式：{}", formula);
+    println!("   可调常数：{:?}", res.best.consts);
+    println!("   拟合误差(rmse {}): {:.6}", s.output, res.best_error);
+    println!("   复杂度(节点)：{}", gp::complexity(&res.best.expr));
+
+    if let Some(out) = output {
+        let j = serde_json::json!({
+            "target": s.target, "output": s.output, "grammar": grammar,
+            "best_error": res.best_error, "best_cost": res.best_cost,
+            "consts": res.best.consts, "formula": formula,
+            "complexity": gp::complexity(&res.best.expr), "history": res.history,
+        });
+        std::fs::write(out, serde_json::to_string_pretty(&j)?)?;
+        println!("   结果写入 {}", out.display());
+    }
+    Ok(())
+}
+
 fn run_calibrate(
     input: &PathBuf,
     spec: &PathBuf,
