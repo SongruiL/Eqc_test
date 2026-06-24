@@ -187,6 +187,20 @@ export interface ObservationsJson {
   error?: string
 }
 
+// —— 模型编辑器（/api/source、/api/validate）契约 ——
+export interface SourceJson {
+  source?: string
+  path?: string
+  editable?: boolean
+  error?: string
+}
+export interface ValidateJson {
+  ok?: boolean
+  errors?: string[]
+  report_html?: string
+  error?: string
+}
+
 export interface Calibration {
   calibrated?: boolean
   note?: string

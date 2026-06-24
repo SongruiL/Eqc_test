@@ -1,5 +1,8 @@
 // 对 EQC `/api/*` 契约的薄封装。前端只消费，不重实现逻辑（EQC 持有事实）。
-import type { ModelsJson, ModelJson, EvolveStatus, OptResult, SimSeries, ZoneInfo, ObservationsJson } from './contract'
+import type {
+  ModelsJson, ModelJson, EvolveStatus, OptResult, SimSeries, ZoneInfo, ObservationsJson,
+  SourceJson, ValidateJson,
+} from './contract'
 
 /** `?model=` / `&model=`（id 为空则省略）。 */
 export function modelQS(model: string, sep: '?' | '&' = '&'): string {
@@ -119,6 +122,21 @@ export async function saveZone(
 export async function fetchObservations(model: string, zone: string): Promise<ObservationsJson> {
   return (await fetch(`/api/observations?zone=${encodeURIComponent(zone)}` + modelQS(model) + `&_=${Date.now()}`, { cache: 'no-store' })).json()
 }
+// —— 模型编辑器 ——
+export async function fetchSource(model: string): Promise<SourceJson> {
+  return (await fetch(`/api/source?_=${Date.now()}` + modelQS(model), { cache: 'no-store' })).json()
+}
+/** 校验编辑后的 YAML 文本 → {ok, errors, report_html?}（不写盘）。layout/level 让预览与结构工作区一致。 */
+export async function validateSource(
+  model: string,
+  text: string,
+  layout = 'forrester',
+  level = 'variable'
+): Promise<ValidateJson> {
+  const u = `/api/validate?layout=${encodeURIComponent(layout)}&level=${encodeURIComponent(level)}` + modelQS(model)
+  return (await fetch(u, { method: 'POST', headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: text })).json()
+}
+
 export async function saveObservations(
   model: string,
   zone: string,
