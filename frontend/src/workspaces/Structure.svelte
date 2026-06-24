@@ -1,6 +1,7 @@
 <script lang="ts">
   // 结构工作区：EQC 自生成报告（Forrester 图 + 二维公式）嵌 iframe + 粒度/布局/缩放 + 节点交互。
   // 报告本身零 JS（只带 data-* 属性）；交互逻辑在此，伸进同源 iframe 挂事件（移植 v1）。
+  import { onMount, onDestroy } from 'svelte'
   import { store } from '../lib/store.svelte'
   import { reportUrl } from '../lib/api'
   import type { VarJson, ParamJson, EqJson } from '../lib/contract'
@@ -9,8 +10,15 @@
   let level = $state('variable')
   let zoom = $state(1)
   let iframeEl: HTMLIFrameElement
-  let tipEl: HTMLDivElement
+  let tip: HTMLDivElement | undefined // 悬停注释卡：命令式挂到 document.body（v1 做法，避免定位/绑定问题）
   const src = $derived(reportUrl(store.model, layout, level))
+
+  onMount(() => {
+    tip = document.createElement('div')
+    tip.className = 'eqc-nodetip'
+    document.body.appendChild(tip)
+  })
+  onDestroy(() => tip?.remove())
 
   const levels = [
     { id: 'variable', label: '变量' }, { id: 'equation', label: '方程' }, { id: 'module', label: '模块' },
@@ -84,16 +92,17 @@
     return h
   }
   function showTip(name: string, x: number, y: number) {
-    tipEl.innerHTML = tipHtml(name)
-    tipEl.style.display = 'block'
-    const tw = tipEl.offsetWidth, th = tipEl.offsetHeight
+    if (!tip) return
+    tip.innerHTML = tipHtml(name)
+    tip.style.display = 'block'
+    const tw = tip.offsetWidth, th = tip.offsetHeight
     let px = x + 14, py = y + 14
     if (px + tw > window.innerWidth - 8) px = x - tw - 14
     if (py + th > window.innerHeight - 8) py = window.innerHeight - th - 8
-    tipEl.style.left = Math.max(8, px) + 'px'
-    tipEl.style.top = Math.max(8, py) + 'px'
+    tip.style.left = Math.max(8, px) + 'px'
+    tip.style.top = Math.max(8, py) + 'px'
   }
-  const hideTip = () => { if (tipEl) tipEl.style.display = 'none' }
+  const hideTip = () => { if (tip) tip.style.display = 'none' }
 
   function setHl(name: string, on: boolean) {
     const d = rdoc(); if (!d) return
@@ -226,8 +235,6 @@
   <div class="frame"><iframe bind:this={iframeEl} title="结构图" {src} onload={onLoad}></iframe></div>
 </div>
 
-<div class="nodeTip" bind:this={tipEl}></div>
-
 <style>
   .ws { display: flex; flex-direction: column; height: 100%; }
   .ws-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
@@ -239,16 +246,18 @@
   .tip-note { font-size: 11px; color: var(--sub); margin-left: auto; }
   .frame { flex: 1; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
   iframe { width: 100%; height: 100%; border: 0; }
-  .nodeTip {
-    position: fixed; z-index: 1000; display: none; pointer-events: none; max-width: 380px;
-    background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.14);
-    padding: 10px 12px; font-size: 13px; color: var(--ink);
+  /* 悬停注释卡挂在 document.body（组件外）→ 全局样式 */
+  :global(.eqc-nodetip) {
+    position: fixed; z-index: 3000; display: none; pointer-events: none; max-width: 380px;
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.14);
+    padding: 10px 12px; font-size: 13px; color: #1f2933;
   }
-  .nodeTip :global(.t-name) { font-weight: 700; font-size: 14px; }
-  .nodeTip :global(.t-id) { color: var(--sub); font-size: 11px; margin-top: 1px; font-family: ui-monospace, Consolas, monospace; }
-  .nodeTip :global(.t-sub) { color: var(--sub); font-size: 12px; margin-top: 2px; }
-  .nodeTip :global(.t-desc) { margin-top: 6px; line-height: 1.45; }
-  .nodeTip :global(.t-eq) { margin-top: 8px; overflow-x: auto; }
-  .nodeTip :global(.t-cite) { margin-top: 6px; font-size: 12px; color: #1d4ed8; }
-  .nodeTip :global(.t-cite.t-none) { color: var(--sub); }
+  :global(.eqc-nodetip .t-name) { font-weight: 700; font-size: 14px; }
+  :global(.eqc-nodetip .t-id) { color: #6b7280; font-size: 11px; margin-top: 1px; font-family: ui-monospace, Consolas, monospace; }
+  :global(.eqc-nodetip .t-sub) { color: #6b7280; font-size: 12px; margin-top: 2px; }
+  :global(.eqc-nodetip .t-desc) { margin-top: 6px; line-height: 1.45; }
+  :global(.eqc-nodetip .t-eq) { margin-top: 8px; overflow-x: auto; }
+  :global(.eqc-nodetip .t-eq math) { font-size: 1.15em; }
+  :global(.eqc-nodetip .t-cite) { margin-top: 6px; font-size: 12px; color: #1d4ed8; }
+  :global(.eqc-nodetip .t-cite.t-none) { color: #6b7280; }
 </style>
