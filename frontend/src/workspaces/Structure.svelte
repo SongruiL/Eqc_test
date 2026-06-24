@@ -3,15 +3,24 @@
   // 报告本身零 JS（只带 data-* 属性）；交互逻辑在此，伸进同源 iframe 挂事件（移植 v1）。
   import { onMount, onDestroy } from 'svelte'
   import { store } from '../lib/store.svelte'
-  import { reportUrl } from '../lib/api'
-  import type { VarJson, ParamJson, EqJson } from '../lib/contract'
+  import { reportUrl, fetchModel } from '../lib/api'
+  import type { VarJson, ParamJson, EqJson, ModelJson } from '../lib/contract'
 
   let layout = $state('forrester')
   let level = $state('variable')
   let zoom = $state(1)
   let iframeEl: HTMLIFrameElement
   let tip: HTMLDivElement | undefined // 悬停注释卡：命令式挂到 document.body（v1 做法，避免定位/绑定问题）
+  // 本组件自持一份契约（hover 注释用）：不依赖 store.modelJson 的时机/反应式作用域，随模型变化重取。
+  let contract = $state<ModelJson | null>(store.modelJson)
+  let lastModel = ''
   const src = $derived(reportUrl(store.model, layout, level))
+
+  $effect(() => {
+    if (store.model === lastModel) return
+    lastModel = store.model
+    fetchModel(store.model).then((j) => { contract = j }).catch(() => {})
+  })
 
   onMount(() => {
     tip = document.createElement('div')
@@ -54,12 +63,12 @@
   }
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   function findVar(name: string): { kind: 'var'; v: VarJson } | { kind: 'param'; p: ParamJson } | null {
-    const m = store.modelJson?.modules?.[0]; if (!m) return null
+    const m = contract?.modules?.[0]; if (!m) return null
     const v = m.variables.find((x) => x.name === name); if (v) return { kind: 'var', v }
     const p = m.parameters.find((x) => x.name === name); if (p) return { kind: 'param', p }
     return null
   }
-  const findEq = (name: string): EqJson | undefined => store.modelJson?.modules?.[0]?.equations.find((e) => e.output === name)
+  const findEq = (name: string): EqJson | undefined => contract?.modules?.[0]?.equations.find((e) => e.output === name)
   function dispName(name: string) {
     const r = findVar(name); if (!r) return name
     return (r.kind === 'var' ? r.v.display_name : r.p.display_name || r.p.name_cn) || name
