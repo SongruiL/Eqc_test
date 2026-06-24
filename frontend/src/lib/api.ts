@@ -1,5 +1,5 @@
 // 对 EQC `/api/*` 契约的薄封装。前端只消费，不重实现逻辑（EQC 持有事实）。
-import type { ModelsJson, ModelJson, EvolveStatus } from './contract'
+import type { ModelsJson, ModelJson, EvolveStatus, OptResult } from './contract'
 
 /** `?model=` / `&model=`（id 为空则省略）。 */
 export function modelQS(model: string, sep: '?' | '&' = '&'): string {
@@ -67,4 +67,17 @@ export async function evolveStatus(id: string): Promise<EvolveStatus> {
   return (
     await fetch(`/api/evolve/status?id=${encodeURIComponent(id)}&_=${Date.now()}`, { cache: 'no-store' })
   ).json()
+}
+
+// —— 优化 / 标定（同步端点：填 spec → 跑 → 结果+收敛曲线）——
+export async function runOptimize(model: string, spec: string): Promise<OptResult> {
+  const u = `/api/optimize?spec=${encodeURIComponent(spec)}` + modelQS(model) + `&_=${Date.now()}`
+  return (await fetch(u, { cache: 'no-store' })).json()
+}
+export async function runCalibrate(model: string, spec: string, zone: string): Promise<OptResult> {
+  const u =
+    `/api/calibrate?spec=${encodeURIComponent(spec)}&zone=${encodeURIComponent(zone)}` +
+    modelQS(model) +
+    `&_=${Date.now()}`
+  return (await fetch(u, { cache: 'no-store' })).json()
 }

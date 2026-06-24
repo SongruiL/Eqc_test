@@ -114,6 +114,48 @@ export interface EvolveStatus {
   task_id?: string
 }
 
+// —— 优化 / 标定（/api/optimize、/api/calibrate）契约 ——
+export interface Knob {
+  var: string
+  value: number
+  unit?: string
+  kind?: string
+  bounds?: [number, number]
+}
+export interface Constraint {
+  expr: string
+  value: number
+  max: number
+  satisfied: boolean
+  violation?: number
+}
+export interface ParetoPoint {
+  objectives: number[]
+  knobs: Knob[]
+  feasible?: boolean
+}
+/** /api/optimize 与 /api/calibrate 共用（标定=旋钮为参数、目标为误差）。 */
+export interface OptResult {
+  error?: string
+  multi_objective?: boolean
+  objective?: { sense: string; expr: string }
+  objective_value?: number | null
+  feasible?: boolean
+  best_knobs?: Knob[]
+  constraints?: Constraint[]
+  convergence_svg?: string
+  optimizer?: { pop: number; iters: number; seed: number }
+  // 多目标
+  objectives?: { expr: string; sense: string }[]
+  front?: ParetoPoint[]
+  pareto_svg?: string
+  // 标定附加
+  zone?: string
+  n_obs?: number
+  observed_path?: string
+  calibrated_at?: number
+}
+
 export interface ModuleJson {
   id: string
   model: string

@@ -6,6 +6,8 @@
   import Nav from './components/Nav.svelte'
   import Structure from './workspaces/Structure.svelte'
   import Simulate from './workspaces/Simulate.svelte'
+  import Optimize from './workspaces/Optimize.svelte'
+  import Calibrate from './workspaces/Calibrate.svelte'
   import Gp from './workspaces/Gp.svelte'
   import Placeholder from './workspaces/Placeholder.svelte'
 
@@ -26,6 +28,10 @@
         <Structure />
       {:else if store.workspace === 'simulate'}
         <Simulate />
+      {:else if store.workspace === 'optimize'}
+        <Optimize />
+      {:else if store.workspace === 'calibrate'}
+        <Calibrate />
       {:else if store.workspace === 'gp'}
         <Gp />
       {:else}
