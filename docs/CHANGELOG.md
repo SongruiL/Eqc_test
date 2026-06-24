@@ -184,7 +184,7 @@
 - 远程：github.com/SongruiL/Eqc_test，SSH 推送。
 - 文档：见 `docs/USAGE.md`（架构与模块地图）、`docs/spec-*.md`（设计规格）。
 
-### 受约束遗传编程（GP）arc（v0.8 / v0.9）
+### 受约束遗传编程（GP）arc（v0.8 / v0.9 + 联合进化）
 核心愿景落地：在机理骨架的「假设留白（🟠）」处进化方程结构。设计 `docs/spec-genetic-programming.md`；进化-冻结边界来自理论溯源逐方程分类（🟢/🔵 冻结、🟠 进化）。新增 `src/gp/`：
 - **G0** `gp_target` 进化靶点元数据（`Equation.gp_target`，additive 契约字段；溯源标签 → 机读边界；蓝莓 3 靶回填）。
 - **G1** 5 套受约束语法（monotone_gate / saturating_sink / allocation_fraction / temperature_response / growth_curve，按构造保证单调/有界）+ 量纲软过滤 + 数值先验检查。
@@ -192,8 +192,11 @@
 - **G3** GP 主循环（co-evolve，泛型于误差闭包）+ 模型级适应度（patch 候选 → 仿真 → rmse vs 观测）+ **`eqc evolve` CLI** + 合成复原验收。
 - **G4** 多目标 Pareto（精度 vs 复杂度，NSGA-II 式非支配 + 拥挤截断）+ memetic（内层 DE 标定候选常数向量）。
 - **G5** 进化式回流溯源：识别 GP 选了哪种机理形式、判 rediscovery（撞现有形式 = 机理验证 → 升 🟠→🟢/🔵）、自动生成溯源条目草稿。
-- 全程合成数据验证（端到端：从观测复原已知形式，结构 + 常数近乎精确）；复用 `optimize` 评估核/DE、`sim`、`units`、S-expr = 基因组。**真进化解锁 = 云南 2026-07 田间数据**。
-- 剩：多槽位联合进化（机械编排）、Studio GP 面板（前端）、真进化（等田间数据）。
+- **多槽位联合进化**（`src/gp/joint.rs`）：基因组 = 一组候选（每槽一棵树）；`patch_multi`（各槽 patch 进对应方程，常数命名空间化 `__s{k}_c{i}` 防撞）→ `evaluate_multi`（**一次仿真**对所有观测变量算误差）→ 捕捉槽位间耦合（单槽独立做不到）。`evolve_joint`（单目标）。
+- **Pareto-joint**（`evolve_joint_pareto`）：联合进化 + (总精度, 总复杂度) 前沿——整模型尺度的"精度 vs 简洁"权衡，每点 = 一套形式。`pareto.rs` 抽出按目标值的 NSGA-II 助手（单槽 + 联合共用）；前沿去重。
+- 全程合成数据验证（端到端：从观测复原已知形式，结构 + 常数近乎精确；联合：两槽同时复原）；复用 `optimize` 评估核/DE、`sim`、`units`、S-expr = 基因组。**真进化解锁 = 云南 2026-07 田间数据**。
+- **前端 GP 面板**（`docs/spec-gp-studio.md` 已设计，待实现）：human-in-the-loop——Pareto 前沿散点 → 点开看公式+拟合+rediscovery 徽章 → 对比现有形式 → 采纳生成溯源草稿；`/api/evolve` 端点 + 复用已有积木（pareto/convergence 图、MathML、园区录入网格、轨迹叠加）。
+- 剩：Studio GP 面板实现（spec 已写）、真进化（等田间数据）。
 
 ## 下一步（未做）/ 当前不足
 
@@ -204,7 +207,7 @@
   - 原则：EQC 始终是唯一权威、前端只显示其 SVG/MathML/JSON 产物，契约只增不改 → 随 EQC 升级低风险、易排查。下一步：点节点高亮、浏览器内编辑、LLM 问答、GP 结构 diff。可后续包成 Tauri 桌面应用或 VS Code 扩展。
 - **codegen 不生成积分循环**：`eqc build` 仍按静态网络生成代码，状态量（`state`）没有逐步更新代码——动态模型目前只能用 `eqc simulate`（树遍历）跑，不能导出独立可运行的 Python/Rust 仿真器。
 - cohort 在图上显示为展开的标量（`DF__1/2/3`），未按家族分组显示。
-- **GP 约束进化层 — 核心 G0-G5 已完成**（见上「受约束遗传编程 arc」）。剩：多槽位联合进化（机械编排，逐 gp_target 跑 evolve）、Studio GP 面板（前端展示 Pareto 前沿 + 公式 + 采纳）、**真进化（等云南 2026-07 田间数据）**。
+- **GP 约束进化层 — G0-G5 + 联合进化 + Pareto-joint 已完成**（见上「受约束遗传编程 arc」）。剩：**Studio GP 面板实现**（spec `docs/spec-gp-studio.md` 已写：前端展示 Pareto 前沿 + 公式 + rediscovery 徽章 + 采纳）、**真进化（等云南 2026-07 田间数据）**。
 - 报告增强（按模块分图、点节点高亮、显示单位/出处）；codegen 死分支宏重构；耦合的时间尺度聚合（逐时 vs 日均）。
 
 **草莓模型层**（详见 `../strawberry_model/strawberry_v1.eq.yaml` 顶部「模型短板」注释）
