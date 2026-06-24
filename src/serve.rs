@@ -1299,39 +1299,296 @@ fn run_evolve_job(job: &EvolveJob, progress: &mut dyn FnMut(usize, f64)) -> Stri
     .to_string()
 }
 
-/// `/api/evolve/start?...&memetic=`：异步起一个 GP 进化后台任务，立即返回 `{task_id}`。
-/// setup（prepare_evolve）同步完成（失败立即返错）；重活 `run_evolve_job` 在后台线程跑，
-/// 每代回调更新任务进度/收敛史。**异步路径放开 memetic + 大 pop/gens**（同步端点会超时）。
-fn run_evolve_start(ctx: &Ctx, m: &ModelEntry, query: &str) -> Result<String, String> {
-    let job = prepare_evolve(m, query)?;
+/// 多槽位联合进化任务的输入（S5；同步 setup 产物，Send）。每槽对齐 outputs/eqnames/baseline_forms。
+struct JointJob {
+    file: EquationFile,
+    slots: Vec<crate::gp::Slot>,
+    outputs: Vec<String>,
+    eqnames: Vec<String>,
+    baseline_forms: Vec<Option<String>>,
+    unit_env: HashMap<String, crate::units::Dimension>,
+    sim_input: SimInput,
+    observed_data: crate::gp::Observed,
+    jcfg: crate::gp::JointConfig,
+}
+
+/// 同步 setup：`targets=` 子集（"all"/空→全部 gp_target）→ 多槽位 `JointJob`。
+/// observed **过滤到各槽输出**（联合适应度=各槽输出平均 rmse）；缺任一槽输出观测 → 报错。
+fn prepare_evolve_joint(m: &ModelEntry, query: &str) -> Result<JointJob, String> {
+    use crate::gp;
+    use crate::units::{parse_dimension, Dimension};
+
+    if let Some(e) = coupled_guard(m) {
+        return Err(e);
+    }
+    let files = load_files(&m.path)?;
+    let file = files.first().ok_or_else(|| "无模型".to_string())?.clone();
+
+    // targets=A,B（"all"/空 → 全部 gp_target 槽位）
+    let only: Option<Vec<String>> = query_get(query, "targets").and_then(|s| {
+        let ids: Vec<String> = s
+            .split(',')
+            .map(|x| x.trim().to_string())
+            .filter(|x| !x.is_empty() && x != "all")
+            .collect();
+        (!ids.is_empty()).then_some(ids)
+    });
+    let slots = gp::slots_from_model(&file, only.as_deref());
+    if slots.is_empty() {
+        return Err("没有可联合进化的 gp_target 槽位（检查 targets= 与模型标注）".into());
+    }
+
+    // 逐槽：输出变量 / 方程名 / baseline_form（B2 自动识别）。
+    let mut outputs = Vec::new();
+    let mut eqnames = Vec::new();
+    let mut baseline_forms = Vec::new();
+    for slot in &slots {
+        let eq = file
+            .equations
+            .iter()
+            .find(|e| e.id == slot.target_id)
+            .ok_or_else(|| format!("找不到方程 {}", slot.target_id))?;
+        outputs.push(eq.output.clone());
+        eqnames.push(eq.name.clone());
+        baseline_forms.push(
+            gp::identify_form_of_expr(&eq.expression, &slot.grammar, &slot.ctx)
+                .map(|i| gp::form_name(&slot.grammar, i).to_string()),
+        );
+    }
+
+    // 驱动量 + steps。
+    let (steps_default, driver_map) = m
+        .drivers
+        .as_ref()
+        .map(|(r, map)| (*r, map.clone()))
+        .ok_or_else(|| "该模型未预载驱动量——GP 无法仿真".to_string())?;
+    let steps = query_usize(query, "steps").unwrap_or(steps_default);
+
+    // 观测：本处理区 CSV 优先，否则 ?observed= 兜底。
+    let zone = parse_zone(query);
+    let zone_csv = m.data_dir.join(format!("{zone}.csv"));
+    let obs_path: PathBuf = if zone_csv.exists() {
+        zone_csv
+    } else if let Some(o) = query_get(query, "observed") {
+        let p = PathBuf::from(&o);
+        if p.is_absolute() {
+            p
+        } else {
+            let model_dir = if m.path.is_dir() {
+                m.path.clone()
+            } else {
+                m.path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."))
+            };
+            model_dir.join(&o)
+        }
+    } else {
+        return Err(format!("处理区 '{zone}' 暂无实测数据，且未提供 ?observed="));
+    };
+    let all_observed = crate::scenario::load_observed_csv(&obs_path).map_err(|e| e.to_string())?;
+    // 过滤到各槽输出（联合适应度只看这些）；缺任一 → 报错列出。
+    let mut observed_data: crate::gp::Observed = HashMap::new();
+    let mut missing = Vec::new();
+    for output in &outputs {
+        match all_observed.get(output) {
+            Some(v) if !v.is_empty() => {
+                observed_data.insert(output.clone(), v.clone());
+            }
+            _ => missing.push(output.clone()),
+        }
+    }
+    if !missing.is_empty() {
+        return Err(format!(
+            "以下靶点输出在处理区 '{zone}' 无观测：{}——请先在园区视图录入各输出变量",
+            missing.join("、")
+        ));
+    }
+
+    let mut sim_input = SimInput::new(steps);
+    sim_input.drivers = driver_map;
+    if let Some(p) = &m.params {
+        sim_input.param_overrides = p.clone();
+    }
+
+    let mut unit_env: HashMap<String, Dimension> = HashMap::new();
+    for (n, p) in &file.parameters {
+        if let Some(u) = &p.unit {
+            if let Some(d) = parse_dimension(u) {
+                unit_env.insert(n.clone(), d);
+            }
+        }
+    }
+    for (n, v) in &file.variables {
+        if let Some(u) = &v.unit {
+            if let Some(d) = parse_dimension(u) {
+                unit_env.insert(n.clone(), d);
+            }
+        }
+    }
+
+    let pop = query_usize(query, "pop").unwrap_or(60);
+    let gens = query_usize(query, "gens").unwrap_or(40);
+    let seed = query_usize(query, "seed").map(|s| s as u64).unwrap_or(1);
+    let sweep_hi = query_f64(query, "sweep_hi").unwrap_or(50.0);
+    let archive_cap = query_usize(query, "archive_cap").unwrap_or(24);
+    let jcfg = gp::JointConfig { pop, gens, seed, sweep_hi, archive_cap, ..Default::default() };
+
+    Ok(JointJob { file, slots, outputs, eqnames, baseline_forms, unit_env, sim_input, observed_data, jcfg })
+}
+
+/// 跑多槽位联合 Pareto（`evolve_joint_pareto_cb`）+ 拼结果 JSON。每前沿点=整模型一套配置：
+/// `patch_multi` 全槽→**一次仿真**→逐槽抽 trajectory/rmse + form_report(rediscovery)/stub/yaml_fragment。
+fn run_evolve_joint_job(job: &JointJob, progress: &mut dyn FnMut(usize, f64)) -> String {
+    use crate::gp;
+    let file = &job.file;
+    let slots = &job.slots;
+    let sim_input = &job.sim_input;
+    let observed_data = &job.observed_data;
+    let obs_of = |output: &str| -> &[(usize, f64)] {
+        observed_data.get(output).map(|v| v.as_slice()).unwrap_or(&[])
+    };
+
+    let front = gp::evolve_joint_pareto_cb(
+        slots,
+        &job.unit_env,
+        &job.jcfg,
+        |genome| gp::evaluate_multi(file, slots, genome, sim_input, observed_data),
+        progress,
+    );
+
+    // baselines（共享，未 patch 原模型跑一次）：逐槽现有形式 formula/form/trajectory/rmse/复杂度。
+    let base_out = simulate(file, sim_input).ok();
+    let mut baselines = serde_json::Map::new();
+    let mut observed_map = serde_json::Map::new();
+    for (k, slot) in slots.iter().enumerate() {
+        let output = job.outputs[k].as_str();
+        let eq = file.equations.iter().find(|e| e.id == slot.target_id);
+        let formula = eq.map(|e| e.expression.to_python("")).unwrap_or_default();
+        let formula_mathml = eq.map(|e| crate::report::expr_mathml(&e.expression)).unwrap_or_default();
+        let complexity = eq.map(|e| gp::complexity(&e.expression));
+        let (traj, error) = match &base_out {
+            Some(o) => (series_to_traj(o, output), rmse_on_obs(o.series(output), obs_of(output))),
+            None => (serde_json::Value::Null, None),
+        };
+        baselines.insert(
+            slot.target_id.clone(),
+            serde_json::json!({
+                "formula": formula, "formula_mathml": formula_mathml,
+                "form": job.baseline_forms[k], "trajectory": traj,
+                "error": error, "complexity": complexity,
+            }),
+        );
+        observed_map.insert(output.to_string(), obs_to_traj(obs_of(output)));
+    }
+
+    // 每前沿点（整模型一套配置）。
+    let front_json: Vec<serde_json::Value> = front
+        .iter()
+        .map(|entry| {
+            let out = gp::patch_multi(file, slots, &entry.genome).and_then(|m| simulate(&m, sim_input).ok());
+            let slots_json: Vec<serde_json::Value> = slots
+                .iter()
+                .enumerate()
+                .map(|(k, slot)| {
+                    let cand = &entry.genome[k];
+                    let output = job.outputs[k].as_str();
+                    let cplx = gp::complexity(&cand.expr);
+                    let (traj, error) = match &out {
+                        Some(o) => (series_to_traj(o, output), rmse_on_obs(o.series(output), obs_of(output))),
+                        None => (serde_json::Value::Null, None),
+                    };
+                    let report = gp::form_report(
+                        cand, error.unwrap_or(0.0), cplx, &slot.grammar, &slot.ctx,
+                        job.baseline_forms[k].as_deref(),
+                    );
+                    let stub = gp::provenance_stub(&report, &slot.target_id, output, &slot.grammar);
+                    let yaml_fragment = candidate_yaml_fragment(&slot.target_id, &job.eqnames[k], output, cand);
+                    serde_json::json!({
+                        "target": slot.target_id, "output": output,
+                        "formula": gp::render_formula(cand),
+                        "formula_mathml": crate::report::expr_mathml(&candidate_expr(cand)),
+                        "mechanistic_form": report.form,
+                        "rediscovery": report.rediscovery,
+                        "provenance_suggestion": report.suggestion,
+                        "error": error, "complexity": cplx,
+                        "trajectory": traj,
+                        "provenance_stub": stub, "yaml_fragment": yaml_fragment,
+                    })
+                })
+                .collect();
+            serde_json::json!({ "complexity": entry.complexity, "error": entry.error, "slots": slots_json })
+        })
+        .collect();
+
+    let pts: Vec<(f64, f64)> = front.iter().map(|e| (e.complexity as f64, e.error)).collect();
+    let pareto_svg = crate::chart::pareto_chart_svg(&pts, "总复杂度(节点)", "平均误差(rmse)", 700.0, 380.0);
+
+    serde_json::json!({
+        "mode": "joint-pareto",
+        "joint": true,
+        "targets": slots.iter().map(|s| s.target_id.clone()).collect::<Vec<_>>(),
+        "n_obs": observed_data.values().map(|v| v.len()).sum::<usize>(),
+        "pareto_front": front_json,
+        "baselines": baselines,
+        "observed": observed_map,
+        "pareto_svg": pareto_svg,
+    })
+    .to_string()
+}
+
+/// 在任务表登记一个新任务，返回 task_id。
+fn new_gp_task(ctx: &Ctx, total_gens: usize) -> String {
     let id = format!("gp{}", ctx.task_seq.fetch_add(1, Ordering::SeqCst));
-    let total = job.pcfg.gens.max(1);
     if let Ok(mut t) = ctx.tasks.lock() {
         t.insert(
             id.clone(),
-            GpTask { status: "running", gen: 0, total_gens: total, history: vec![], result: None, error: None },
+            GpTask { status: "running", gen: 0, total_gens, history: vec![], result: None, error: None },
         );
     }
-    let tasks = Arc::clone(&ctx.tasks);
-    let idc = id.clone();
+    id
+}
+
+/// 后台线程跑完写回结果 + 标 done。`run` 是 `FnOnce(&mut progress) -> String`（单/多槽通用）。
+fn spawn_gp_task<R>(tasks: Arc<Mutex<HashMap<String, GpTask>>>, id: String, run: R)
+where
+    R: FnOnce(&mut dyn FnMut(usize, f64)) -> String + Send + 'static,
+{
     std::thread::spawn(move || {
-        // 进度回调：每代更新该任务的当前代号 + 收敛史（轮询时画收敛曲线）。
-        let json = run_evolve_job(&job, &mut |gen, best| {
-            if let Ok(mut t) = tasks.lock() {
-                if let Some(task) = t.get_mut(&idc) {
+        let t1 = Arc::clone(&tasks);
+        let id1 = id.clone();
+        let json = run(&mut move |gen, best| {
+            if let Ok(mut t) = t1.lock() {
+                if let Some(task) = t.get_mut(&id1) {
                     task.gen = gen;
                     task.history.push(best);
                 }
             }
         });
         if let Ok(mut t) = tasks.lock() {
-            if let Some(task) = t.get_mut(&idc) {
+            if let Some(task) = t.get_mut(&id) {
                 task.status = "done";
                 task.result = Some(json);
             }
         }
     });
-    Ok(format!("{{\"task_id\":\"{id}\"}}"))
+}
+
+/// `/api/evolve/start?...&memetic=` / `&targets=`：异步起一个 GP 进化后台任务，立即返回 `{task_id}`。
+/// setup（prepare_evolve[_joint]）同步完成（失败立即返错）；重活在后台线程跑、每代回调更新进度/收敛史。
+/// 有 `targets=` → **多槽位联合进化**（S5）；否则单靶。异步路径放开 memetic + 大 pop/gens。
+fn run_evolve_start(ctx: &Ctx, m: &ModelEntry, query: &str) -> Result<String, String> {
+    if query_get(query, "targets").is_some() {
+        // —— 多槽位联合进化（S5）——
+        let job = prepare_evolve_joint(m, query)?;
+        let id = new_gp_task(ctx, job.jcfg.gens.max(1));
+        spawn_gp_task(Arc::clone(&ctx.tasks), id.clone(), move |p| run_evolve_joint_job(&job, p));
+        Ok(format!("{{\"task_id\":\"{id}\"}}"))
+    } else {
+        // —— 单靶进化 ——
+        let job = prepare_evolve(m, query)?;
+        let id = new_gp_task(ctx, job.pcfg.gens.max(1));
+        spawn_gp_task(Arc::clone(&ctx.tasks), id.clone(), move |p| run_evolve_job(&job, p));
+        Ok(format!("{{\"task_id\":\"{id}\"}}"))
+    }
 }
 
 /// `/api/evolve/status?id=<task_id>`：返回任务状态 + 进度（当前代/总代）+ 实时收敛曲线 SVG；
@@ -2080,14 +2337,19 @@ mod tests {
         assert!(STUDIO_HTML.contains("gpFitSvg"));
         // S3 对比 + 采纳：采纳区 + 溯源草稿/新方程文本复制下载
         assert!(STUDIO_HTML.contains("renderAdopt"));
-        assert!(STUDIO_HTML.contains("gpAdoptBtn"));
+        assert!(STUDIO_HTML.contains("gp-adopt-btn"));
         assert!(STUDIO_HTML.contains("gpDownload"));
         // S4 异步：start/status 端点 + 轮询 + memetic 勾选 + 实时收敛曲线
-        assert!(STUDIO_HTML.contains("/api/evolve/start?target="));
+        assert!(STUDIO_HTML.contains("/api/evolve/start?"));
         assert!(STUDIO_HTML.contains("/api/evolve/status?id="));
         assert!(STUDIO_HTML.contains("pollEvolve"));
         assert!(STUDIO_HTML.contains("gpMemetic"));
         assert!(STUDIO_HTML.contains("gpConv"));
+        // S5 多槽位：靶点多选 + 联合 targets= + 候选块逐槽渲染
+        assert!(STUDIO_HTML.contains("toggleGpTarget"));
+        assert!(STUDIO_HTML.contains("gpSelectAll"));
+        assert!(STUDIO_HTML.contains("targets="));
+        assert!(STUDIO_HTML.contains("candidateBlockHtml"));
         // 园区/简明视图：视图切换 + 录入网格 + 实测数据端点 + 标定
         assert!(STUDIO_HTML.contains("modeSeg"));
         assert!(STUDIO_HTML.contains("entryTable"));

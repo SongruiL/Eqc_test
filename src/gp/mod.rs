@@ -26,8 +26,8 @@ pub use grammar::{
     KNOWN_GRAMMARS,
 };
 pub use joint::{
-    evaluate_multi, evolve_joint, evolve_joint_pareto, patch_multi, slots_from_model, JointConfig,
-    JointParetoEntry, JointResult, Slot,
+    evaluate_multi, evolve_joint, evolve_joint_pareto, evolve_joint_pareto_cb, patch_multi,
+    slots_from_model, JointConfig, JointParetoEntry, JointResult, Slot,
 };
 pub use operators::{complexity, crossover, mutate, perturb_constants};
 pub use pareto::{calibrate_consts, evolve_pareto, evolve_pareto_cb, ParetoConfig, ParetoEntry};

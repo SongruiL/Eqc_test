@@ -318,10 +318,25 @@ pub fn evolve_joint_pareto<F: FnMut(&[Candidate]) -> f64>(
     slots: &[Slot],
     unit_env: &HashMap<String, Dimension>,
     cfg: &JointConfig,
+    error_fn: F,
+) -> Vec<JointParetoEntry> {
+    // 默认无进度回调；异步任务用 `evolve_joint_pareto_cb` 拿每代进度。
+    evolve_joint_pareto_cb(slots, unit_env, cfg, error_fn, &mut |_, _| {})
+}
+
+/// 同 [`evolve_joint_pareto`]，额外每代回调 `progress(gen_1based, best_total_error)`——供异步任务画收敛曲线。
+pub fn evolve_joint_pareto_cb<F: FnMut(&[Candidate]) -> f64>(
+    slots: &[Slot],
+    unit_env: &HashMap<String, Dimension>,
+    cfg: &JointConfig,
     mut error_fn: F,
+    progress: &mut dyn FnMut(usize, f64),
 ) -> Vec<JointParetoEntry> {
     use super::pareto::{crowding_select_obj, nondominated_fronts_obj};
     let mut rng = Rng::new(cfg.seed);
+    let best_of = |a: &[JointParetoEntry]| -> f64 {
+        a.iter().map(|e| e.error).fold(f64::INFINITY, f64::min)
+    };
     let sample_genome = |rng: &mut Rng| -> Vec<Candidate> {
         slots
             .iter()
@@ -337,7 +352,7 @@ pub fn evolve_joint_pareto<F: FnMut(&[Candidate]) -> f64>(
         })
         .collect();
 
-    for _gen in 0..cfg.gens.max(1) {
+    for gen in 0..cfg.gens.max(1) {
         let mut offspring: Vec<JointParetoEntry> = Vec::with_capacity(cfg.pop);
         for _ in 0..cfg.pop {
             let a = archive[rng.next_usize(archive.len())].genome.clone();
@@ -364,6 +379,7 @@ pub fn evolve_joint_pareto<F: FnMut(&[Candidate]) -> f64>(
             }
         }
         archive = next;
+        progress(gen + 1, best_of(&archive)); // 每代末：当前代号 + 归档最小总误差
     }
 
     let objs: Vec<(f64, f64)> = archive.iter().map(|e| (e.error, e.complexity as f64)).collect();
@@ -443,6 +459,37 @@ mod tests {
         for w in res.history.windows(2) {
             assert!(w[1] <= w[0] + 1e-12, "history 单调不增");
         }
+    }
+
+    /// 联合 Pareto 进度回调：每代调一次（gen 1..=gens 递增），cb(no-op) 与 evolve_joint_pareto 结果一致。
+    #[test]
+    fn test_joint_pareto_progress_cb() {
+        let env: HashMap<String, Dimension> = HashMap::new();
+        let slots = vec![
+            slot("A", "monotone_gate", &["chill", "gdd"], Some([0.0, 1.0]), &[("chill", "increasing")]),
+            slot("B", "saturating_sink", &["lai", "laip"], Some([0.0, 1.0]), &[("lai", "decreasing")]),
+        ];
+        let mk = || {
+            let truth_a = |x: f64| 1.0 / (1.0 + (-0.3 * (x - 20.0)).exp());
+            move |g: &[Candidate]| {
+                let mut ea = 0.0;
+                for i in 0..=20 {
+                    let x = i as f64;
+                    match eval_candidate(&g[0], &[("chill", x), ("gdd", 0.0)]) {
+                        Some(y) => ea += (y - truth_a(x)).powi(2),
+                        None => return WORST,
+                    }
+                }
+                (ea / 21.0).sqrt()
+            }
+        };
+        let cfg = JointConfig { pop: 20, gens: 6, seed: 1, archive_cap: 10, ..Default::default() };
+        let mut gens_seen: Vec<usize> = Vec::new();
+        let front_cb = evolve_joint_pareto_cb(&slots, &env, &cfg, mk(), &mut |g, _e| gens_seen.push(g));
+        assert_eq!(gens_seen, (1..=6).collect::<Vec<_>>(), "应每代回调一次、代号递增");
+        let front_plain = evolve_joint_pareto(&slots, &env, &cfg, mk());
+        let key = |f: &[JointParetoEntry]| f.iter().map(|e| format!("{:.9}|{}", e.error, e.complexity)).collect::<Vec<_>>();
+        assert_eq!(key(&front_cb), key(&front_plain));
     }
 
     /// patch_multi 命名空间化常数、替换两方程。
