@@ -195,8 +195,15 @@
 - **多槽位联合进化**（`src/gp/joint.rs`）：基因组 = 一组候选（每槽一棵树）；`patch_multi`（各槽 patch 进对应方程，常数命名空间化 `__s{k}_c{i}` 防撞）→ `evaluate_multi`（**一次仿真**对所有观测变量算误差）→ 捕捉槽位间耦合（单槽独立做不到）。`evolve_joint`（单目标）。
 - **Pareto-joint**（`evolve_joint_pareto`）：联合进化 + (总精度, 总复杂度) 前沿——整模型尺度的"精度 vs 简洁"权衡，每点 = 一套形式。`pareto.rs` 抽出按目标值的 NSGA-II 助手（单槽 + 联合共用）；前沿去重。
 - 全程合成数据验证（端到端：从观测复原已知形式，结构 + 常数近乎精确；联合：两槽同时复原）；复用 `optimize` 评估核/DE、`sim`、`units`、S-expr = 基因组。**真进化解锁 = 云南 2026-07 田间数据**。
-- **前端 GP 面板**（`docs/spec-gp-studio.md` 已设计，待实现）：human-in-the-loop——Pareto 前沿散点 → 点开看公式+拟合+rediscovery 徽章 → 对比现有形式 → 采纳生成溯源草稿；`/api/evolve` 端点 + 复用已有积木（pareto/convergence 图、MathML、园区录入网格、轨迹叠加）。
-- 剩：Studio GP 面板实现（spec 已写）、真进化（等田间数据）。
+### EQC Studio · GP 面板（前端 S1–S5 + B2）
+human-in-the-loop——GP 提议、科学家裁决。设计 `docs/spec-gp-studio.md`；EQC 持有事实（`/api/evolve*` 契约），前端只拼装、大量复用已有积木（pareto/convergence 图、MathML、园区录入网格、轨迹叠加）。契约只增不改。
+- **S1** `/api/evolve` 同步端点：薄编排 `evolve_pareto` + `form_report` + `patch_model`/`simulate` → Pareto 前沿 JSON（每点公式/轨迹/机理形式/rediscovery + baseline 对比 + 观测散点 + 前沿散点 SVG）。靶点元数据从模型 `gp_target` 自动取，前端只递交「选哪个靶 + 几个旋钮」。
+- **S2** studio.html GP 面板（专家视图）：靶点列表 → 选 → 配置 → Pareto 散点（点选）→ 候选详情（公式 MathML + 自画拟合叠观测图 + rediscovery 徽章）。契约加 `formula_mathml`。
+- **B2** 自动 rediscovery：`identify_form_of_expr` + `concrete_matches_skeleton`（`__c` 占位匹配字面常数/参数）→ 引擎自动识别现有方程的机理形式作 baseline_form，徽章自动点亮，无需手填。
+- **S3** 对比 + 采纳：候选 vs 现有形式并排（rmse/复杂度）；「采纳此候选」→ 生成可编辑的**溯源条目草稿**（markdown）+ 可粘贴的 **`.eq.yaml` 方程片段**（常数代回字面值，`eqc validate` 回环通过），复制/下载，**只产文本不写盘**。顺手修 `to_yaml` 漏 `Clamp` 的真 bug。
+- **S4** 异步任务：`/api/evolve/start` 起后台线程→`{task_id}`、`/api/evolve/status` 轮询（当前代 + 实时收敛曲线，完成内嵌结果）；放开 memetic + 大规模（同步会超时）。引擎加 `evolve_pareto_cb`/`evolve_joint_pareto_cb`（每代进度回调，原函数 no-op 委托、零回归）。
+- **S5** 多槽位联合进化前端：靶点**多选**（≥2 = 联合，`targets=`）；候选详情按**槽位分区**，每槽各自公式/形式/rediscovery/拟合/采纳；Pareto 复杂度轴 = 各槽之和。
+- 验证：合成 demo（gpdemo 单靶 / gpdemo2 双门控联合）端到端 LIVE——start→轮询→done，逐槽 rediscovery、采纳片段回环。254 lib + 3 bin + 4 + 100 sexpr 两配置全绿。**剩：真进化（等云南 2026-07 田间数据）。**
 
 ## 下一步（未做）/ 当前不足
 
@@ -207,7 +214,7 @@
   - 原则：EQC 始终是唯一权威、前端只显示其 SVG/MathML/JSON 产物，契约只增不改 → 随 EQC 升级低风险、易排查。下一步：点节点高亮、浏览器内编辑、LLM 问答、GP 结构 diff。可后续包成 Tauri 桌面应用或 VS Code 扩展。
 - **codegen 不生成积分循环**：`eqc build` 仍按静态网络生成代码，状态量（`state`）没有逐步更新代码——动态模型目前只能用 `eqc simulate`（树遍历）跑，不能导出独立可运行的 Python/Rust 仿真器。
 - cohort 在图上显示为展开的标量（`DF__1/2/3`），未按家族分组显示。
-- **GP 约束进化层 — G0-G5 + 联合进化 + Pareto-joint 已完成**（见上「受约束遗传编程 arc」）。剩：**Studio GP 面板实现**（spec `docs/spec-gp-studio.md` 已写：前端展示 Pareto 前沿 + 公式 + rediscovery 徽章 + 采纳）、**真进化（等云南 2026-07 田间数据）**。
+- **GP 约束进化层 — 引擎（G0-G5 + 联合 + Pareto-joint）+ Studio GP 面板（S1-S5+B2）全部完成**（见上「受约束遗传编程 arc」「EQC Studio · GP 面板」）。剩：**真进化（等云南 2026-07 田间数据）**——贯穿全项目的等待点（标定/优化/GP 都已备好、合成验证过、等数据）。
 - 报告增强（按模块分图、点节点高亮、显示单位/出处）；codegen 死分支宏重构；耦合的时间尺度聚合（逐时 vs 日均）。
 
 **草莓模型层**（详见 `../strawberry_model/strawberry_v1.eq.yaml` 顶部「模型短板」注释）
