@@ -777,6 +777,11 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
             Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
             Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
         },
+        // 受约束 GP：在某 gp_target 靶点进化方程结构（S1：同步 Pareto + 形式识别 + rediscovery）。
+        "/api/evolve" => match run_evolve(m, query) {
+            Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
+            Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
+        },
         // 用某处理区录入的实测数据标定模型参数（录入→标定闭环的「标定」端）。
         "/api/calibrate" => match run_calibrate(m, query) {
             Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
@@ -1005,6 +1010,223 @@ fn run_optimize(m: &ModelEntry, query: &str) -> Result<String, String> {
     Ok(j.to_string())
 }
 
+/// `/api/evolve?model=&target=&zone=&pop=&gens=&seed=&pareto=&parsimony=&observed=&baseline_form=`
+///
+/// 受约束 GP 面板的后端（spec-gp-studio §4，S1）：在某 `gp_target` 靶点进化方程结构，返回
+/// **Pareto 前沿**（精度 vs 复杂度）+ 每点的拟合轨迹/机理形式识别/rediscovery 判定，外加现有形式
+/// （baseline）对比、观测散点、前沿散点 SVG。靶点元数据（语法/输入/输出/边界/单调）从模型
+/// `gp_target` 自动取（G0）——前端面板只递交「选哪个靶 + 几个进化旋钮」。observed 取本处理区录入
+/// 的稀疏 CSV（录入→GP 同源），缺则 `?observed=` 文件兜底。**memetic 不在 S1**（计算量大，待异步 S4）。
+/// 薄编排：`evolve_pareto` + `form_report` + `patch_model`/`simulate`，所有计算在 Rust 侧。
+fn run_evolve(m: &ModelEntry, query: &str) -> Result<String, String> {
+    use crate::gp;
+    use crate::units::{parse_dimension, Dimension};
+
+    if let Some(e) = coupled_guard(m) {
+        return Err(e);
+    }
+    // memetic 挡在 S1 外：内层 DE 标定 = sim 套 sim，同步请求会超时（spec §6，留给异步 S4）。
+    if query_flag(query, "memetic") {
+        return Err(
+            "memetic（内层 DE 标定常数）计算量大，S1 同步端点不支持——请用 co-evolve（默认），\
+             memetic 待异步任务（S4）"
+                .into(),
+        );
+    }
+
+    let target = query_get(query, "target")
+        .ok_or_else(|| "缺少 target 参数（/api/evolve?target=<方程id>）".to_string())?;
+    let zone = parse_zone(query);
+
+    let files = load_files(&m.path)?;
+    let file = files.first().ok_or_else(|| "无模型".to_string())?;
+
+    // 靶点元数据（语法/输入/边界/单调）从模型 gp_target 自动取（G0）。
+    let (grammar, ctx) = gp::context_from_target(file, &target)
+        .ok_or_else(|| format!("方程 {target} 无 gp_target（不是进化靶点）"))?;
+    // 拟合输出 = 该方程的 output 变量。
+    let output = file
+        .equations
+        .iter()
+        .find(|e| e.id == target)
+        .map(|e| e.output.clone())
+        .ok_or_else(|| format!("找不到方程 {target}"))?;
+
+    // 驱动量（模型预载）+ steps。
+    let (steps_default, driver_map) = m
+        .drivers
+        .as_ref()
+        .map(|(r, map)| (*r, map.clone()))
+        .ok_or_else(|| {
+            "该模型未预载驱动量（启动 --drivers 或清单声明）——GP 无法仿真".to_string()
+        })?;
+    let steps = query_usize(query, "steps").unwrap_or(steps_default);
+
+    // 观测：本处理区录入 CSV 优先（录入→GP 同源），否则 ?observed= 文件兜底。
+    let zone_csv = m.data_dir.join(format!("{zone}.csv"));
+    let obs_path: PathBuf = if zone_csv.exists() {
+        zone_csv
+    } else if let Some(o) = query_get(query, "observed") {
+        let p = PathBuf::from(&o);
+        if p.is_absolute() {
+            p
+        } else {
+            let model_dir = if m.path.is_dir() {
+                m.path.clone()
+            } else {
+                m.path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."))
+            };
+            model_dir.join(&o)
+        }
+    } else {
+        return Err(format!(
+            "处理区 '{zone}' 暂无实测数据，且未提供 ?observed=——请先在园区视图录入并保存，或指定 observed 文件"
+        ));
+    };
+    let observed_data = crate::scenario::load_observed_csv(&obs_path).map_err(|e| e.to_string())?;
+    let obs_series = observed_data
+        .get(&output)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| format!("观测数据里没有目标输出 '{output}' 的点——GP 无拟合目标"))?
+        .clone();
+
+    let mut sim_input = SimInput::new(steps);
+    sim_input.drivers = driver_map;
+    if let Some(p) = &m.params {
+        sim_input.param_overrides = p.clone();
+    }
+
+    // 量纲环境（GP 量纲软过滤用）。
+    let mut unit_env: HashMap<String, Dimension> = HashMap::new();
+    for (n, p) in &file.parameters {
+        if let Some(u) = &p.unit {
+            if let Some(d) = parse_dimension(u) {
+                unit_env.insert(n.clone(), d);
+            }
+        }
+    }
+    for (n, v) in &file.variables {
+        if let Some(u) = &v.unit {
+            if let Some(d) = parse_dimension(u) {
+                unit_env.insert(n.clone(), d);
+            }
+        }
+    }
+
+    // 进化配置（带默认；Pareto 是 GP 招牌输出，S1 恒走 Pareto co-evolve）。
+    let pop = query_usize(query, "pop").unwrap_or(60);
+    let gens = query_usize(query, "gens").unwrap_or(40);
+    let seed = query_usize(query, "seed").map(|s| s as u64).unwrap_or(1);
+    let sweep_hi = query_f64(query, "sweep_hi").unwrap_or(50.0);
+    let archive_cap = query_usize(query, "archive_cap").unwrap_or(24);
+    // baseline_form（B1）：缺省不声明 rediscovery；真「自动取现有形式」为后续 B2。
+    let baseline_form = query_get(query, "baseline_form");
+
+    let pcfg = gp::ParetoConfig { pop, gens, seed, sweep_hi, archive_cap, memetic: None };
+    let target_c = target.clone();
+    let outv = output.clone();
+    let front = gp::evolve_pareto(&grammar, &ctx, &unit_env, &pcfg, |cand| {
+        gp::evaluate_in_model(file, &target_c, &outv, cand, &sim_input, &observed_data)
+    });
+
+    // 每个前沿点：机理形式识别 + rediscovery 判定 + 拟合轨迹（patch+sim 抽 output 序列）。
+    let front_json: Vec<serde_json::Value> = front
+        .iter()
+        .map(|e| {
+            let report = gp::form_report(
+                &e.cand,
+                e.error,
+                e.complexity,
+                &grammar,
+                &ctx,
+                baseline_form.as_deref(),
+            );
+            let traj = candidate_trajectory(file, &target, &output, &e.cand, &sim_input);
+            serde_json::json!({
+                "complexity": e.complexity,
+                "error": e.error,
+                "consts": e.cand.consts,
+                "formula": gp::render_formula(&e.cand),
+                "mechanistic_form": report.form,
+                "rediscovery": report.rediscovery,
+                "provenance_suggestion": report.suggestion,
+                "trajectory": traj,
+            })
+        })
+        .collect();
+
+    // baseline：现模型当前形式（未 patch 的原方程）+ 其仿真轨迹（对比用）。
+    let baseline = {
+        let formula = file
+            .equations
+            .iter()
+            .find(|e| e.id == target)
+            .map(|e| e.expression.to_python(""))
+            .unwrap_or_default();
+        let traj = match simulate(file, &sim_input) {
+            Ok(out) => series_to_traj(&out, &output),
+            Err(_) => serde_json::Value::Null,
+        };
+        serde_json::json!({ "formula": formula, "form": baseline_form, "trajectory": traj })
+    };
+
+    // 观测散点（{DAT, value}）。
+    let observed_json = obs_to_traj(&obs_series);
+
+    // 前沿散点 SVG：x=复杂度、y=rmse（复用多目标 DE 的 pareto_chart_svg，点可点击 data-i）。
+    let pts: Vec<(f64, f64)> = front.iter().map(|e| (e.complexity as f64, e.error)).collect();
+    let pareto_svg =
+        crate::chart::pareto_chart_svg(&pts, "复杂度(节点)", "拟合误差(rmse)", 700.0, 380.0);
+
+    let j = serde_json::json!({
+        "target": target,
+        "output": output,
+        "grammar": grammar,
+        "mode": "Pareto",
+        "n_obs": obs_series.len(),
+        "pareto_front": front_json,
+        "baseline": baseline,
+        "observed": observed_json,
+        "pareto_svg": pareto_svg,
+    });
+    Ok(j.to_string())
+}
+
+/// 把一个 GP 候选 patch 进目标方程 → 仿真 → 抽 `output` 轨迹（{DAT, value}）。失败 → Null。
+fn candidate_trajectory(
+    file: &EquationFile,
+    target: &str,
+    output: &str,
+    cand: &crate::gp::Candidate,
+    input: &SimInput,
+) -> serde_json::Value {
+    match crate::gp::patch_model(file, target, cand) {
+        Some(m) => match simulate(&m, input) {
+            Ok(out) => series_to_traj(&out, output),
+            Err(_) => serde_json::Value::Null,
+        },
+        None => serde_json::Value::Null,
+    }
+}
+
+/// 仿真输出某变量序列 → {DAT:[1..n], value:[...]}。变量缺失 → Null。
+fn series_to_traj(out: &SimOutput, name: &str) -> serde_json::Value {
+    match out.series(name) {
+        Some(s) => {
+            let dat: Vec<usize> = (1..=s.len()).collect();
+            serde_json::json!({ "DAT": dat, "value": s })
+        }
+        None => serde_json::Value::Null,
+    }
+}
+
+/// 稀疏观测 [(1-based DAT, 值)] → {DAT:[...], value:[...]}（前端叠散点用）。
+fn obs_to_traj(obs: &[(usize, f64)]) -> serde_json::Value {
+    let dat: Vec<usize> = obs.iter().map(|(d, _)| *d).collect();
+    let val: Vec<f64> = obs.iter().map(|(_, v)| *v).collect();
+    serde_json::json!({ "DAT": dat, "value": val })
+}
+
 /// `/api/calibrate?spec=<路径>&zone=<处理区>`：用某处理区录入的实测数据标定模型参数。
 /// 与 `eqc calibrate` 共用 `optimize::run_obs`。observed **优先**取该处理区录入的 CSV
 /// （录入→标定闭环），否则回退 spec 的 `observed:`；同期天气取 spec 的 `environment:`，
@@ -1121,6 +1343,38 @@ fn run_calibrate(m: &ModelEntry, query: &str) -> Result<String, String> {
         }
     }
     Ok(j.to_string())
+}
+
+/// 通用查询取值：`?key=val` → val（url 解码；空串当缺省）。
+fn query_get(query: &str, key: &str) -> Option<String> {
+    let prefix = format!("{key}=");
+    for kv in query.split('&') {
+        if let Some(v) = kv.strip_prefix(&prefix) {
+            let s = url_decode(v);
+            if !s.is_empty() {
+                return Some(s);
+            }
+        }
+    }
+    None
+}
+
+/// `?key=N` → usize（解析失败/缺省 → None）。
+fn query_usize(query: &str, key: &str) -> Option<usize> {
+    query_get(query, key).and_then(|s| s.trim().parse().ok())
+}
+
+/// `?key=x.y` → f64（解析失败/缺省 → None）。
+fn query_f64(query: &str, key: &str) -> Option<f64> {
+    query_get(query, key).and_then(|s| s.trim().parse().ok())
+}
+
+/// `?key=1|true|on|yes` → true；缺省/其它 → false。
+fn query_flag(query: &str, key: &str) -> bool {
+    matches!(
+        query_get(query, key).as_deref(),
+        Some("1") | Some("true") | Some("on") | Some("yes")
+    )
 }
 
 /// `?spec=problem.yaml` → 路径串（url 解码）。
@@ -1517,6 +1771,39 @@ mod tests {
         assert_eq!(parse_vars("vars=Y,TDM&_=123"), vec!["Y", "TDM"]);
         assert_eq!(parse_vars("vars=DF__1%2CDF__2"), vec!["DF__1", "DF__2"]);
         assert!(parse_vars("").is_empty());
+    }
+
+    #[test]
+    fn test_query_helpers() {
+        let q = "model=bb&target=BB5-DORM&pop=80&seed=7&parsimony=0.01&memetic=true";
+        assert_eq!(query_get(q, "target").as_deref(), Some("BB5-DORM"));
+        assert_eq!(query_usize(q, "pop"), Some(80));
+        assert_eq!(query_usize(q, "seed"), Some(7));
+        assert_eq!(query_f64(q, "parsimony"), Some(0.01));
+        assert!(query_flag(q, "memetic"));
+        // 缺省 / 空 / 非法
+        assert_eq!(query_get(q, "gens"), None);
+        assert_eq!(query_usize(q, "gens"), None);
+        assert!(!query_flag(q, "pareto"));
+        assert!(!query_flag("pareto=off", "pareto"));
+        assert_eq!(query_get("target=", "target"), None); // 空串当缺省
+    }
+
+    #[test]
+    fn test_evolve_traj_helpers() {
+        use crate::sim::SimOutput;
+        // series_to_traj：DAT 是 1-based。
+        let mut traj = IndexMap::new();
+        traj.insert("y".to_string(), vec![1.0, 2.0, 3.0]);
+        let out = SimOutput { steps: 3, trajectories: traj };
+        let j = series_to_traj(&out, "y");
+        assert_eq!(j["DAT"], serde_json::json!([1, 2, 3]));
+        assert_eq!(j["value"], serde_json::json!([1.0, 2.0, 3.0]));
+        assert!(series_to_traj(&out, "missing").is_null());
+        // obs_to_traj：稀疏观测 → 两个并列数组。
+        let o = obs_to_traj(&[(5, 0.5), (10, 0.9)]);
+        assert_eq!(o["DAT"], serde_json::json!([5, 10]));
+        assert_eq!(o["value"], serde_json::json!([0.5, 0.9]));
     }
 
     #[test]
