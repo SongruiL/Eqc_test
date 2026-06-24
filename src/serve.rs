@@ -819,8 +819,15 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
             "application/json; charset=utf-8",
             run_evolve_status(ctx, query),
         ),
-        // 模型源码（浏览器内编辑器 C1）：GET 取原文；POST 校验编辑后的文本 + 返结构预览（不写盘）。
-        "/api/source" => ("200 OK", "application/json; charset=utf-8", read_source(m)),
+        // 模型源码（浏览器内编辑器 C1）：GET 取原文；POST 受控写回（先校验+自动备份+原子写）。
+        "/api/source" => match method {
+            "GET" => ("200 OK", "application/json; charset=utf-8", read_source(m)),
+            "POST" => match write_source(m, &req_body) {
+                Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
+                Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
+            },
+            _ => ("405 Method Not Allowed", "text/plain; charset=utf-8", "Method Not Allowed".to_string()),
+        },
         "/api/validate" => match method {
             "POST" => ("200 OK", "application/json; charset=utf-8", run_validate(query, &req_body)),
             _ => ("405 Method Not Allowed", "text/plain; charset=utf-8", "Method Not Allowed".to_string()),
@@ -1656,6 +1663,41 @@ fn read_source(m: &ModelEntry) -> String {
         Ok(src) => serde_json::json!({ "editable": true, "source": src, "path": m.path.display().to_string() }).to_string(),
         Err(e) => serde_json::json!({ "editable": false, "error": format!("读取失败: {e}") }).to_string(),
     }
+}
+
+/// `POST /api/source`（body = 编辑后的 YAML 文本）：**受控写回**模型文件（编辑器 C1 增强）。
+/// 先校验（非法不写）→ 备份现文件到 `<file>.bak` → 原子写（临时文件 + rename）。
+/// 仅单文件模型；耦合视图/目录模型拒绝。返回 `{ok, path, backup}` 或 `{error}`。
+fn write_source(m: &ModelEntry, body: &[u8]) -> Result<String, String> {
+    if m.coupling.is_some() {
+        return Err("耦合视图不可编辑（请选单个作物模型）".into());
+    }
+    if !m.path.is_file() {
+        return Err("多文件/目录模型暂不支持保存（v1 仅单文件）".into());
+    }
+    let text = String::from_utf8_lossy(body);
+    // 先校验：非法不写盘（守护"不弄坏正在用的模型"）。
+    let file = parse_str(&text).map_err(|e| format!("校验未通过，未保存：{e}"))?;
+    crate::validator::validate(&[file]).map_err(|e| format!("校验未通过，未保存：{e}"))?;
+    // 备份现文件 → <file>.bak（即时安全网；git 仍是真正的版本史）。
+    let bak = {
+        let mut s = m.path.as_os_str().to_os_string();
+        s.push(".bak");
+        PathBuf::from(s)
+    };
+    std::fs::copy(&m.path, &bak).map_err(|e| format!("备份失败: {e}"))?;
+    // 原子写：临时文件 + rename。
+    let tmp = {
+        let mut s = m.path.as_os_str().to_os_string();
+        s.push(".tmp");
+        PathBuf::from(s)
+    };
+    std::fs::write(&tmp, text.as_bytes()).map_err(|e| format!("写临时文件失败: {e}"))?;
+    std::fs::rename(&tmp, &m.path).map_err(|e| format!("替换文件失败: {e}"))?;
+    Ok(serde_json::json!({
+        "ok": true, "path": m.path.display().to_string(), "backup": bak.display().to_string()
+    })
+    .to_string())
 }
 
 /// `POST /api/validate`（body = 编辑后的 YAML 文本）：parse + 校验 → `{ok, errors[], report_html?}`。

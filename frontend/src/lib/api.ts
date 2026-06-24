@@ -126,6 +126,14 @@ export async function fetchObservations(model: string, zone: string): Promise<Ob
 export async function fetchSource(model: string): Promise<SourceJson> {
   return (await fetch(`/api/source?_=${Date.now()}` + modelQS(model), { cache: 'no-store' })).json()
 }
+/** 受控写回模型文件（先校验+自动备份+原子写）→ {ok, path, backup} 或 {error}。 */
+export async function saveSource(model: string, text: string): Promise<{ ok?: boolean; path?: string; backup?: string; error?: string }> {
+  return (
+    await fetch('/api/source' + modelQS(model, '?'), {
+      method: 'POST', headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: text,
+    })
+  ).json()
+}
 /** 校验编辑后的 YAML 文本 → {ok, errors, report_html?}（不写盘）。layout/level 让预览与结构工作区一致。 */
 export async function validateSource(
   model: string,

@@ -1,12 +1,12 @@
 <script lang="ts">
-  // 模型编辑器（C1）：CodeMirror 编辑 .eq.yaml → 实时校验 + 结构预览。v1 不写盘（编辑浏览器副本）。
-  // EQC 持有校验/渲染（/api/validate 返 ok/errors/结构图 HTML），前端只递交文本 + 显示。
+  // 模型编辑器（C1）：CodeMirror 编辑 .eq.yaml → 实时校验 + 结构预览 + 受控保存（校验通过+备份+确认才写盘）。
+  // EQC 持有校验/渲染/写盘（/api/validate、/api/source POST），前端只递交文本 + 显示 + 裁决。
   import { onMount } from 'svelte'
   import { basicSetup } from 'codemirror'
   import { EditorView } from '@codemirror/view'
   import { yaml } from '@codemirror/lang-yaml'
   import { store } from '../lib/store.svelte'
-  import { fetchSource, validateSource } from '../lib/api'
+  import { fetchSource, validateSource, saveSource } from '../lib/api'
   import { downloadText } from '../lib/download'
 
   let editorEl: HTMLDivElement
@@ -18,13 +18,22 @@
   let preview = $state('') // report_html
   let valStatus = $state('')
   let path = $state('')
+  let original = $state('') // 加载时的原文（算 diff / 脏标记）
+  let dirty = $state(false)
+  let confirmSave = $state(false)
+  let saveStatus = $state('')
   let timer: ReturnType<typeof setTimeout> | undefined
   let lastModel = ''
+
+  function onDocChange() {
+    dirty = (view?.state.doc.toString() ?? '') !== original
+    scheduleValidate()
+  }
 
   onMount(() => {
     view = new EditorView({
       doc: '',
-      extensions: [basicSetup, yaml(), EditorView.updateListener.of((u) => { if (u.docChanged) scheduleValidate() })],
+      extensions: [basicSetup, yaml(), EditorView.updateListener.of((u) => { if (u.docChanged) onDocChange() })],
       parent: editorEl,
     })
     lastModel = store.model
@@ -41,12 +50,14 @@
   })
 
   async function loadSource() {
-    valStatus = ''; errors = []; preview = ''; ok = true; srcError = ''
+    valStatus = ''; errors = []; preview = ''; ok = true; srcError = ''; saveStatus = ''; confirmSave = false
     const j = await fetchSource(store.model)
     path = j.path ?? ''
     editable = j.editable ?? false
-    if (!editable) { srcError = j.error ?? '该模型不可编辑'; setDoc(''); return }
-    setDoc(j.source ?? '')
+    if (!editable) { srcError = j.error ?? '该模型不可编辑'; original = ''; dirty = false; setDoc(''); return }
+    original = j.source ?? ''
+    dirty = false
+    setDoc(original)
     scheduleValidate()
   }
   function setDoc(text: string) {
@@ -74,16 +85,60 @@
     const name = path.split(/[\\/]/).pop() || 'model.eq.yaml'
     downloadText(name, view.state.doc.toString(), 'text/yaml')
   }
+
+  // —— 受控保存：紧凑行级 diff（公共前后缀外的改动块）——
+  function lineDiff(a: string, b: string) {
+    const al = a.split('\n'), bl = b.split('\n')
+    let p = 0
+    while (p < al.length && p < bl.length && al[p] === bl[p]) p++
+    let s = 0
+    while (s < al.length - p && s < bl.length - p && al[al.length - 1 - s] === bl[bl.length - 1 - s]) s++
+    return { removed: al.slice(p, al.length - s), added: bl.slice(p, bl.length - s), atLine: p + 1 }
+  }
+  const diff = $derived(confirmSave && view ? lineDiff(original, view.state.doc.toString()) : null)
+  async function doSave() {
+    if (!view) return
+    saveStatus = '⏳ 保存中…'
+    const text = view.state.doc.toString()
+    try {
+      const j = await saveSource(store.model, text)
+      if (j.error) { saveStatus = '保存失败：' + j.error; return }
+      original = text; dirty = false; confirmSave = false
+      saveStatus = '✅ 已保存到 ' + (j.path ?? '') + '（备份 ' + (j.backup ?? '') + '）'
+    } catch (e) {
+      saveStatus = '保存请求失败：' + e
+    }
+  }
 </script>
 
 <div class="ws">
   <div class="ws-head">
     <b>模型编辑器</b> <span class="sub" title={path}>{path.split(/[\\/]/).pop() ?? ''}</span>
     <span class="status" class:ok class:bad={!ok && !!valStatus}>{valStatus}</span>
-    <button class="btn" disabled={!editable} onclick={download}>下载 .eq.yaml</button>
+    {#if dirty}<span class="dirty">● 未保存改动</span>{/if}
+    <button class="btn" disabled={!editable} onclick={download}>下载</button>
+    <button class="btn on" disabled={!editable || !ok || !dirty} onclick={() => (confirmSave = true)}>保存到文件…</button>
   </div>
-  <div class="note">编辑 YAML → 实时校验 + 结构预览。<b>不写盘</b>——满意了下载替换（EQC 持有模型、人决定）。</div>
+  <div class="note">编辑 YAML → 实时校验 + 结构预览。保存须<b>校验通过</b>，写盘前自动<b>备份</b>到 <code>.bak</code> 并要你确认（git 仍是真正的版本史）。</div>
+  {#if saveStatus}<div class="hint" class:ok-msg={saveStatus.startsWith('✅')}>{saveStatus}</div>{/if}
   {#if srcError}<div class="hint err">{srcError}</div>{/if}
+
+  {#if confirmSave && diff}
+    <div class="confirm">
+      <div class="c-head"><b>确认写回模型文件？</b> <span class="sub">{path}</span></div>
+      <div class="c-diff">改动（约第 {diff.atLine} 行 · −{diff.removed.length} / +{diff.added.length}）：
+        <div class="d-body">
+          {#each diff.removed.slice(0, 12) as l}<div class="d-rm">- {l}</div>{/each}
+          {#each diff.added.slice(0, 12) as l}<div class="d-add">+ {l}</div>{/each}
+          {#if diff.removed.length + diff.added.length > 24}<div class="sub">…（仅显示前若干行）</div>{/if}
+        </div>
+      </div>
+      <div class="c-act">
+        <button class="btn on" onclick={doSave}>确认写回（自动备份）</button>
+        <button class="btn" onclick={() => (confirmSave = false)}>取消</button>
+      </div>
+    </div>
+  {/if}
 
   <div class="grid">
     <div class="ed" bind:this={editorEl}></div>
@@ -106,11 +161,23 @@
   .sub { color: var(--sub); font-size: 12px; }
   .status { font-size: 12px; color: var(--sub); }
   .status.ok { color: #16a34a; } .status.bad { color: #dc2626; }
-  .btn { border: 1px solid var(--line); background: #fff; color: var(--sub); font-size: 12px; padding: 4px 12px; border-radius: 7px; cursor: pointer; margin-left: auto; }
+  .btn { border: 1px solid var(--line); background: #fff; color: var(--sub); font-size: 12px; padding: 4px 12px; border-radius: 7px; cursor: pointer; }
+  .ws-head .btn:first-of-type { margin-left: auto; }
+  .btn.on { background: var(--accent); color: #fff; border-color: var(--accent); }
   .btn:disabled { opacity: 0.5; cursor: default; }
+  .dirty { font-size: 12px; color: #d97706; }
   .note { color: var(--sub); font-size: 12px; margin-bottom: 8px; }
-  .hint { color: var(--sub); font-size: 12px; padding: 12px; }
+  .note code { background: #f3f4f6; padding: 0 4px; border-radius: 3px; }
+  .hint { color: var(--sub); font-size: 12px; padding: 6px 0; }
+  .hint.ok-msg { color: #16a34a; }
   .err { color: #dc2626; }
+  .confirm { border: 1px solid #fde68a; background: #fffbeb; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+  .c-head { font-size: 13px; } .c-head .sub { color: var(--sub); font-size: 12px; }
+  .c-diff { font-size: 12px; color: var(--sub); margin-top: 6px; }
+  .d-body { margin-top: 4px; font-family: ui-monospace, Consolas, monospace; max-height: 200px; overflow: auto; background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 6px; }
+  .d-rm { color: #b91c1c; background: #fef2f2; white-space: pre-wrap; }
+  .d-add { color: #15803d; background: #f0fdf4; white-space: pre-wrap; }
+  .c-act { margin-top: 8px; display: flex; gap: 8px; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; flex: 1; min-height: 0; }
   @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
   .ed { border: 1px solid var(--line); border-radius: 8px; overflow: auto; background: #fff; min-height: 0; }
