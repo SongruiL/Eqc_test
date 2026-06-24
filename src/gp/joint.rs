@@ -165,10 +165,12 @@ pub struct JointConfig {
     pub elitism: usize,
     pub parsimony: f64,
     pub sweep_hi: f64,
+    /// Pareto 归档上限（仅 evolve_joint_pareto 用）。
+    pub archive_cap: usize,
 }
 impl Default for JointConfig {
     fn default() -> Self {
-        Self { pop: 40, gens: 30, seed: 42, tournament_k: 3, elitism: 2, parsimony: 0.0, sweep_hi: 100.0 }
+        Self { pop: 40, gens: 30, seed: 42, tournament_k: 3, elitism: 2, parsimony: 0.0, sweep_hi: 100.0, archive_cap: 24 }
     }
 }
 
@@ -293,6 +295,91 @@ pub fn evolve_joint<F: FnMut(&[Candidate]) -> f64>(
 
     let (bc, bcost, berr) = best.unwrap();
     JointResult { best: bc, best_error: berr, best_cost: bcost, history }
+}
+
+/// 联合 Pareto 前沿一项（整模型配置：每槽一个候选 + 总误差 + 总复杂度）。
+#[derive(Debug, Clone)]
+pub struct JointParetoEntry {
+    pub genome: Vec<Candidate>,
+    pub error: f64,
+    pub complexity: usize,
+}
+
+fn eval_genome<F: FnMut(&[Candidate]) -> f64>(g: &[Candidate], error_fn: &mut F) -> JointParetoEntry {
+    let e = error_fn(g);
+    let e = if e.is_finite() { e } else { WORST };
+    JointParetoEntry { genome: g.to_vec(), error: e, complexity: total_complexity(g) }
+}
+
+/// **Pareto-joint**：多槽位联合进化，返回 (总误差, 总复杂度) 非支配前沿——
+/// 每个前沿点 = 一**套**形式（每槽一个），代表整模型的"精度 vs 简洁"权衡，科学家挑拐点。
+/// 复用 NSGA-II 助手（`pareto::nondominated_fronts_obj`/`crowding_select_obj`）。
+pub fn evolve_joint_pareto<F: FnMut(&[Candidate]) -> f64>(
+    slots: &[Slot],
+    unit_env: &HashMap<String, Dimension>,
+    cfg: &JointConfig,
+    mut error_fn: F,
+) -> Vec<JointParetoEntry> {
+    use super::pareto::{crowding_select_obj, nondominated_fronts_obj};
+    let mut rng = Rng::new(cfg.seed);
+    let sample_genome = |rng: &mut Rng| -> Vec<Candidate> {
+        slots
+            .iter()
+            .map(|s| {
+                sample(&s.grammar, &s.ctx, rng).unwrap_or(Candidate { expr: Expr::constant(0.0), consts: vec![] })
+            })
+            .collect()
+    };
+    let mut archive: Vec<JointParetoEntry> = (0..cfg.pop.max(1))
+        .map(|_| {
+            let g = sample_genome(&mut rng);
+            eval_genome(&g, &mut error_fn)
+        })
+        .collect();
+
+    for _gen in 0..cfg.gens.max(1) {
+        let mut offspring: Vec<JointParetoEntry> = Vec::with_capacity(cfg.pop);
+        for _ in 0..cfg.pop {
+            let a = archive[rng.next_usize(archive.len())].genome.clone();
+            let b = archive[rng.next_usize(archive.len())].genome.clone();
+            let child = crossover_multi(&a, &b, slots, unit_env, cfg.sweep_hi, &mut rng);
+            let child = mutate_multi(&child, slots, unit_env, cfg.sweep_hi, &mut rng);
+            offspring.push(eval_genome(&child, &mut error_fn));
+        }
+        let mut combined = archive;
+        combined.append(&mut offspring);
+        let objs: Vec<(f64, f64)> = combined.iter().map(|e| (e.error, e.complexity as f64)).collect();
+        let fronts = nondominated_fronts_obj(&objs);
+        let mut next: Vec<JointParetoEntry> = Vec::with_capacity(cfg.archive_cap);
+        for front in fronts {
+            if next.len() + front.len() <= cfg.archive_cap {
+                for i in front {
+                    next.push(combined[i].clone());
+                }
+            } else {
+                for i in crowding_select_obj(&objs, &front, cfg.archive_cap - next.len()) {
+                    next.push(combined[i].clone());
+                }
+                break;
+            }
+        }
+        archive = next;
+    }
+
+    let objs: Vec<(f64, f64)> = archive.iter().map(|e| (e.error, e.complexity as f64)).collect();
+    let fronts = nondominated_fronts_obj(&objs);
+    let mut front: Vec<JointParetoEntry> = fronts
+        .first()
+        .map(|f| f.iter().map(|&i| archive[i].clone()).collect())
+        .unwrap_or_default();
+    front.sort_by(|a, b| {
+        a.complexity
+            .cmp(&b.complexity)
+            .then(a.error.partial_cmp(&b.error).unwrap_or(std::cmp::Ordering::Equal))
+    });
+    // 去重：收敛到同一 (复杂度,误差) 的多份拷贝只留一个（显示成不同权衡点才有意义）
+    front.dedup_by(|a, b| a.complexity == b.complexity && (a.error - b.error).abs() < 1e-9);
+    front
 }
 
 #[cfg(test)]
@@ -421,6 +508,59 @@ mod tests {
                 Equation { id: "A".into(), name: "A".into(), output: "yA".into(), expression: Expr::var("chill"), formula_display: None, reference: None, gp_target: gt("monotone_gate") },
                 Equation { id: "B".into(), name: "B".into(), output: "yB".into(), expression: Expr::var("lai"), formula_display: None, reference: None, gp_target: gt("saturating_sink") },
             ],
+        }
+    }
+
+    /// ★ Pareto-joint：联合前沿非支配、含低误差、复杂度升序。
+    #[test]
+    fn test_joint_pareto_front() {
+        let env: HashMap<String, Dimension> = HashMap::new();
+        let slots = vec![
+            slot("A", "monotone_gate", &["chill", "gdd"], Some([0.0, 1.0]), &[("chill", "increasing")]),
+            slot("B", "saturating_sink", &["lai", "laip"], Some([0.0, 1.0]), &[("lai", "decreasing")]),
+        ];
+        let truth_a = |x: f64| 1.0 / (1.0 + (-0.3 * (x - 20.0)).exp());
+        let truth_b = |x: f64| (1.0 - x / 3.0).max(0.0);
+        let xa: Vec<f64> = (0..=40).map(|i| i as f64).collect();
+        let xb: Vec<f64> = (0..=30).map(|i| i as f64 * 0.2).collect();
+        let mut ef = |g: &[Candidate]| {
+            let mut ea = 0.0;
+            for &x in &xa {
+                match eval_candidate(&g[0], &[("chill", x), ("gdd", 0.0)]) {
+                    Some(y) => ea += (y - truth_a(x)).powi(2),
+                    None => return WORST,
+                }
+            }
+            let mut eb = 0.0;
+            for &x in &xb {
+                match eval_candidate(&g[1], &[("lai", x), ("laip", 3.0)]) {
+                    Some(y) => eb += (y - truth_b(x)).powi(2),
+                    None => return WORST,
+                }
+            }
+            ((ea / xa.len() as f64).sqrt() + (eb / xb.len() as f64).sqrt()) / 2.0
+        };
+        let cfg = JointConfig { pop: 40, gens: 20, seed: 1, archive_cap: 16, ..Default::default() };
+        let front = evolve_joint_pareto(&slots, &env, &cfg, &mut ef);
+        assert!(!front.is_empty(), "前沿非空");
+        // 每点是 2 槽位的整模型配置
+        for e in &front {
+            assert_eq!(e.genome.len(), 2);
+        }
+        // 互不支配
+        for i in 0..front.len() {
+            for j in 0..front.len() {
+                if i != j {
+                    let a = (front[i].error, front[i].complexity as f64);
+                    let b = (front[j].error, front[j].complexity as f64);
+                    assert!(!super::super::pareto::dominates_obj(a, b), "前沿内不应互相支配");
+                }
+            }
+        }
+        let best = front.iter().map(|e| e.error).fold(f64::INFINITY, f64::min);
+        assert!(best < 0.06, "前沿应含低误差整模型配置: {best}");
+        for w in front.windows(2) {
+            assert!(w[0].complexity <= w[1].complexity, "复杂度升序");
         }
     }
 

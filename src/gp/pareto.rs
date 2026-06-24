@@ -81,16 +81,16 @@ impl Default for ParetoConfig {
     }
 }
 
-/// 双目标（均最小化：error, complexity）支配：a 支配 b。
-fn dominates(a: &ParetoEntry, b: &ParetoEntry) -> bool {
-    let (ae, ac) = (a.error, a.complexity as f64);
-    let (be, bc) = (b.error, b.complexity as f64);
-    ae <= be && ac <= bc && (ae < be || ac < bc)
+// ============ 通用 NSGA-II 助手（按目标值 (f64,f64) 操作，单槽 + 联合共用）============
+
+/// 双目标（均最小化）支配：a 支配 b。
+pub(crate) fn dominates_obj(a: (f64, f64), b: (f64, f64)) -> bool {
+    a.0 <= b.0 && a.1 <= b.1 && (a.0 < b.0 || a.1 < b.1)
 }
 
-/// 快速非支配排序 → 分层（每层为 entries 下标）。
-fn nondominated_fronts(es: &[ParetoEntry]) -> Vec<Vec<usize>> {
-    let n = es.len();
+/// 快速非支配排序 → 分层（每层为下标）。`objs[i]` = 个体 i 的 (目标1, 目标2)。
+pub(crate) fn nondominated_fronts_obj(objs: &[(f64, f64)]) -> Vec<Vec<usize>> {
+    let n = objs.len();
     let mut dominated: Vec<Vec<usize>> = vec![Vec::new(); n];
     let mut dom_count = vec![0usize; n];
     for p in 0..n {
@@ -98,9 +98,9 @@ fn nondominated_fronts(es: &[ParetoEntry]) -> Vec<Vec<usize>> {
             if p == q {
                 continue;
             }
-            if dominates(&es[p], &es[q]) {
+            if dominates_obj(objs[p], objs[q]) {
                 dominated[p].push(q);
-            } else if dominates(&es[q], &es[p]) {
+            } else if dominates_obj(objs[q], objs[p]) {
                 dom_count[p] += 1;
             }
         }
@@ -124,33 +124,40 @@ fn nondominated_fronts(es: &[ParetoEntry]) -> Vec<Vec<usize>> {
 }
 
 /// 在一层里按拥挤距离选 k 个（保边界 + 均匀分布）。
-fn crowding_select(es: &[ParetoEntry], front: &[usize], k: usize) -> Vec<usize> {
+pub(crate) fn crowding_select_obj(objs: &[(f64, f64)], front: &[usize], k: usize) -> Vec<usize> {
     if front.len() <= k {
         return front.to_vec();
     }
     let m = front.len();
     let mut dist = vec![0.0f64; m];
-    // 两目标各排序、边界设 ∞、内部累加归一化间距
-    let objs: [Box<dyn Fn(usize) -> f64>; 2] = [
-        Box::new(|i: usize| es[i].error),
-        Box::new(|i: usize| es[i].complexity as f64),
-    ];
-    for obj in &objs {
+    for axis in 0..2 {
+        let val = |i: usize| if axis == 0 { objs[front[i]].0 } else { objs[front[i]].1 };
         let mut order: Vec<usize> = (0..m).collect();
-        order.sort_by(|&a, &b| obj(front[a]).partial_cmp(&obj(front[b])).unwrap_or(std::cmp::Ordering::Equal));
+        order.sort_by(|&a, &b| val(a).partial_cmp(&val(b)).unwrap_or(std::cmp::Ordering::Equal));
         dist[order[0]] = f64::INFINITY;
         dist[order[m - 1]] = f64::INFINITY;
-        let lo = obj(front[order[0]]);
-        let hi = obj(front[order[m - 1]]);
-        let span = (hi - lo).abs().max(1e-12);
+        let span = (val(order[m - 1]) - val(order[0])).abs().max(1e-12);
         for j in 1..m - 1 {
-            let d = obj(front[order[j + 1]]) - obj(front[order[j - 1]]);
-            dist[order[j]] += d / span;
+            dist[order[j]] += (val(order[j + 1]) - val(order[j - 1])) / span;
         }
     }
     let mut idx: Vec<usize> = (0..m).collect();
     idx.sort_by(|&a, &b| dist[b].partial_cmp(&dist[a]).unwrap_or(std::cmp::Ordering::Equal));
     idx.into_iter().take(k).map(|j| front[j]).collect()
+}
+
+// —— ParetoEntry（单 Candidate）薄包装 ——
+fn objs_of(es: &[ParetoEntry]) -> Vec<(f64, f64)> {
+    es.iter().map(|e| (e.error, e.complexity as f64)).collect()
+}
+fn dominates(a: &ParetoEntry, b: &ParetoEntry) -> bool {
+    dominates_obj((a.error, a.complexity as f64), (b.error, b.complexity as f64))
+}
+fn nondominated_fronts(es: &[ParetoEntry]) -> Vec<Vec<usize>> {
+    nondominated_fronts_obj(&objs_of(es))
+}
+fn crowding_select(es: &[ParetoEntry], front: &[usize], k: usize) -> Vec<usize> {
+    crowding_select_obj(&objs_of(es), front, k)
 }
 
 /// 确定性 PRNG（复用 DE 的）需 pub(crate)；这里用 DE 的 Rng。
@@ -235,6 +242,8 @@ pub fn evolve_pareto<F: FnMut(&Candidate) -> f64>(
             .cmp(&b.complexity)
             .then(a.error.partial_cmp(&b.error).unwrap_or(std::cmp::Ordering::Equal))
     });
+    // 去重：收敛到同一 (复杂度,误差) 的拷贝只留一个
+    front.dedup_by(|a, b| a.complexity == b.complexity && (a.error - b.error).abs() < 1e-9);
     front
 }
 

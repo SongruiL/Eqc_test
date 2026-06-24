@@ -1411,51 +1411,77 @@ fn run_evolve(
             return Err("joint：模型无 gp_target 槽位".into());
         }
         let ids: Vec<&String> = slots.iter().map(|sl| &sl.target_id).collect();
-        println!("   联合进化 {} 个槽位：{:?}", slots.len(), ids);
+        let pareto = ec.pareto.unwrap_or(false);
+        println!(
+            "   联合进化 {} 个槽位：{:?}{}",
+            slots.len(), ids, if pareto { " · Pareto" } else { "" },
+        );
         let jcfg = gp::JointConfig {
             pop,
             gens,
             seed,
             sweep_hi,
             parsimony: ec.parsimony.unwrap_or(0.0),
+            archive_cap: ec.archive_cap.unwrap_or(24),
             ..Default::default()
         };
-        let res = gp::evolve_joint(&slots, &unit_env, &jcfg, |genome| {
-            gp::evaluate_multi(&file, &slots, genome, &sim_input, &observed_data)
-        });
-        println!("\n✅ 联合进化完成 · 平均 rmse(over 观测) = {:.6}", res.best_error);
-        for (k, slot) in slots.iter().enumerate() {
-            let cand = &res.best[k];
-            let form = gp::identify_form(cand, &slot.grammar, &slot.ctx)
-                .map(|i| gp::form_name(&slot.grammar, i).to_string());
-            println!(
-                "   {} [{}] → 形式 {} · {}",
-                slot.target_id,
-                slot.grammar,
-                form.as_deref().unwrap_or("自定义结构"),
-                render(cand),
-            );
-        }
-        if let Some(out) = output {
-            let slots_json: Vec<_> = slots
+        // 每槽位形式名 + 公式
+        let slot_forms = |genome: &[gp::Candidate]| -> Vec<(String, Option<String>, String)> {
+            slots
                 .iter()
                 .enumerate()
                 .map(|(k, slot)| {
-                    let cand = &res.best[k];
+                    let cand = &genome[k];
                     let form = gp::identify_form(cand, &slot.grammar, &slot.ctx)
                         .map(|i| gp::form_name(&slot.grammar, i).to_string());
-                    serde_json::json!({
-                        "target": slot.target_id, "grammar": slot.grammar,
-                        "form": form, "consts": cand.consts, "formula": render(cand),
-                    })
+                    (slot.target_id.clone(), form, render(cand))
                 })
-                .collect();
-            let j = serde_json::json!({
-                "mode": "joint", "mean_rmse": res.best_error,
-                "slots": slots_json, "history": res.history,
+                .collect()
+        };
+
+        if pareto {
+            // —— Pareto-joint：整模型配置前沿 ——
+            let front = gp::evolve_joint_pareto(&slots, &unit_env, &jcfg, |genome| {
+                gp::evaluate_multi(&file, &slots, genome, &sim_input, &observed_data)
             });
-            std::fs::write(out, serde_json::to_string_pretty(&j)?)?;
-            println!("   结果写入 {}", out.display());
+            println!("\n✅ 联合 Pareto 完成 · 前沿 {} 套整模型配置（总精度 vs 总复杂度，挑拐点）", front.len());
+            for (n, e) in front.iter().enumerate() {
+                println!("   ── 配置 {} | 总复杂度 {} | 平均rmse {:.6}", n + 1, e.complexity, e.error);
+                for (tid, form, fml) in slot_forms(&e.genome) {
+                    println!("      {} → {} · {}", tid, form.as_deref().unwrap_or("自定义"), fml);
+                }
+            }
+            if let Some(out) = output {
+                let confs: Vec<_> = front.iter().map(|e| {
+                    let slots_json: Vec<_> = slot_forms(&e.genome).into_iter()
+                        .map(|(t, f, fml)| serde_json::json!({"target": t, "form": f, "formula": fml}))
+                        .collect();
+                    serde_json::json!({"complexity": e.complexity, "error": e.error, "slots": slots_json})
+                }).collect();
+                let j = serde_json::json!({"mode": "joint-pareto", "pareto_front": confs});
+                std::fs::write(out, serde_json::to_string_pretty(&j)?)?;
+                println!("   结果写入 {}", out.display());
+            }
+        } else {
+            // —— 单目标联合 ——
+            let res = gp::evolve_joint(&slots, &unit_env, &jcfg, |genome| {
+                gp::evaluate_multi(&file, &slots, genome, &sim_input, &observed_data)
+            });
+            println!("\n✅ 联合进化完成 · 平均 rmse(over 观测) = {:.6}", res.best_error);
+            for (tid, form, fml) in slot_forms(&res.best) {
+                println!("   {} → 形式 {} · {}", tid, form.as_deref().unwrap_or("自定义结构"), fml);
+            }
+            if let Some(out) = output {
+                let slots_json: Vec<_> = slot_forms(&res.best).into_iter()
+                    .map(|(t, f, fml)| serde_json::json!({"target": t, "form": f, "formula": fml}))
+                    .collect();
+                let j = serde_json::json!({
+                    "mode": "joint", "mean_rmse": res.best_error,
+                    "slots": slots_json, "history": res.history,
+                });
+                std::fs::write(out, serde_json::to_string_pretty(&j)?)?;
+                println!("   结果写入 {}", out.display());
+            }
         }
         return Ok(());
     }
