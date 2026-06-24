@@ -30,7 +30,7 @@ pub use joint::{
     JointParetoEntry, JointResult, Slot,
 };
 pub use operators::{complexity, crossover, mutate, perturb_constants};
-pub use pareto::{calibrate_consts, evolve_pareto, ParetoConfig, ParetoEntry};
+pub use pareto::{calibrate_consts, evolve_pareto, evolve_pareto_cb, ParetoConfig, ParetoEntry};
 pub use provenance::{
     form_report, identify_form, identify_form_of_expr, provenance_stub, render_formula,
     ProvenanceReport,

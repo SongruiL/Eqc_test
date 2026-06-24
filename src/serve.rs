@@ -23,7 +23,7 @@ use indexmap::IndexMap;
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use crate::dag::{build_dag, collapse_dag, DagLevel};
@@ -148,10 +148,24 @@ struct ModelEntry {
     coupling: Option<Coupling>,
 }
 
-/// 服务上下文：模型花名册 + 版本号。单/多模型统一成一份 roster（≥1 条）。
+/// 服务上下文：模型花名册 + 版本号 + GP 异步任务表。单/多模型统一成一份 roster（≥1 条）。
 struct Ctx {
     models: Vec<ModelEntry>,
     version: AtomicU64,
+    /// GP 异步进化任务表（task_id → 状态/进度/结果）。后台线程更新、`/api/evolve/status` 读。
+    tasks: Arc<Mutex<HashMap<String, GpTask>>>,
+    /// task_id 计数器（无需 rand）。
+    task_seq: AtomicU64,
+}
+
+/// 一个 GP 异步进化任务的状态（S4：后台线程跑、前端轮询）。
+struct GpTask {
+    status: &'static str, // "running" | "done" | "error"
+    gen: usize,           // 当前代（进度回调更新）
+    total_gens: usize,
+    history: Vec<f64>,    // 每代归档最小误差（画收敛曲线）
+    result: Option<String>, // 完成时的完整结果 JSON（与 /api/evolve 同结构）
+    error: Option<String>,
 }
 
 /// 启动本地服务，阻塞运行直到进程退出（Ctrl+C）。
@@ -186,7 +200,12 @@ pub fn serve(
         );
     }
 
-    let ctx = Arc::new(Ctx { models, version: AtomicU64::new(1) });
+    let ctx = Arc::new(Ctx {
+        models,
+        version: AtomicU64::new(1),
+        tasks: Arc::new(Mutex::new(HashMap::new())),
+        task_seq: AtomicU64::new(1),
+    });
 
     // 文件监听线程：任一模型文件 mtime 变化 → 版本 +1 → 前端整页刷新
     {
@@ -777,11 +796,21 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
             Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
             Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
         },
-        // 受约束 GP：在某 gp_target 靶点进化方程结构（S1：同步 Pareto + 形式识别 + rediscovery）。
+        // 受约束 GP：在某 gp_target 靶点进化方程结构（同步 Pareto + 形式识别 + rediscovery）。
         "/api/evolve" => match run_evolve(m, query) {
             Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
             Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
         },
+        // 异步 GP（S4）：起后台任务（放开 memetic/大规模）→ {task_id}；前端轮询 status 拿进度+结果。
+        "/api/evolve/start" => match run_evolve_start(ctx, m, query) {
+            Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
+            Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
+        },
+        "/api/evolve/status" => (
+            "200 OK",
+            "application/json; charset=utf-8",
+            run_evolve_status(ctx, query),
+        ),
         // 用某处理区录入的实测数据标定模型参数（录入→标定闭环的「标定」端）。
         "/api/calibrate" => match run_calibrate(m, query) {
             Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
@@ -1019,19 +1048,41 @@ fn run_optimize(m: &ModelEntry, query: &str) -> Result<String, String> {
 /// 的稀疏 CSV（录入→GP 同源），缺则 `?observed=` 文件兜底。**memetic 不在 S1**（计算量大，待异步 S4）。
 /// 薄编排：`evolve_pareto` + `form_report` + `patch_model`/`simulate`，所有计算在 Rust 侧。
 fn run_evolve(m: &ModelEntry, query: &str) -> Result<String, String> {
+    // 同步端点：memetic 计算量大 → 仍挡在外（请用异步 /api/evolve/start）。
+    if query_flag(query, "memetic") {
+        return Err(
+            "memetic（内层 DE 标定常数）计算量大——同步端点不支持，请用异步任务 /api/evolve/start"
+                .into(),
+        );
+    }
+    let job = prepare_evolve(m, query)?;
+    Ok(run_evolve_job(&job, &mut |_, _| {}))
+}
+
+/// GP 进化任务的全部输入（同步 setup 产物；都是 owned 数据、Send，可移进后台线程跑）。
+struct EvolveJob {
+    file: EquationFile,
+    target: String,
+    output: String,
+    eqname: String,
+    grammar: String,
+    ctx: crate::gp::GpContext,
+    unit_env: HashMap<String, crate::units::Dimension>,
+    sim_input: SimInput,
+    observed_data: crate::gp::Observed,
+    obs_series: Vec<(usize, f64)>,
+    pcfg: crate::gp::ParetoConfig,
+    baseline_form: Option<String>,
+}
+
+/// 同步快速 setup（解析模型/靶点/驱动/观测/量纲/配置）→ `EvolveJob`。失败立即返错。
+/// 同步与异步端点共用；跑 `evolve_pareto` 的重活在 `run_evolve_job`（可在后台线程跑）。
+fn prepare_evolve(m: &ModelEntry, query: &str) -> Result<EvolveJob, String> {
     use crate::gp;
     use crate::units::{parse_dimension, Dimension};
 
     if let Some(e) = coupled_guard(m) {
         return Err(e);
-    }
-    // memetic 挡在 S1 外：内层 DE 标定 = sim 套 sim，同步请求会超时（spec §6，留给异步 S4）。
-    if query_flag(query, "memetic") {
-        return Err(
-            "memetic（内层 DE 标定常数）计算量大，S1 同步端点不支持——请用 co-evolve（默认），\
-             memetic 待异步任务（S4）"
-                .into(),
-        );
     }
 
     let target = query_get(query, "target")
@@ -1113,14 +1164,22 @@ fn run_evolve(m: &ModelEntry, query: &str) -> Result<String, String> {
         }
     }
 
-    // 进化配置（带默认；Pareto 是 GP 招牌输出，S1 恒走 Pareto co-evolve）。
+    // 进化配置（带默认；Pareto 是 GP 招牌输出，恒走 Pareto）。
     let pop = query_usize(query, "pop").unwrap_or(60);
     let gens = query_usize(query, "gens").unwrap_or(40);
     let seed = query_usize(query, "seed").map(|s| s as u64).unwrap_or(1);
     let sweep_hi = query_f64(query, "sweep_hi").unwrap_or(50.0);
     let archive_cap = query_usize(query, "archive_cap").unwrap_or(24);
-    // baseline_form：query 显式值优先；否则 **自动识别当前方程的机理形式**（B2）——这样面板
-    // 不传也能判 rediscovery（GP 撞回现有形式=机理验证）。识别不出（手写形式超语法）→ None。
+    // memetic（内层 DE 标定常数）：异步端点放开；缺省 co-evolve（同步端点已在外层挡掉 memetic）。
+    let memetic = query_flag(query, "memetic").then(|| crate::optimize::DeConfig {
+        pop: query_usize(query, "memetic_pop").unwrap_or(16),
+        iters: query_usize(query, "memetic_iters").unwrap_or(30),
+        seed: 1,
+        f: 0.6,
+        cr: 0.9,
+    });
+    // baseline_form：query 显式值优先；否则自动识别当前方程的机理形式（B2）——面板不传也能判
+    // rediscovery（GP 撞回现有形式=机理验证）。识别不出（手写形式超语法）→ None。
     let baseline_form = query_get(query, "baseline_form").or_else(|| {
         file.equations
             .iter()
@@ -1128,15 +1187,7 @@ fn run_evolve(m: &ModelEntry, query: &str) -> Result<String, String> {
             .and_then(|e| gp::identify_form_of_expr(&e.expression, &grammar, &ctx))
             .map(|i| gp::form_name(&grammar, i).to_string())
     });
-
-    let pcfg = gp::ParetoConfig { pop, gens, seed, sweep_hi, archive_cap, memetic: None };
-    let target_c = target.clone();
-    let outv = output.clone();
-    let front = gp::evolve_pareto(&grammar, &ctx, &unit_env, &pcfg, |cand| {
-        gp::evaluate_in_model(file, &target_c, &outv, cand, &sim_input, &observed_data)
-    });
-
-    // 目标方程友好名（用于采纳的 YAML 片段）。
+    // 目标方程友好名（采纳 YAML 片段用）。
     let eqname = file
         .equations
         .iter()
@@ -1144,22 +1195,56 @@ fn run_evolve(m: &ModelEntry, query: &str) -> Result<String, String> {
         .map(|e| e.name.clone())
         .unwrap_or_else(|| target.clone());
 
+    let pcfg = gp::ParetoConfig { pop, gens, seed, sweep_hi, archive_cap, memetic };
+    Ok(EvolveJob {
+        file: file.clone(),
+        target,
+        output,
+        eqname,
+        grammar,
+        ctx,
+        unit_env,
+        sim_input,
+        observed_data,
+        obs_series,
+        pcfg,
+        baseline_form,
+    })
+}
+
+/// 跑 GP 进化（`evolve_pareto_cb` + 拼结果 JSON）；`progress(gen,best)` 供异步任务画收敛曲线，
+/// 同步端点传 no-op。返回与 spec §4 同结构的结果 JSON 字符串（前沿+采纳产物+baseline+observed+SVG）。
+fn run_evolve_job(job: &EvolveJob, progress: &mut dyn FnMut(usize, f64)) -> String {
+    use crate::gp;
+    let file = &job.file;
+    let target = job.target.as_str();
+    let output = job.output.as_str();
+    let grammar = job.grammar.as_str();
+    let eqname = job.eqname.as_str();
+    let ctx = &job.ctx;
+    let unit_env = &job.unit_env;
+    let sim_input = &job.sim_input;
+    let observed_data = &job.observed_data;
+    let obs_series = &job.obs_series;
+    let baseline_form = job.baseline_form.as_deref();
+
+    let front = gp::evolve_pareto_cb(
+        grammar,
+        ctx,
+        unit_env,
+        &job.pcfg,
+        |cand| gp::evaluate_in_model(file, target, output, cand, sim_input, observed_data),
+        progress,
+    );
+
     // 每个前沿点：机理形式识别 + rediscovery 判定 + 拟合轨迹 + 采纳产物（溯源草稿 + YAML 片段）。
     let front_json: Vec<serde_json::Value> = front
         .iter()
         .map(|e| {
-            let report = gp::form_report(
-                &e.cand,
-                e.error,
-                e.complexity,
-                &grammar,
-                &ctx,
-                baseline_form.as_deref(),
-            );
-            let traj = candidate_trajectory(file, &target, &output, &e.cand, &sim_input);
-            // S3 采纳产物（人在环裁决后复制/下载，不写盘）。
-            let stub = gp::provenance_stub(&report, &target, &output, &grammar);
-            let yaml_fragment = candidate_yaml_fragment(&target, &eqname, &output, &e.cand);
+            let report = gp::form_report(&e.cand, e.error, e.complexity, grammar, ctx, baseline_form);
+            let traj = candidate_trajectory(file, target, output, &e.cand, sim_input);
+            let stub = gp::provenance_stub(&report, target, output, grammar);
+            let yaml_fragment = candidate_yaml_fragment(target, eqname, output, &e.cand);
             serde_json::json!({
                 "complexity": e.complexity,
                 "error": e.error,
@@ -1180,17 +1265,12 @@ fn run_evolve(m: &ModelEntry, query: &str) -> Result<String, String> {
     let baseline = {
         let eq = file.equations.iter().find(|e| e.id == target);
         let formula = eq.map(|e| e.expression.to_python("")).unwrap_or_default();
-        let formula_mathml = eq
-            .map(|e| crate::report::expr_mathml(&e.expression))
-            .unwrap_or_default();
+        let formula_mathml = eq.map(|e| crate::report::expr_mathml(&e.expression)).unwrap_or_default();
         let complexity = eq.map(|e| gp::complexity(&e.expression));
-        let out = simulate(file, &sim_input).ok();
-        // rmse 与候选同口径（观测日上比）；现方程复杂度=节点数。
-        let error = out
-            .as_ref()
-            .and_then(|o| rmse_on_obs(o.series(&output), &obs_series));
+        let out = simulate(file, sim_input).ok();
+        let error = out.as_ref().and_then(|o| rmse_on_obs(o.series(output), obs_series));
         let traj = match &out {
-            Some(o) => series_to_traj(o, &output),
+            Some(o) => series_to_traj(o, output),
             None => serde_json::Value::Null,
         };
         serde_json::json!({
@@ -1200,26 +1280,92 @@ fn run_evolve(m: &ModelEntry, query: &str) -> Result<String, String> {
         })
     };
 
-    // 观测散点（{DAT, value}）。
-    let observed_json = obs_to_traj(&obs_series);
-
-    // 前沿散点 SVG：x=复杂度、y=rmse（复用多目标 DE 的 pareto_chart_svg，点可点击 data-i）。
+    let observed_json = obs_to_traj(obs_series);
+    // 前沿散点 SVG：x=复杂度、y=rmse（复用 pareto_chart_svg，点可点击 data-i）。
     let pts: Vec<(f64, f64)> = front.iter().map(|e| (e.complexity as f64, e.error)).collect();
-    let pareto_svg =
-        crate::chart::pareto_chart_svg(&pts, "复杂度(节点)", "拟合误差(rmse)", 700.0, 380.0);
+    let pareto_svg = crate::chart::pareto_chart_svg(&pts, "复杂度(节点)", "拟合误差(rmse)", 700.0, 380.0);
 
-    let j = serde_json::json!({
+    serde_json::json!({
         "target": target,
         "output": output,
         "grammar": grammar,
-        "mode": "Pareto",
+        "mode": if job.pcfg.memetic.is_some() { "Pareto+memetic" } else { "Pareto" },
         "n_obs": obs_series.len(),
         "pareto_front": front_json,
         "baseline": baseline,
         "observed": observed_json,
         "pareto_svg": pareto_svg,
+    })
+    .to_string()
+}
+
+/// `/api/evolve/start?...&memetic=`：异步起一个 GP 进化后台任务，立即返回 `{task_id}`。
+/// setup（prepare_evolve）同步完成（失败立即返错）；重活 `run_evolve_job` 在后台线程跑，
+/// 每代回调更新任务进度/收敛史。**异步路径放开 memetic + 大 pop/gens**（同步端点会超时）。
+fn run_evolve_start(ctx: &Ctx, m: &ModelEntry, query: &str) -> Result<String, String> {
+    let job = prepare_evolve(m, query)?;
+    let id = format!("gp{}", ctx.task_seq.fetch_add(1, Ordering::SeqCst));
+    let total = job.pcfg.gens.max(1);
+    if let Ok(mut t) = ctx.tasks.lock() {
+        t.insert(
+            id.clone(),
+            GpTask { status: "running", gen: 0, total_gens: total, history: vec![], result: None, error: None },
+        );
+    }
+    let tasks = Arc::clone(&ctx.tasks);
+    let idc = id.clone();
+    std::thread::spawn(move || {
+        // 进度回调：每代更新该任务的当前代号 + 收敛史（轮询时画收敛曲线）。
+        let json = run_evolve_job(&job, &mut |gen, best| {
+            if let Ok(mut t) = tasks.lock() {
+                if let Some(task) = t.get_mut(&idc) {
+                    task.gen = gen;
+                    task.history.push(best);
+                }
+            }
+        });
+        if let Ok(mut t) = tasks.lock() {
+            if let Some(task) = t.get_mut(&idc) {
+                task.status = "done";
+                task.result = Some(json);
+            }
+        }
     });
-    Ok(j.to_string())
+    Ok(format!("{{\"task_id\":\"{id}\"}}"))
+}
+
+/// `/api/evolve/status?id=<task_id>`：返回任务状态 + 进度（当前代/总代）+ 实时收敛曲线 SVG；
+/// 完成时内嵌完整结果 JSON（`result`，与 `/api/evolve` 同结构）。未知 id → error。
+fn run_evolve_status(ctx: &Ctx, query: &str) -> String {
+    let id = match query_get(query, "id") {
+        Some(i) => i,
+        None => return error_json("缺少 id 参数（/api/evolve/status?id=<task_id>）"),
+    };
+    let t = match ctx.tasks.lock() {
+        Ok(t) => t,
+        Err(_) => return error_json("任务表锁错误"),
+    };
+    let task = match t.get(&id) {
+        Some(task) => task,
+        None => return error_json("无此任务（id 错或服务已重启）"),
+    };
+    let conv = crate::chart::convergence_chart_svg(&task.history, 720.0, 240.0);
+    let mut j = serde_json::json!({
+        "status": task.status,
+        "gen": task.gen,
+        "total_gens": task.total_gens,
+        "convergence_svg": conv,
+    });
+    let obj = j.as_object_mut().unwrap();
+    if let Some(r) = &task.result {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(r) {
+            obj.insert("result".to_string(), v);
+        }
+    }
+    if let Some(e) = &task.error {
+        obj.insert("error".to_string(), serde_json::Value::String(e.clone()));
+    }
+    j.to_string()
 }
 
 /// 把候选的可调常数 `__c{i}` 代回常数值，得到具体表达式（供 `expr_mathml` 渲染 2D 公式）。
@@ -1929,13 +2075,19 @@ mod tests {
         // 受约束 GP 面板（S2）：靶点列表 + 进化端点 + 候选详情/拟合叠图
         assert!(STUDIO_HTML.contains("gpPanel"));
         assert!(STUDIO_HTML.contains("buildGpTargets"));
-        assert!(STUDIO_HTML.contains("/api/evolve?target="));
+        assert!(STUDIO_HTML.contains("runEvolve"));
         assert!(STUDIO_HTML.contains("showCandidate"));
         assert!(STUDIO_HTML.contains("gpFitSvg"));
         // S3 对比 + 采纳：采纳区 + 溯源草稿/新方程文本复制下载
         assert!(STUDIO_HTML.contains("renderAdopt"));
         assert!(STUDIO_HTML.contains("gpAdoptBtn"));
         assert!(STUDIO_HTML.contains("gpDownload"));
+        // S4 异步：start/status 端点 + 轮询 + memetic 勾选 + 实时收敛曲线
+        assert!(STUDIO_HTML.contains("/api/evolve/start?target="));
+        assert!(STUDIO_HTML.contains("/api/evolve/status?id="));
+        assert!(STUDIO_HTML.contains("pollEvolve"));
+        assert!(STUDIO_HTML.contains("gpMemetic"));
+        assert!(STUDIO_HTML.contains("gpConv"));
         // 园区/简明视图：视图切换 + 录入网格 + 实测数据端点 + 标定
         assert!(STUDIO_HTML.contains("modeSeg"));
         assert!(STUDIO_HTML.contains("entryTable"));

@@ -301,6 +301,7 @@
       <label class="gp-cfg">种群 <input id="gpPop" type="number" value="60" min="4"></label>
       <label class="gp-cfg">代数 <input id="gpGens" type="number" value="40" min="1"></label>
       <label class="gp-cfg">种子 <input id="gpSeed" type="number" value="1"></label>
+      <label class="gp-cfg" title="内层 DE 标定每个候选的常数：更准但更慢（后台异步跑）"><input type="checkbox" id="gpMemetic"> memetic</label>
       <button class="btn" id="gpRun" disabled>开始进化</button>
     </span>
   </h2>
@@ -308,6 +309,10 @@
     <div class="hint" id="gpIntro">GP 在机理留白（🟠 进化靶点）处提议方程形式——你来挑前沿、判 rediscovery、采纳。观测取<b>当前处理区</b>录入数据（园区视图录入，拟合该靶点的输出变量）。memetic 暂不支持（计算量大，待异步）。</div>
     <div class="gp-targets" id="gpTargets"></div>
     <div class="hint" id="gpStatus"></div>
+    <div id="gpProgress" style="display:none">
+      <div class="hint" id="gpProgressText"></div>
+      <div class="opt-conv" id="gpConv"></div>
+    </div>
     <div class="opt-grid" id="gpResult" style="display:none">
       <div id="gpLeft">
         <div class="gp-sub">Pareto 前沿 · 精度 vs 复杂度（点拐点看候选）</div>
@@ -914,27 +919,54 @@ function selectGpTarget(id){
   document.getElementById('gpStatus').innerHTML = '已选靶点 <b>' + esc(e ? (e.name||e.id) : id) + '</b>（输出 '
     + esc(e ? e.output : '') + '）。点「开始进化」。';
 }
+// 异步（S4）：start 起后台任务 → 轮询 status 拿进度（当前代+实时收敛曲线）→ done 渲染前沿。
+// 后台任务放开 memetic/大规模（同步会超时）。轮询用 setTimeout 循环，done/error 停。
+let _gpPoll = null;
 async function runEvolve(){
   if(!_gpTarget){ return; }
   const pop = document.getElementById('gpPop').value || 60;
   const gens = document.getElementById('gpGens').value || 40;
   const seed = document.getElementById('gpSeed').value || 1;
+  const memetic = document.getElementById('gpMemetic').checked;
   const status = document.getElementById('gpStatus');
   const btn = document.getElementById('gpRun');
   btn.disabled = true;
-  status.innerHTML = '⏳ 进化中…（每候选每代一次完整仿真，可能十几~几十秒；release 构建更快）';
+  status.textContent = '';
   document.getElementById('gpResult').style.display = 'none';
-  const q = '/api/evolve?target=' + encodeURIComponent(_gpTarget)
+  const prog = document.getElementById('gpProgress'); prog.style.display = '';
+  document.getElementById('gpConv').innerHTML = '';
+  document.getElementById('gpProgressText').textContent = '⏳ 启动后台任务…';
+  const q = '/api/evolve/start?target=' + encodeURIComponent(_gpTarget)
     + '&zone=' + encodeURIComponent(curZone()) + modelParam()
     + '&pop=' + encodeURIComponent(pop) + '&gens=' + encodeURIComponent(gens) + '&seed=' + encodeURIComponent(seed)
-    + '&_=' + Date.now();
+    + (memetic ? '&memetic=true' : '') + '&_=' + Date.now();
   try {
-    const j = await (await fetch(q, {cache:'no-store'})).json();
-    if(j.error){ status.innerHTML = '<span class="err">进化失败：' + esc(j.error) + '</span>'; return; }
-    status.textContent = '✅ 完成 · 靶点 ' + esc(j.target) + '（' + esc(j.mode) + '）';
-    renderEvolveResult(j);
-  } catch(e){ status.innerHTML = '<span class="err">进化请求失败：' + esc(e) + '</span>'; }
-  finally { btn.disabled = false; }
+    const s = await (await fetch(q, {cache:'no-store'})).json();
+    if(s.error){ status.innerHTML = '<span class="err">进化失败：' + esc(s.error) + '</span>'; prog.style.display = 'none'; btn.disabled = false; return; }
+    pollEvolve(s.task_id, btn);
+  } catch(e){ status.innerHTML = '<span class="err">进化请求失败：' + esc(e) + '</span>'; prog.style.display = 'none'; btn.disabled = false; }
+}
+function pollEvolve(id, btn){
+  clearTimeout(_gpPoll);
+  const tick = async ()=>{
+    let j;
+    try { j = await (await fetch('/api/evolve/status?id=' + encodeURIComponent(id) + '&_=' + Date.now(), {cache:'no-store'})).json(); }
+    catch(e){ _gpPoll = setTimeout(tick, 800); return; }   // 瞬时网络抖动 → 继续轮询
+    if(!j.status){ document.getElementById('gpStatus').innerHTML = '<span class="err">' + esc(j.error || '状态查询失败') + '</span>'; btn.disabled = false; return; }
+    document.getElementById('gpConv').innerHTML = j.convergence_svg || '';
+    const done = j.status === 'done';
+    document.getElementById('gpProgressText').textContent = done
+      ? ('✅ 完成 · ' + (j.total_gens || 0) + ' 代')
+      : ('⏳ 进化中… 第 ' + (j.gen || 0) + '/' + (j.total_gens || 0) + ' 代' + ((j.gen && j.gen >= j.total_gens) ? '（汇总中…）' : ''));
+    if(done){
+      btn.disabled = false;
+      if(j.result){ document.getElementById('gpStatus').textContent = '✅ 完成 · 靶点 ' + esc(j.result.target) + '（' + esc(j.result.mode) + '）'; renderEvolveResult(j.result); }
+      return;
+    }
+    if(j.status === 'error'){ document.getElementById('gpStatus').innerHTML = '<span class="err">进化出错：' + esc(j.error || '') + '</span>'; btn.disabled = false; return; }
+    _gpPoll = setTimeout(tick, 600);
+  };
+  tick();
 }
 function renderEvolveResult(j){
   _gpData = j;

@@ -188,7 +188,20 @@ pub fn evolve_pareto<F: FnMut(&Candidate) -> f64>(
     ctx: &GpContext,
     unit_env: &HashMap<String, Dimension>,
     cfg: &ParetoConfig,
+    error_fn: F,
+) -> Vec<ParetoEntry> {
+    // 默认无进度回调（CLI/同步端点用）；异步任务用 `evolve_pareto_cb` 拿每代进度。
+    evolve_pareto_cb(grammar, ctx, unit_env, cfg, error_fn, &mut |_, _| {})
+}
+
+/// 同 [`evolve_pareto`]，额外每代回调 `progress(gen_1based, best_error)`——供异步任务画收敛曲线。
+pub fn evolve_pareto_cb<F: FnMut(&Candidate) -> f64>(
+    grammar: &str,
+    ctx: &GpContext,
+    unit_env: &HashMap<String, Dimension>,
+    cfg: &ParetoConfig,
     mut error_fn: F,
+    progress: &mut dyn FnMut(usize, f64),
 ) -> Vec<ParetoEntry> {
     let mut rng = Rng::new(cfg.seed);
     // 初始归档
@@ -200,7 +213,10 @@ pub fn evolve_pareto<F: FnMut(&Candidate) -> f64>(
         return vec![];
     }
 
-    for _gen in 0..cfg.gens.max(1) {
+    let best_of = |a: &[ParetoEntry]| -> f64 {
+        a.iter().map(|e| e.error).fold(f64::INFINITY, f64::min)
+    };
+    for gen in 0..cfg.gens.max(1) {
         // 繁殖：从归档随机选亲 → 交叉 + 变异 → 评估
         let mut offspring: Vec<ParetoEntry> = Vec::with_capacity(cfg.pop);
         for _ in 0..cfg.pop {
@@ -229,6 +245,7 @@ pub fn evolve_pareto<F: FnMut(&Candidate) -> f64>(
             }
         }
         archive = next;
+        progress(gen + 1, best_of(&archive)); // 每代末：当前代号 + 归档最小误差
     }
 
     // 返回最终前沿（非支配集），按复杂度升序、同复杂度按误差升序
@@ -332,6 +349,23 @@ mod tests {
             f.iter().map(|e| format!("{:.6}|{}", e.error, e.complexity)).collect::<Vec<_>>()
         };
         assert_eq!(run(), run());
+    }
+
+    /// 进度回调：每代调一次（gen 1..=gens 递增），且 cb(no-op) 与 evolve_pareto 结果一致。
+    #[test]
+    fn test_pareto_progress_cb() {
+        let env: HashMap<String, Dimension> = HashMap::new();
+        let ctx = gate_ctx();
+        let cfg = ParetoConfig { pop: 20, gens: 8, seed: 1, archive_cap: 10, ..Default::default() };
+        let mut gens_seen: Vec<usize> = Vec::new();
+        let front_cb = evolve_pareto_cb("monotone_gate", &ctx, &env, &cfg, make_err(), &mut |g, _e| {
+            gens_seen.push(g);
+        });
+        assert_eq!(gens_seen, (1..=8).collect::<Vec<_>>(), "应每代回调一次、代号递增");
+        // 与不带回调的 evolve_pareto 结果逐位一致（回调不影响搜索）
+        let front_plain = evolve_pareto("monotone_gate", &ctx, &env, &cfg, make_err());
+        let key = |f: &[ParetoEntry]| f.iter().map(|e| format!("{:.9}|{}", e.error, e.complexity)).collect::<Vec<_>>();
+        assert_eq!(key(&front_cb), key(&front_plain));
     }
 
     /// memetic 模式也能跑通并给出前沿（含低误差，常数被标定得更好）。
