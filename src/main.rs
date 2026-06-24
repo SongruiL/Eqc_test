@@ -1300,6 +1300,8 @@ fn run_evolve(
         drivers: Option<String>,
         steps: Option<usize>,
         evolve: Option<EvoCfg>,
+        /// 模型现有形式名（如 "linear_ramp"）；用于判 rediscovery（GP 复原现有形式=验证）。
+        baseline_form: Option<String>,
     }
 
     println!("🧬 GP 进化: {}", input.display());
@@ -1450,21 +1452,36 @@ fn run_evolve(
     });
     let formula = render(&res.best);
 
+    // 溯源回流：识别 GP 选了哪种机理形式 + 分类建议（rediscovery vs 新假设）
+    let cplx = gp::complexity(&res.best.expr);
+    let report = gp::form_report(
+        &res.best, res.best_error, cplx, &grammar, &ctx, s.baseline_form.as_deref(),
+    );
+
     println!("\n✅ 进化完成");
     println!("   最佳形式：{}", formula);
     println!("   可调常数：{:?}", res.best.consts);
     println!("   拟合误差(rmse {}): {:.6}", s.output, res.best_error);
-    println!("   复杂度(节点)：{}", gp::complexity(&res.best.expr));
+    println!("   复杂度(节点)：{}", cplx);
+    println!(
+        "   机理形式：{}{}",
+        report.form.as_deref().unwrap_or("(自定义结构)"),
+        if report.rediscovery { " · rediscovery（复原现有形式=验证）" } else { "" },
+    );
+    println!("   溯源建议：{}", report.suggestion);
 
     if let Some(out) = output {
+        let stub = gp::provenance_stub(&report, &s.target, &s.output, &grammar);
         let j = serde_json::json!({
             "target": s.target, "output": s.output, "grammar": grammar,
             "best_error": res.best_error, "best_cost": res.best_cost,
             "consts": res.best.consts, "formula": formula,
-            "complexity": gp::complexity(&res.best.expr), "history": res.history,
+            "complexity": cplx, "history": res.history,
+            "mechanistic_form": report.form, "rediscovery": report.rediscovery,
+            "provenance_suggestion": report.suggestion, "provenance_stub": stub,
         });
         std::fs::write(out, serde_json::to_string_pretty(&j)?)?;
-        println!("   结果写入 {}", out.display());
+        println!("   结果（含溯源草稿）写入 {}", out.display());
     }
     Ok(())
 }

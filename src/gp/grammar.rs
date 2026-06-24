@@ -77,9 +77,6 @@ impl<'a> Builder<'a> {
     fn new(rng: &'a mut Rng) -> Self {
         Self { rng, consts: Vec::new() }
     }
-    fn pick(&mut self, n: usize) -> usize {
-        self.rng.next_usize(n)
-    }
     fn raw(&mut self, lo: f64, hi: f64) -> f64 {
         self.rng.next_range(lo, hi)
     }
@@ -113,21 +110,50 @@ fn expit(z: Expr) -> Expr {
     Expr::div(c(1.0), Expr::add(c(1.0), Expr::exp(Expr::neg(z))))
 }
 
-/// 从命名语法采样一个合法候选。未知语法 → None。
+/// 从命名语法采样一个合法候选（随机选形式）。未知语法 → None。
 pub fn sample(grammar: &str, ctx: &GpContext, rng: &mut Rng) -> Option<Candidate> {
+    let n = effective_form_count(grammar, ctx);
+    if n == 0 {
+        return None;
+    }
+    let form = rng.next_usize(n);
+    sample_form(grammar, form, ctx, rng)
+}
+
+/// 采样指定形式（form idx）。骨架由 (grammar, form, ctx) 决定、与常数值无关
+/// → 供 provenance 的形式识别（生成各形式的标准骨架来匹配）。
+pub fn sample_form(grammar: &str, form: usize, ctx: &GpContext, rng: &mut Rng) -> Option<Candidate> {
+    let n = effective_form_count(grammar, ctx);
+    if n == 0 {
+        return None;
+    }
+    let form = form.min(n - 1);
     let mut b = Builder::new(rng);
     let expr = match grammar {
-        "monotone_gate" => monotone_gate(ctx, &mut b),
-        "saturating_sink" => saturating_sink(ctx, &mut b),
-        "allocation_fraction" => allocation_fraction(ctx, &mut b),
-        "temperature_response" => temperature_response(ctx, &mut b),
-        "growth_curve" => growth_curve(ctx, &mut b),
+        "monotone_gate" => monotone_gate(ctx, &mut b, form),
+        "saturating_sink" => saturating_sink(ctx, &mut b, form),
+        "allocation_fraction" => allocation_fraction(ctx, &mut b, form),
+        "temperature_response" => temperature_response(ctx, &mut b, form),
+        "growth_curve" => growth_curve(ctx, &mut b, form),
         _ => return None,
     };
     Some(Candidate { expr, consts: b.consts })
 }
 
-/// 某语法的候选形式数（供 G2 变异枚举/测试）。
+/// 某语法在给定 ctx 下的**有效**形式数（依赖输入个数：互作/比值形式需 2 输入）。
+pub fn effective_form_count(grammar: &str, ctx: &GpContext) -> usize {
+    let two = ctx.inputs.len() >= 2;
+    match grammar {
+        "monotone_gate" => if two { 3 } else { 2 },
+        "saturating_sink" => 3,
+        "allocation_fraction" => if two { 3 } else { 2 },
+        "temperature_response" => 2,
+        "growth_curve" => 3,
+        _ => 0,
+    }
+}
+
+/// 某语法的候选形式数（最大；供 G2 变异枚举/测试）。
 pub fn form_count(grammar: &str) -> usize {
     match grammar {
         "monotone_gate" => 3,
@@ -139,12 +165,32 @@ pub fn form_count(grammar: &str) -> usize {
     }
 }
 
+/// 形式的人类可读名（供 provenance 报告"GP 选了哪种机理形式"）。
+pub fn form_name(grammar: &str, form: usize) -> &'static str {
+    match (grammar, form) {
+        ("monotone_gate", 0) => "linear_ramp",
+        ("monotone_gate", 1) => "sigmoid",
+        ("monotone_gate", _) => "sigmoid_chill_heat_interaction",
+        ("saturating_sink", 0) => "linear_saturation",
+        ("saturating_sink", 1) => "sigmoid_decreasing",
+        ("saturating_sink", _) => "hill_decreasing",
+        ("allocation_fraction", 0) => "constant_fraction",
+        ("allocation_fraction", 1) => "logistic_of_state",
+        ("allocation_fraction", _) => "sink_strength_ratio",
+        ("temperature_response", 0) => "trapezoid_cardinal",
+        ("temperature_response", _) => "gaussian_peak",
+        ("growth_curve", 0) => "single_logistic",
+        ("growth_curve", 1) => "double_logistic",
+        ("growth_curve", _) => "gompertz",
+        _ => "unknown",
+    }
+}
+
 // ============ 5 套通用语法 ============
 
-fn monotone_gate(ctx: &GpContext, b: &mut Builder) -> Expr {
+fn monotone_gate(ctx: &GpContext, b: &mut Builder, form: usize) -> Expr {
     let d = ctx.driver("increasing");
-    let n = if ctx.inputs.len() >= 2 { 3 } else { 2 };
-    match b.pick(n) {
+    match form {
         0 => {
             // clamp((d − c0)/c1+, 0, 1)
             let inner = Expr::div(Expr::sub(v(&d), b.ec(0.0, 50.0)), b.pc(50.0));
@@ -163,10 +209,10 @@ fn monotone_gate(ctx: &GpContext, b: &mut Builder) -> Expr {
     }
 }
 
-fn saturating_sink(ctx: &GpContext, b: &mut Builder) -> Expr {
+fn saturating_sink(ctx: &GpContext, b: &mut Builder, form: usize) -> Expr {
     let x = ctx.driver("decreasing");
     let cap = ctx.other(&x);
-    match b.pick(3) {
+    match form {
         0 => {
             // max(0, 1 − x/cap)；cap=第二输入 或 正常数
             let denom = cap.as_deref().map(v).unwrap_or_else(|| b.pc(10.0));
@@ -181,10 +227,9 @@ fn saturating_sink(ctx: &GpContext, b: &mut Builder) -> Expr {
     }
 }
 
-fn allocation_fraction(ctx: &GpContext, b: &mut Builder) -> Expr {
+fn allocation_fraction(ctx: &GpContext, b: &mut Builder, form: usize) -> Expr {
     let s = ctx.inputs.first().cloned().unwrap_or_else(|| "x".into());
-    let n = if ctx.inputs.len() >= 2 { 3 } else { 2 };
-    match b.pick(n) {
+    match form {
         0 => Expr::clamp(b.ec(0.0, 1.0), c(0.0), c(1.0)),
         1 => expit(Expr::mul(b.pc(1.0), Expr::sub(v(&s), b.ec(0.0, 10.0)))),
         _ => {
@@ -194,9 +239,9 @@ fn allocation_fraction(ctx: &GpContext, b: &mut Builder) -> Expr {
     }
 }
 
-fn temperature_response(ctx: &GpContext, b: &mut Builder) -> Expr {
+fn temperature_response(ctx: &GpContext, b: &mut Builder, form: usize) -> Expr {
     let t = ctx.inputs.first().cloned().unwrap_or_else(|| "T".into());
-    match b.pick(2) {
+    match form {
         0 => {
             // 梯形：基点有序采样，登记为可调常数（含正的区间宽度，保证分母>0）
             let tb = b.raw(0.0, 8.0);
@@ -218,10 +263,10 @@ fn temperature_response(ctx: &GpContext, b: &mut Builder) -> Expr {
     }
 }
 
-fn growth_curve(ctx: &GpContext, b: &mut Builder) -> Expr {
+fn growth_curve(ctx: &GpContext, b: &mut Builder, form: usize) -> Expr {
     let tau = ctx.driver("increasing");
     let wmax = ctx.other(&tau).map(|n| v(&n)).unwrap_or_else(|| b.pc(2.0));
-    match b.pick(3) {
+    match form {
         0 => Expr::mul(
             wmax,
             expit(Expr::mul(b.pc(0.1), Expr::sub(v(&tau), b.ec(0.0, 800.0)))),

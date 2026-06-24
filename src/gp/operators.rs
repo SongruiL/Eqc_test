@@ -103,7 +103,8 @@ pub fn crossover(
 }
 
 /// 两骨架结构是否相同（忽略结构常数值、可调常数占位名一致即可；只看语法算子集）。
-fn same_skeleton(a: &Expr, b: &Expr) -> bool {
+/// `pub(crate)` 供 provenance 的形式识别复用。
+pub(crate) fn same_skeleton(a: &Expr, b: &Expr) -> bool {
     use Expr::*;
     match (a, b) {
         (Const(x), Const(y)) => x == y, // 结构常数须一致

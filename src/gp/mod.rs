@@ -15,13 +15,18 @@ pub mod fitness;
 pub mod grammar;
 pub mod operators;
 pub mod pareto;
+pub mod provenance;
 
 pub use constraints::{bounds_ok, check_candidate, eval_candidate, monotone_ok, units_ok, CandidateCheck};
 pub use evolve::{evolve, EvolveConfig, EvolveResult};
 pub use fitness::{context_from_target, evaluate_in_model, patch_model, Observed};
-pub use grammar::{form_count, sample, Candidate, GpContext, KNOWN_GRAMMARS};
+pub use grammar::{
+    effective_form_count, form_count, form_name, sample, sample_form, Candidate, GpContext,
+    KNOWN_GRAMMARS,
+};
 pub use operators::{complexity, crossover, mutate, perturb_constants};
 pub use pareto::{calibrate_consts, evolve_pareto, ParetoConfig, ParetoEntry};
+pub use provenance::{form_report, identify_form, provenance_stub, render_formula, ProvenanceReport};
 
 #[cfg(test)]
 mod tests {
