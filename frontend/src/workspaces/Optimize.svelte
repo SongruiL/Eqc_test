@@ -1,8 +1,8 @@
 <script lang="ts">
   // 优化工作区：填决策 spec → 跑 DE → 最优旋钮 + 约束 + 收敛曲线；多目标则画 Pareto 前沿、点选看该点。
-  import { store } from '../lib/store.svelte'
+  import { store, applyKnobs, setWorkspace } from '../lib/store.svelte'
   import { runOptimize } from '../lib/api'
-  import type { OptResult } from '../lib/contract'
+  import type { OptResult, Knob } from '../lib/contract'
   import { fmtNum } from '../lib/format'
   import KnobTable from '../components/KnobTable.svelte'
 
@@ -41,6 +41,11 @@
     point = +(t.getAttribute('data-i') ?? 0)
   }
   const pt = $derived(res?.front?.[point])
+
+  function overlay(knobs: Knob[]) {
+    applyKnobs(knobs)
+    setWorkspace('simulate') // 跳到仿真工作区，最优旋钮已叠加进情景、曲线即时重画
+  }
 </script>
 
 <div class="ws">
@@ -65,6 +70,9 @@
             {/each}
           </div>
         {/if}
+        {#if res.best_knobs?.length}
+          <button class="btn link" onclick={() => overlay(res!.best_knobs!)}>叠加最优旋钮到仿真曲线 →</button>
+        {/if}
       </div>
       <div class="conv">{@html res.convergence_svg ?? ''}</div>
     </div>
@@ -85,6 +93,9 @@
           <div class="sub">选中点</div>
           <div class="cons">{#each pt.objectives ?? [] as v, i}{res.objectives?.[i]?.expr ?? ('目标' + (i + 1))} = {fmtNum(v)}　{/each}{pt.feasible === false ? '（违反约束）' : ''}</div>
           <KnobTable knobs={pt.knobs ?? []} />
+          {#if pt.knobs?.length}
+            <button class="btn link" onclick={() => overlay(pt!.knobs)}>叠加该点旋钮到仿真曲线 →</button>
+          {/if}
         {:else}
           <div class="hint">点前沿上的点查看该点旋钮。</div>
         {/if}
@@ -99,6 +110,7 @@
   .spec { font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; min-width: 280px; }
   .btn { border: 1px solid var(--line); background: #fff; color: var(--sub); font-size: 12px; padding: 4px 12px; border-radius: 7px; cursor: pointer; }
   .btn.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn.link { margin-top: 10px; color: var(--accent); }
   .btn:disabled { opacity: 0.5; cursor: default; }
   .hint { color: var(--sub); font-size: 12px; margin: 4px 0; }
   .status { font-size: 13px; margin: 8px 0; }

@@ -14,22 +14,23 @@ export async function fetchModel(model: string): Promise<ModelJson> {
   return (await fetch('/api/model' + modelQS(model, '?'), { cache: 'no-store' })).json()
 }
 
-/** 整季轨迹图 SVG（EQC 自生成）。`p`/`init` = 情景覆盖（参数/初值）。 */
+/** 整季轨迹图 SVG（EQC 自生成）。`p`/`init`/`d` = 情景覆盖（参数/初值/恒定驱动）。 */
 export function chartUrl(
   model: string,
   vars: string[],
   p: Record<string, number>,
-  init: Record<string, number>
+  init: Record<string, number>,
+  d: Record<string, number> = {}
 ): string {
   const enc = (o: Record<string, number>) =>
     Object.entries(o)
       .map(([k, v]) => `${k}:${v}`)
       .join(',')
   let u = `/api/chart.svg?vars=${encodeURIComponent(vars.join(','))}` + modelQS(model)
-  const ps = enc(p)
-  const is = enc(init)
+  const ps = enc(p), is = enc(init), ds = enc(d)
   if (ps) u += `&p=${encodeURIComponent(ps)}`
   if (is) u += `&init=${encodeURIComponent(is)}`
+  if (ds) u += `&d=${encodeURIComponent(ds)}`
   return u + `&_=${Date.now()}`
 }
 

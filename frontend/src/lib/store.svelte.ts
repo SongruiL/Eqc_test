@@ -1,6 +1,6 @@
 // 全局响应式状态（Svelte 5 runes in .svelte.ts）：模型/处理区/模式/当前工作区。
 // 组件 import 这个 store 读写即响应式联动——比 v1 的全局变量 + 手动 DOM 同步干净得多。
-import type { ModelEntry, ModelJson } from './contract'
+import type { ModelEntry, ModelJson, Knob } from './contract'
 import { fetchModels, fetchModel } from './api'
 
 export const EXPERT_WS = ['structure', 'simulate', 'optimize', 'calibrate', 'gp', 'edit'] as const
@@ -14,6 +14,13 @@ export const store = $state({
   workspace: 'simulate' as string,
   modelJson: null as ModelJson | null,
   connected: false,
+  // 仿真视图状态（提到全局：跨工作区共享——优化「叠加最优旋钮」要写它、仿真工作区读它）。
+  selectedVars: [] as string[],
+  scenario: { p: {}, i: {}, d: {} } as {
+    p: Record<string, number> // 参数覆盖
+    i: Record<string, number> // 初值覆盖
+    d: Record<string, number> // 恒定驱动覆盖（driver_const，无滑块、只影响曲线）
+  },
 })
 
 function ls(key: string): string | null {
@@ -50,8 +57,30 @@ export async function reloadModel() {
   try {
     store.modelJson = await fetchModel(store.model)
     store.connected = true
+    resetSimView()
   } catch {
     store.connected = false
+  }
+}
+
+/** 切模型后重置仿真视图：默认勾选（Y 优先，否则所有 output）+ 清情景覆盖。 */
+function resetSimView() {
+  const vs = store.modelJson?.modules?.[0]?.variables ?? []
+  const hasY = vs.some((v) => v.name === 'Y')
+  store.selectedVars = vs.filter((v) => (hasY ? v.name === 'Y' : v.var_type === 'output')).map((v) => v.name)
+  store.scenario = { p: {}, i: {}, d: {} }
+}
+
+export function clearScenario() {
+  store.scenario = { p: {}, i: {}, d: {} }
+}
+
+/** 把一组旋钮（优化/标定结果）叠加进情景覆盖（param→p、init→i、driver_const→d）。 */
+export function applyKnobs(knobs: Knob[]) {
+  for (const k of knobs) {
+    if (k.kind === 'param') store.scenario.p[k.var] = k.value
+    else if (k.kind === 'init') store.scenario.i[k.var] = k.value
+    else if (k.kind === 'driver_const') store.scenario.d[k.var] = k.value
   }
 }
 
