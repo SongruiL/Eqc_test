@@ -1302,6 +1302,10 @@ fn run_evolve(
         evolve: Option<EvoCfg>,
         /// 模型现有形式名（如 "linear_ramp"）；用于判 rediscovery（GP 复原现有形式=验证）。
         baseline_form: Option<String>,
+        /// 多槽位联合进化：一次进化模型全部（或 targets 指定）的 🟠 靶点。
+        joint: Option<bool>,
+        /// joint 子集（缺省=模型所有 gp_target）。
+        targets: Option<Vec<String>>,
     }
 
     println!("🧬 GP 进化: {}", input.display());
@@ -1399,6 +1403,62 @@ fn run_evolve(
         }
         shown.to_python("")
     };
+
+    // —— 多槽位联合进化 ——
+    if s.joint.unwrap_or(false) {
+        let slots = gp::slots_from_model(&file, s.targets.as_deref());
+        if slots.is_empty() {
+            return Err("joint：模型无 gp_target 槽位".into());
+        }
+        let ids: Vec<&String> = slots.iter().map(|sl| &sl.target_id).collect();
+        println!("   联合进化 {} 个槽位：{:?}", slots.len(), ids);
+        let jcfg = gp::JointConfig {
+            pop,
+            gens,
+            seed,
+            sweep_hi,
+            parsimony: ec.parsimony.unwrap_or(0.0),
+            ..Default::default()
+        };
+        let res = gp::evolve_joint(&slots, &unit_env, &jcfg, |genome| {
+            gp::evaluate_multi(&file, &slots, genome, &sim_input, &observed_data)
+        });
+        println!("\n✅ 联合进化完成 · 平均 rmse(over 观测) = {:.6}", res.best_error);
+        for (k, slot) in slots.iter().enumerate() {
+            let cand = &res.best[k];
+            let form = gp::identify_form(cand, &slot.grammar, &slot.ctx)
+                .map(|i| gp::form_name(&slot.grammar, i).to_string());
+            println!(
+                "   {} [{}] → 形式 {} · {}",
+                slot.target_id,
+                slot.grammar,
+                form.as_deref().unwrap_or("自定义结构"),
+                render(cand),
+            );
+        }
+        if let Some(out) = output {
+            let slots_json: Vec<_> = slots
+                .iter()
+                .enumerate()
+                .map(|(k, slot)| {
+                    let cand = &res.best[k];
+                    let form = gp::identify_form(cand, &slot.grammar, &slot.ctx)
+                        .map(|i| gp::form_name(&slot.grammar, i).to_string());
+                    serde_json::json!({
+                        "target": slot.target_id, "grammar": slot.grammar,
+                        "form": form, "consts": cand.consts, "formula": render(cand),
+                    })
+                })
+                .collect();
+            let j = serde_json::json!({
+                "mode": "joint", "mean_rmse": res.best_error,
+                "slots": slots_json, "history": res.history,
+            });
+            std::fs::write(out, serde_json::to_string_pretty(&j)?)?;
+            println!("   结果写入 {}", out.display());
+        }
+        return Ok(());
+    }
 
     // —— Pareto 多目标 ——
     if ec.pareto.unwrap_or(false) {

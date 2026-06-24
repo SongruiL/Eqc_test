@@ -13,6 +13,7 @@ pub mod constraints;
 pub mod evolve;
 pub mod fitness;
 pub mod grammar;
+pub mod joint;
 pub mod operators;
 pub mod pareto;
 pub mod provenance;
@@ -23,6 +24,9 @@ pub use fitness::{context_from_target, evaluate_in_model, patch_model, Observed}
 pub use grammar::{
     effective_form_count, form_count, form_name, sample, sample_form, Candidate, GpContext,
     KNOWN_GRAMMARS,
+};
+pub use joint::{
+    evaluate_multi, evolve_joint, patch_multi, slots_from_model, JointConfig, JointResult, Slot,
 };
 pub use operators::{complexity, crossover, mutate, perturb_constants};
 pub use pareto::{calibrate_consts, evolve_pareto, ParetoConfig, ParetoEntry};
