@@ -1136,7 +1136,15 @@ fn run_evolve(m: &ModelEntry, query: &str) -> Result<String, String> {
         gp::evaluate_in_model(file, &target_c, &outv, cand, &sim_input, &observed_data)
     });
 
-    // 每个前沿点：机理形式识别 + rediscovery 判定 + 拟合轨迹（patch+sim 抽 output 序列）。
+    // 目标方程友好名（用于采纳的 YAML 片段）。
+    let eqname = file
+        .equations
+        .iter()
+        .find(|e| e.id == target)
+        .map(|e| e.name.clone())
+        .unwrap_or_else(|| target.clone());
+
+    // 每个前沿点：机理形式识别 + rediscovery 判定 + 拟合轨迹 + 采纳产物（溯源草稿 + YAML 片段）。
     let front_json: Vec<serde_json::Value> = front
         .iter()
         .map(|e| {
@@ -1149,6 +1157,9 @@ fn run_evolve(m: &ModelEntry, query: &str) -> Result<String, String> {
                 baseline_form.as_deref(),
             );
             let traj = candidate_trajectory(file, &target, &output, &e.cand, &sim_input);
+            // S3 采纳产物（人在环裁决后复制/下载，不写盘）。
+            let stub = gp::provenance_stub(&report, &target, &output, &grammar);
+            let yaml_fragment = candidate_yaml_fragment(&target, &eqname, &output, &e.cand);
             serde_json::json!({
                 "complexity": e.complexity,
                 "error": e.error,
@@ -1159,24 +1170,33 @@ fn run_evolve(m: &ModelEntry, query: &str) -> Result<String, String> {
                 "rediscovery": report.rediscovery,
                 "provenance_suggestion": report.suggestion,
                 "trajectory": traj,
+                "provenance_stub": stub,
+                "yaml_fragment": yaml_fragment,
             })
         })
         .collect();
 
-    // baseline：现模型当前形式（未 patch 的原方程）+ 其仿真轨迹（对比用）。
+    // baseline：现模型当前形式（未 patch 的原方程）+ 其仿真轨迹 + rmse/复杂度（与候选并排对比）。
     let baseline = {
         let eq = file.equations.iter().find(|e| e.id == target);
         let formula = eq.map(|e| e.expression.to_python("")).unwrap_or_default();
         let formula_mathml = eq
             .map(|e| crate::report::expr_mathml(&e.expression))
             .unwrap_or_default();
-        let traj = match simulate(file, &sim_input) {
-            Ok(out) => series_to_traj(&out, &output),
-            Err(_) => serde_json::Value::Null,
+        let complexity = eq.map(|e| gp::complexity(&e.expression));
+        let out = simulate(file, &sim_input).ok();
+        // rmse 与候选同口径（观测日上比）；现方程复杂度=节点数。
+        let error = out
+            .as_ref()
+            .and_then(|o| rmse_on_obs(o.series(&output), &obs_series));
+        let traj = match &out {
+            Some(o) => series_to_traj(o, &output),
+            None => serde_json::Value::Null,
         };
         serde_json::json!({
             "formula": formula, "formula_mathml": formula_mathml,
             "form": baseline_form, "trajectory": traj,
+            "error": error, "complexity": complexity,
         })
     };
 
@@ -1226,6 +1246,41 @@ fn candidate_trajectory(
         },
         None => serde_json::Value::Null,
     }
+}
+
+/// rmse(传入序列 vs 稀疏观测)，仅在观测日（1-based DAT）上比较。与 GP 候选适应度同口径，
+/// 用于 baseline 与候选的并排对比。无可比点/非有限 → None。
+fn rmse_on_obs(traj: Option<&[f64]>, obs: &[(usize, f64)]) -> Option<f64> {
+    let traj = traj?;
+    if obs.is_empty() {
+        return None;
+    }
+    let (mut se, mut n) = (0.0f64, 0usize);
+    for &(day, val) in obs {
+        let y = *traj.get(day.checked_sub(1)?)?;
+        if !y.is_finite() {
+            return None;
+        }
+        se += (y - val).powi(2);
+        n += 1;
+    }
+    (n > 0).then(|| (se / n as f64).sqrt())
+}
+
+/// 采纳后可粘贴进模型的 `.eq.yaml` 方程片段：候选 expr（常数已代回字面值）包成
+/// `{id,name,output,expression}` 列表项。供科学家复制粘贴替换原方程（S3，不写盘）。
+fn candidate_yaml_fragment(target: &str, name: &str, output: &str, cand: &crate::gp::Candidate) -> String {
+    let mut m = serde_yaml::Mapping::new();
+    m.insert("id".into(), target.into());
+    m.insert("name".into(), name.into());
+    m.insert("output".into(), output.into());
+    m.insert(
+        "expression".into(),
+        crate::sexpr::to_yaml::to_yaml_value(&candidate_expr(cand)),
+    );
+    let seq = serde_yaml::Value::Sequence(vec![serde_yaml::Value::Mapping(m)]);
+    let body = serde_yaml::to_string(&seq).unwrap_or_default();
+    format!("# —— GP 采纳候选（复制进模型替换原方程；可调常数已代回字面值）——\n{body}")
 }
 
 /// 仿真输出某变量序列 → {DAT:[1..n], value:[...]}。变量缺失 → Null。
@@ -1826,6 +1881,29 @@ mod tests {
     }
 
     #[test]
+    fn test_evolve_s3_helpers() {
+        use crate::ast::Expr;
+        use crate::gp::Candidate;
+        // rmse_on_obs：仅在观测日（1-based）上比较。
+        let traj = [1.0, 2.0, 3.0, 4.0];
+        let r = rmse_on_obs(Some(&traj), &[(1, 1.0), (3, 3.5)]).unwrap();
+        assert!((r - (0.125f64).sqrt()).abs() < 1e-12); // se=(0+0.25)/2
+        assert!(rmse_on_obs(Some(&traj), &[]).is_none()); // 无观测
+        assert!(rmse_on_obs(None, &[(1, 1.0)]).is_none()); // 无轨迹
+        // candidate_yaml_fragment：常数代回字面值，产出可解析的 .eq.yaml 片段。
+        let cand = Candidate { expr: Expr::add(Expr::param("__c0"), Expr::var("d")), consts: vec![2.5] };
+        let frag = candidate_yaml_fragment("TGT", "门控", "y", &cand);
+        assert!(frag.contains("GP 采纳候选"));
+        let v: serde_yaml::Value = serde_yaml::from_str(&frag).expect("片段应是合法 YAML");
+        let eq0 = &v.as_sequence().unwrap()[0];
+        assert_eq!(eq0["id"].as_str(), Some("TGT"));
+        assert_eq!(eq0["output"].as_str(), Some("y"));
+        // 常数已代回字面（出现 const: 2.5，不出现 __c 占位）
+        assert!(frag.contains("2.5"));
+        assert!(!frag.contains("__c"));
+    }
+
+    #[test]
     fn test_error_helpers() {
         assert!(error_json("x").contains("\"error\""));
         assert!(error_svg("bad <x>").contains("&lt;x&gt;"));
@@ -1854,6 +1932,10 @@ mod tests {
         assert!(STUDIO_HTML.contains("/api/evolve?target="));
         assert!(STUDIO_HTML.contains("showCandidate"));
         assert!(STUDIO_HTML.contains("gpFitSvg"));
+        // S3 对比 + 采纳：采纳区 + 溯源草稿/新方程文本复制下载
+        assert!(STUDIO_HTML.contains("renderAdopt"));
+        assert!(STUDIO_HTML.contains("gpAdoptBtn"));
+        assert!(STUDIO_HTML.contains("gpDownload"));
         // 园区/简明视图：视图切换 + 录入网格 + 实测数据端点 + 标定
         assert!(STUDIO_HTML.contains("modeSeg"));
         assert!(STUDIO_HTML.contains("entryTable"));

@@ -104,6 +104,9 @@
   .gp-cmp b { color:var(--ink); }
   .gp-leg { font-size:11px; color:var(--sub); margin-top:4px; }
   .gp-leg i { font-style:normal; font-weight:600; }
+  .gp-ta { width:100%; box-sizing:border-box; font-family:ui-monospace,Consolas,monospace; font-size:12px; border:1px solid var(--line); border-radius:6px; padding:6px; margin-top:4px; resize:vertical; color:var(--ink); }
+  .gp-adopt-lab { font-size:12px; font-weight:600; color:var(--ink); margin-top:8px; }
+  #gpDetail .opt-tbl td:first-child { color:var(--sub); }
   /* 视图切换（园区/专家）放右上 */
   header #modeSeg { margin-left:auto; }
   /* 园区录入视图 */
@@ -953,26 +956,67 @@ function renderEvolveResult(j){
   }
   if(n > 0) showCandidate(j, 0);   // 默认展示第一个（低复杂度端）
 }
-// 候选详情：rediscovery 徽章 + 2D 公式（MathML）+ 拟合轨迹叠观测 + 与现有形式对比。
+// 候选详情：rediscovery 徽章 + 2D 公式（MathML）+ 拟合轨迹叠观测 + 与现有形式并排对比 + 采纳。
 function showCandidate(j, i){
   const e = j.pareto_front && j.pareto_front[i]; if(!e) return;
+  const b = j.baseline || {};
   const cls = e.rediscovery ? 'redisc' : (e.mechanistic_form ? 'newform' : 'custom');
   const badge = e.rediscovery ? '🟢 rediscovery（复原现有形式 = 机理验证）'
     : (e.mechanistic_form ? '🟠 新形式假设（语法内另一种机理形式，待田间证伪）'
                           : '🟠 自定义结构（不在标准形式集合，需人工审）');
+  const dash = x => (x==null ? '—' : fmtNum(x));
   let h = '<div class="gp-sub">候选详情</div>';
   h += '<div><span class="gp-badge ' + cls + '">' + badge + '</span></div>';
   h += '<div class="gp-fml">' + (e.formula_mathml || ('<code>' + esc(e.formula) + '</code>')) + '</div>';
-  h += '<div class="gp-cmp">机理形式：<b>' + esc(e.mechanistic_form || '自定义') + '</b>　·　复杂度 <b>'
-    + e.complexity + '</b>　·　rmse <b>' + fmtNum(e.error) + '</b></div>';
+  // 并排对比：现有形式 vs GP 候选（机理形式 / rmse / 复杂度）
+  h += '<table class="opt-tbl"><tr><th></th><th>现有形式</th><th>GP 候选</th></tr>'
+    + '<tr><td>机理形式</td><td>' + esc(b.form || '—') + '</td><td>' + esc(e.mechanistic_form || '自定义') + '</td></tr>'
+    + '<tr><td>rmse（观测日）</td><td>' + dash(b.error) + '</td><td>' + dash(e.error) + '</td></tr>'
+    + '<tr><td>复杂度（节点）</td><td>' + dash(b.complexity) + '</td><td>' + e.complexity + '</td></tr>'
+    + '</table>';
   h += '<div class="gp-leg"><i style="color:#2563eb">━ 候选拟合</i>　<i style="color:#9ca3af">┄ 现有形式</i>　<i style="color:#f59e0b">● 实测</i></div>';
-  h += gpFitSvg(e.trajectory, j.baseline && j.baseline.trajectory, j.observed);
-  if(j.baseline){
-    h += '<div class="gp-cmp">现有形式' + (j.baseline.form ? ('（<b>' + esc(j.baseline.form) + '</b>）') : '')
-      + '：<br><code>' + esc(j.baseline.formula || '') + '</code></div>';
-  }
+  h += gpFitSvg(e.trajectory, b.trajectory, j.observed);
+  if(b.formula) h += '<div class="gp-cmp">现有形式公式：<br><code>' + esc(b.formula) + '</code></div>';
   if(e.provenance_suggestion) h += '<div class="hint">溯源建议：' + esc(e.provenance_suggestion) + '</div>';
+  h += '<button class="btn" id="gpAdoptBtn" style="margin-top:10px">采纳此候选 ▾</button>';
+  h += '<div id="gpAdopt" style="display:none"></div>';
   document.getElementById('gpDetail').innerHTML = h;
+  const ab = document.getElementById('gpAdoptBtn');
+  if(ab) ab.addEventListener('click', ()=>renderAdopt(j, i));
+}
+// 采纳区（人在环裁决 · 只产文本、不写盘）：溯源草稿（可编辑分类）+ 新方程文本，复制/下载。
+function renderAdopt(j, i){
+  const e = j.pareto_front[i]; if(!e) return;
+  const box = document.getElementById('gpAdopt'); box.style.display='';
+  const tgt = j.target || 'gp';
+  let h = '<div class="gp-sub" style="margin-top:10px">采纳（人在环裁决 · 只产文本、不写盘）</div>';
+  h += '<div class="hint">复核/编辑分类后复制或下载。EQC 持有模型，是否写回由你决定（v1 不自动改盘上模型）。</div>';
+  h += '<div class="gp-adopt-lab">溯源条目草稿（可编辑分类 🟢/🔵/🟠）</div>';
+  h += '<textarea id="gpStub" class="gp-ta" rows="12">' + esc(e.provenance_stub || '') + '</textarea>';
+  h += '<div><button class="btn" id="gpStubCopy">复制</button> <button class="btn" id="gpStubDl">下载 .md</button></div>';
+  h += '<div class="gp-adopt-lab">新方程文本（.eq.yaml 片段，常数已代回字面值）</div>';
+  h += '<textarea id="gpYaml" class="gp-ta" rows="6">' + esc(e.yaml_fragment || '') + '</textarea>';
+  h += '<div><button class="btn" id="gpYamlCopy">复制</button> <button class="btn" id="gpYamlDl">下载 .yaml</button></div>';
+  box.innerHTML = h;
+  const stub = ()=>document.getElementById('gpStub').value, yaml = ()=>document.getElementById('gpYaml').value;
+  document.getElementById('gpStubCopy').addEventListener('click', ()=>gpCopy(stub()));
+  document.getElementById('gpStubDl').addEventListener('click', ()=>gpDownload(tgt + '_provenance.md', stub(), 'text/markdown'));
+  document.getElementById('gpYamlCopy').addEventListener('click', ()=>gpCopy(yaml()));
+  document.getElementById('gpYamlDl').addEventListener('click', ()=>gpDownload(tgt + '_' + (e.mechanistic_form || 'candidate') + '.eq.yaml', yaml(), 'text/yaml'));
+}
+function gpNote(msg){ const s=document.getElementById('gpStatus'); if(s) s.textContent = msg; }
+function gpCopy(text){
+  if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(()=>gpNote('已复制到剪贴板 ✓'), ()=>gpNote('复制失败')); return; }
+  const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select();
+  try{ document.execCommand('copy'); gpNote('已复制到剪贴板 ✓'); }catch(e){ gpNote('复制失败'); }
+  document.body.removeChild(ta);
+}
+function gpDownload(name, text, mime){
+  const blob=new Blob([text], {type:(mime||'text/plain')+';charset=utf-8'});
+  const url=URL.createObjectURL(blob); const a=document.createElement('a');
+  a.href=url; a.download=name; document.body.appendChild(a); a.click();
+  document.body.removeChild(a); setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  gpNote('已下载 ' + name);
 }
 // 自画的拟合叠观测小图（候选实线 / 现有形式虚线 / 实测散点）；数据来自契约 trajectory/observed。
 function gpFitSvg(cand, base, obs){

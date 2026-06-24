@@ -79,6 +79,8 @@ impl ExprToYaml {
             // 聚合函数
             Expr::Max(args) => Self::variadic("max", args),
             Expr::Min(args) => Self::variadic("min", args),
+            // 钳制（clamp(value, lo, hi)）——GP 门控/饱和/温响语法都用它，必须能序列化回 YAML
+            Expr::Clamp(a, b, c) => Self::ternary("clamp", a, b, c),
             
             // 关系运算
             Expr::Eq(a, b) => Self::binary("eq", a, b),
@@ -322,6 +324,24 @@ mod tests {
         }
     }
     
+    #[test]
+    fn test_clamp() {
+        // clamp(value, 0, 1) → {op: clamp, args: [..,..,..]}（不再落到 _note 占位）
+        let expr = Expr::clamp(Expr::var("x"), Expr::Const(0.0), Expr::Const(1.0));
+        let yaml = to_yaml_value(&expr);
+        if let Value::Mapping(map) = yaml {
+            assert_eq!(
+                map.get(Value::String("op".to_string())),
+                Some(&Value::String("clamp".to_string()))
+            );
+            let args = map.get(Value::String("args".to_string())).and_then(|v| v.as_sequence());
+            assert_eq!(args.map(|a| a.len()), Some(3));
+            assert!(!map.contains_key(Value::String("_note".to_string())), "clamp 不应再是未支持占位");
+        } else {
+            panic!("Expected Mapping");
+        }
+    }
+
     #[test]
     fn test_if_then_else() {
         let expr = Expr::if_then_else(
