@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use crate::dag::{build_dag, collapse_dag, DagLevel};
-use crate::parser::{parse_directory, parse_file};
+use crate::parser::{parse_directory, parse_file, parse_str};
 use crate::report::{generate_report_leveled, LayoutKind};
 use crate::schema::EquationFile;
 use crate::sim::{simulate, simulate_coupled, CoupledInput, SimInput, SimOutput};
@@ -819,6 +819,12 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
             "application/json; charset=utf-8",
             run_evolve_status(ctx, query),
         ),
+        // 模型源码（浏览器内编辑器 C1）：GET 取原文；POST 校验编辑后的文本 + 返结构预览（不写盘）。
+        "/api/source" => ("200 OK", "application/json; charset=utf-8", read_source(m)),
+        "/api/validate" => match method {
+            "POST" => ("200 OK", "application/json; charset=utf-8", run_validate(query, &req_body)),
+            _ => ("405 Method Not Allowed", "text/plain; charset=utf-8", "Method Not Allowed".to_string()),
+        },
         // 用某处理区录入的实测数据标定模型参数（录入→标定闭环的「标定」端）。
         "/api/calibrate" => match run_calibrate(m, query) {
             Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
@@ -1631,6 +1637,42 @@ fn run_evolve_status(ctx: &Ctx, query: &str) -> String {
         obj.insert("error".to_string(), serde_json::Value::String(e.clone()));
     }
     j.to_string()
+}
+
+/// `GET /api/source`：返回当前模型 `.eq.yaml` 原文（浏览器内编辑器 C1）。
+/// v1 仅单文件模型可编辑；耦合视图 / 目录模型 → `editable:false` + 提示。
+fn read_source(m: &ModelEntry) -> String {
+    if m.coupling.is_some() {
+        return serde_json::json!({ "editable": false, "error": "耦合视图不可编辑（请选单个作物模型）" }).to_string();
+    }
+    if !m.path.is_file() {
+        return serde_json::json!({
+            "editable": false, "path": m.path.display().to_string(),
+            "error": "多文件/目录模型暂不支持编辑（v1 仅单文件）"
+        })
+        .to_string();
+    }
+    match std::fs::read_to_string(&m.path) {
+        Ok(src) => serde_json::json!({ "editable": true, "source": src, "path": m.path.display().to_string() }).to_string(),
+        Err(e) => serde_json::json!({ "editable": false, "error": format!("读取失败: {e}") }).to_string(),
+    }
+}
+
+/// `POST /api/validate`（body = 编辑后的 YAML 文本）：parse + 校验 → `{ok, errors[], report_html?}`。
+/// ok 时附结构图预览 HTML（复用 `generate_report`，所见即所得）。**不写盘**——编辑的是浏览器副本。
+/// `?layout=&level=` 让预览与结构工作区一致。
+fn run_validate(query: &str, body: &[u8]) -> String {
+    let text = String::from_utf8_lossy(body);
+    let file = match parse_str(&text) {
+        Ok(f) => f,
+        Err(e) => return serde_json::json!({ "ok": false, "errors": [e.to_string()] }).to_string(),
+    };
+    let files = vec![file];
+    if let Err(e) = crate::validator::validate(&files) {
+        return serde_json::json!({ "ok": false, "errors": [e.to_string()] }).to_string();
+    }
+    let report = render_report(&files, parse_layout(query), parse_dag_level(query)).unwrap_or_default();
+    serde_json::json!({ "ok": true, "errors": [], "report_html": report }).to_string()
 }
 
 /// 把候选的可调常数 `__c{i}` 代回常数值，得到具体表达式（供 `expr_mathml` 渲染 2D 公式）。

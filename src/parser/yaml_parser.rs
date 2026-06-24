@@ -33,6 +33,20 @@ pub fn parse_file(path: &Path) -> CompileResult<EquationFile> {
     Ok(file)
 }
 
+/// 从字符串解析方程文件（与 [`parse_file`] 同一管线，但输入是文本——浏览器内编辑器的
+/// `/api/validate` 用：前端递交编辑后的 YAML，EQC parse + 校验，不落盘）。
+pub fn parse_str(content: &str) -> CompileResult<EquationFile> {
+    let p = Path::new("<编辑>");
+    let raw: serde_yaml::Value =
+        serde_yaml::from_str(content).map_err(|e| CompileError::yaml_parse(p, e.to_string()))?;
+    let expanded = super::expand_cohorts(raw)
+        .map_err(|e| CompileError::yaml_parse(p, format!("cohort 展开失败: {e}")))?;
+    let mut file: EquationFile =
+        serde_yaml::from_value(expanded).map_err(|e| CompileError::yaml_parse(p, e.to_string()))?;
+    file.reclassify_parameters();
+    Ok(file)
+}
+
 /// 解析目录下所有方程文件
 ///
 /// 递归搜索所有 `.eq.yaml` 文件。
@@ -90,6 +104,29 @@ mod tests {
         let path = dir.join(name);
         let mut file = fs::File::create(path).unwrap();
         file.write_all(content.as_bytes()).unwrap();
+    }
+
+    /// parse_str：从文本解析（编辑器 /api/validate 用），与 parse_file 同结果；坏文本→Err。
+    #[test]
+    fn test_parse_str() {
+        let yaml = r#"
+meta: { id: "S", model: "M", name_cn: "字符串解析" }
+parameters:
+  p1: { name_cn: "参数1", default: 1.0 }
+variables:
+  x: { type: input }
+equations:
+  - id: "E-01"
+    name: "方程"
+    output: "y"
+    expression: { op: add, args: [ { ref: p1 }, { ref: x } ] }
+"#;
+        let f = parse_str(yaml).expect("应解析成功");
+        assert_eq!(f.meta.id, "S");
+        assert_eq!(f.parameters.len(), 1);
+        assert_eq!(f.equations.len(), 1);
+        // 坏 YAML → Err（不 panic）
+        assert!(parse_str("meta: [this is: not valid").is_err());
     }
 
     #[test]

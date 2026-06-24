@@ -78,7 +78,7 @@ pub use dag::{Dag, DagEdge, DagNode, EdgeType, NodeType};
 #[cfg(feature = "cli")]
 pub use generators::GeneratorKind;
 #[cfg(feature = "cli")]
-pub use parser::{parse_directory, parse_file};
+pub use parser::{parse_directory, parse_file, parse_str};
 #[cfg(feature = "cli")]
 pub use schema::{DataType, Equation, EquationFile, Metadata, Parameter, VarClass, Variable, VariableType};
 #[cfg(feature = "cli")]
