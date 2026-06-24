@@ -34,9 +34,9 @@ export function chartUrl(
   return u + `&_=${Date.now()}`
 }
 
-/** 结构图报告 HTML（iframe src）。 */
-export function reportUrl(model: string, layout: string): string {
-  return `/api/report?layout=${encodeURIComponent(layout)}` + modelQS(model)
+/** 结构图报告 HTML（iframe src）。`layout` 布局、`level` 粒度（变量/方程/模块）。 */
+export function reportUrl(model: string, layout: string, level = 'variable'): string {
+  return `/api/report?layout=${encodeURIComponent(layout)}&level=${encodeURIComponent(level)}` + modelQS(model)
 }
 
 // —— GP 异步进化 ——
@@ -99,6 +99,22 @@ export async function fetchSimulate(
 }
 export async function fetchZone(model: string, zone: string): Promise<ZoneInfo> {
   return (await fetch(`/api/zone?zone=${encodeURIComponent(zone)}` + modelQS(model) + `&_=${Date.now()}`, { cache: 'no-store' })).json()
+}
+/** 写本区管理（param/driver 覆盖）→ <zone>.json。标定/看懂据此按本区处理仿真。 */
+export async function saveZone(
+  model: string,
+  zone: string,
+  params: Record<string, number>,
+  drivers: Record<string, number>
+): Promise<{ ok?: boolean; error?: string; params?: number; drivers?: number }> {
+  const u = `/api/zone?zone=${encodeURIComponent(zone)}` + modelQS(model)
+  return (
+    await fetch(u, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ params, drivers }),
+    })
+  ).json()
 }
 export async function fetchObservations(model: string, zone: string): Promise<ObservationsJson> {
   return (await fetch(`/api/observations?zone=${encodeURIComponent(zone)}` + modelQS(model) + `&_=${Date.now()}`, { cache: 'no-store' })).json()
