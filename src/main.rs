@@ -1274,12 +1274,23 @@ fn run_evolve(
     use std::collections::HashMap;
 
     #[derive(serde::Deserialize)]
+    struct MemeticCfg {
+        pop: Option<usize>,
+        iters: Option<usize>,
+    }
+    #[derive(serde::Deserialize)]
     struct EvoCfg {
         pop: Option<usize>,
         gens: Option<usize>,
         seed: Option<u64>,
         parsimony: Option<f64>,
         sweep_hi: Option<f64>,
+        /// 多目标 Pareto（精度 vs 复杂度）；缺省单目标。
+        pareto: Option<bool>,
+        /// 归档上限（Pareto）。
+        archive_cap: Option<usize>,
+        /// memetic：内层 DE 标定候选常数（缺省 co-evolve）。
+        memetic: Option<MemeticCfg>,
     }
     #[derive(serde::Deserialize)]
     struct GpSpec {
@@ -1346,44 +1357,98 @@ fn run_evolve(
         seed: None,
         parsimony: None,
         sweep_hi: None,
+        pareto: None,
+        archive_cap: None,
+        memetic: None,
     });
-    let cfg = EvolveConfig {
-        pop: ec.pop.unwrap_or(60),
-        gens: ec.gens.unwrap_or(40),
-        seed: ec.seed.unwrap_or(1),
-        parsimony: ec.parsimony.unwrap_or(0.0),
-        sweep_hi: ec.sweep_hi.unwrap_or(50.0),
-        ..Default::default()
+    let pop = ec.pop.unwrap_or(60);
+    let gens = ec.gens.unwrap_or(40);
+    let seed = ec.seed.unwrap_or(1);
+    let sweep_hi = ec.sweep_hi.unwrap_or(50.0);
+    let n_obs = observed_data.get(&s.output).map(|v| v.len()).unwrap_or(0);
+    let memetic = ec.memetic.as_ref().map(|m| equation_compiler::optimize::DeConfig {
+        pop: m.pop.unwrap_or(16),
+        iters: m.iters.unwrap_or(30),
+        seed: 1,
+        f: 0.6,
+        cr: 0.9,
+    });
+    let mode = match (ec.pareto.unwrap_or(false), memetic.is_some()) {
+        (true, true) => "Pareto+memetic",
+        (true, false) => "Pareto",
+        (false, true) => "单目标+memetic",
+        (false, false) => "单目标",
     };
-
     println!(
-        "   靶点 {} [{}] | 语法 {} | 输入 {:?} | 驱动 {} ({} 步) | 实测 {} 点 | 种群 {}×{} 代",
-        s.target,
-        s.output,
-        grammar,
-        ctx.inputs,
-        driver_path.display(),
-        steps,
-        observed_data.get(&s.output).map(|v| v.len()).unwrap_or(0),
-        cfg.pop,
-        cfg.gens,
+        "   靶点 {} [{}] | 语法 {} | 输入 {:?} | 驱动 {} ({} 步) | 实测 {} 点 | {} | 种群 {}×{} 代",
+        s.target, s.output, grammar, ctx.inputs, driver_path.display(), steps, n_obs, mode, pop, gens,
     );
 
     let target = s.target.clone();
     let outv = s.output.clone();
+    // 把 __c{i} 代回常数值，渲染可读公式
+    let render = |cand: &gp::Candidate| -> String {
+        let mut shown = cand.expr.clone();
+        for (i, v) in cand.consts.iter().enumerate() {
+            shown = shown.substitute(
+                &gp::Candidate::const_name(i),
+                &equation_compiler::ast::Expr::constant(*v),
+            );
+        }
+        shown.to_python("")
+    };
+
+    // —— Pareto 多目标 ——
+    if ec.pareto.unwrap_or(false) {
+        let pcfg = gp::ParetoConfig {
+            pop,
+            gens,
+            seed,
+            sweep_hi,
+            archive_cap: ec.archive_cap.unwrap_or(24),
+            memetic,
+        };
+        let front = gp::evolve_pareto(&grammar, &ctx, &unit_env, &pcfg, |cand| {
+            gp::evaluate_in_model(&file, &target, &outv, cand, &sim_input, &observed_data)
+        });
+        println!("\n✅ 进化完成 · Pareto 前沿 {} 个（精度 vs 复杂度，挑拐点）", front.len());
+        println!("   {:<10} {:<12} 形式", "复杂度", "rmse");
+        for e in &front {
+            println!("   {:<10} {:<12.6} {}", e.complexity, e.error, render(&e.cand));
+        }
+        if let Some(out) = output {
+            let entries: Vec<_> = front
+                .iter()
+                .map(|e| {
+                    serde_json::json!({
+                        "complexity": e.complexity, "error": e.error,
+                        "consts": e.cand.consts, "formula": render(&e.cand),
+                    })
+                })
+                .collect();
+            let j = serde_json::json!({
+                "target": s.target, "output": s.output, "grammar": grammar,
+                "mode": mode, "pareto_front": entries,
+            });
+            std::fs::write(out, serde_json::to_string_pretty(&j)?)?;
+            println!("   结果写入 {}", out.display());
+        }
+        return Ok(());
+    }
+
+    // —— 单目标 ——
+    let cfg = EvolveConfig {
+        pop,
+        gens,
+        seed,
+        parsimony: ec.parsimony.unwrap_or(0.0),
+        sweep_hi,
+        ..Default::default()
+    };
     let res = gp::evolve(&grammar, &ctx, &unit_env, &cfg, |cand| {
         gp::evaluate_in_model(&file, &target, &outv, cand, &sim_input, &observed_data)
     });
-
-    // 渲染最佳形式：把 __c{i} 代回常数值
-    let mut shown = res.best.expr.clone();
-    for (i, v) in res.best.consts.iter().enumerate() {
-        shown = shown.substitute(
-            &gp::Candidate::const_name(i),
-            &equation_compiler::ast::Expr::constant(*v),
-        );
-    }
-    let formula = shown.to_python("");
+    let formula = render(&res.best);
 
     println!("\n✅ 进化完成");
     println!("   最佳形式：{}", formula);
