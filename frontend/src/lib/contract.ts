@@ -55,6 +55,8 @@ export interface EqJson {
   output: string
   mathml: string
   refs: string[]
+  reference?: string
+  formula_display?: string
   /** GP 进化靶点标记（仅 gp_target 方程有）。 */
   gp_target?: GpTargetJson
 }
