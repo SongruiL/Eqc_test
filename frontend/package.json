@@ -1,0 +1,16 @@
+{
+  "name": "eqc-studio-spike",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node -e \"require('fs').copyFileSync('dist/index.html','../src/serve_assets/studio_v2.html')\""
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "svelte": "^5.0.0",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0",
+    "vite-plugin-singlefile": "^2.1.0"
+  }
+}

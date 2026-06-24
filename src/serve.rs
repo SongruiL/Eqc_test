@@ -35,6 +35,12 @@ use crate::sim::{simulate, simulate_coupled, CoupledInput, SimInput, SimOutput};
 /// 打包进二进制的 Studio 前端页面（零构建步骤；以后可换成真正的 `frontend/` 构建产物）。
 const STUDIO_HTML: &str = include_str!("serve_assets/studio.html");
 
+/// 前端 v2（重构中，`docs/spec-studio-frontend-v2.md`）：`frontend/` 的 Vite+Svelte+TS 源码
+/// 构建出的**单 HTML**（vite-plugin-singlefile 内联全部 JS/CSS）。按 spec §4，构建产物
+/// `npm run build` 拷进此 committed 资产 → cargo build 不需 node、clone 即可编译。`/v2` served。
+/// 当前是 P0 spike（一个面板）；P1 起扩成工作区外壳。改前端须 `cd frontend && npm run build` 重生成并提交。
+const STUDIO_V2_HTML: &str = include_str!("serve_assets/studio_v2.html");
+
 /// 工作区清单（多模型，免重启切模型）：`eqc serve eqc-workspace.yaml`，或
 /// `eqc serve <目录>`（其中含 `eqc-workspace.yaml`）。每个模型**显式**声明
 /// id/友好名/模型路径/驱动——因为作物目录里是版本史（s1..s8、t1..t3、bb1..bb5）、
@@ -718,6 +724,8 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
 
     let (status, ctype, body): (&str, &str, String) = match route {
         "/" | "/index.html" => ("200 OK", "text/html; charset=utf-8", STUDIO_HTML.to_string()),
+        // 前端 v2（重构中）：Vite+Svelte+TS 构建的单 HTML，消费 live /api/*。studio.html(v1) 仍是默认 /。
+        "/v2" => ("200 OK", "text/html; charset=utf-8", STUDIO_V2_HTML.to_string()),
         "/__version" => (
             "200 OK",
             "text/plain; charset=utf-8",
