@@ -1,6 +1,7 @@
 <script lang="ts">
-  // 顶栏（全局常驻）：模型选择器 + 处理区 + 园区/专家切换 + 连接状态。
+  // 顶栏（全局常驻）：模型选择器 + 处理区 + 园区/专家切换 + 命令面板 + 连接状态。
   import { store, switchModel, setMode } from '../lib/store.svelte'
+  import { ui } from '../lib/commands.svelte'
 </script>
 
 <header>
@@ -23,6 +24,7 @@
     <button class:active={store.mode === 'expert'} onclick={() => setMode('expert')}>专家</button>
   </span>
 
+  <button class="cmdk" title="命令面板（Ctrl/⌘ + K）" onclick={() => (ui.palette = true)}>⌘K 命令</button>
   <span class="status" class:ok={store.connected}>{store.connected ? '● 已连接' : '○ 未连接'}</span>
 </header>
 
@@ -44,6 +46,8 @@
   .seg button { border: 0; background: #fff; color: var(--sub); font-size: 12px; padding: 4px 12px; cursor: pointer; }
   .seg button + button { border-left: 1px solid var(--line); }
   .seg button.active { background: var(--accent); color: #fff; }
-  .status { margin-left: auto; font-size: 12px; color: var(--sub); }
+  .cmdk { margin-left: auto; border: 1px solid var(--line); background: #fff; color: var(--sub); font-size: 12px; padding: 3px 10px; border-radius: 7px; cursor: pointer; }
+  .cmdk:hover { background: #eef2ff; }
+  .status { font-size: 12px; color: var(--sub); }
   .status.ok { color: #16a34a; }
 </style>

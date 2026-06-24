@@ -2,8 +2,10 @@
   // v2 应用外壳：顶栏（全局选择器）+ 左导航（工作区）+ 主内容区（当前工作区）。
   // 增量迁移中：studio.html(v1) 仍是默认 `/`；本应用挂 `/v2`。
   import { store, loadModels } from './lib/store.svelte'
+  import { ui } from './lib/commands.svelte'
   import TopBar from './components/TopBar.svelte'
   import Nav from './components/Nav.svelte'
+  import CommandPalette from './components/CommandPalette.svelte'
   import Structure from './workspaces/Structure.svelte'
   import Simulate from './workspaces/Simulate.svelte'
   import Optimize from './workspaces/Optimize.svelte'
@@ -20,7 +22,16 @@
   }
 
   loadModels()
+
+  function onKeydown(e: KeyboardEvent) {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault()
+      ui.palette = true
+    }
+  }
 </script>
+
+<svelte:window onkeydown={onKeydown} />
 
 <div class="shell">
   <TopBar />
@@ -49,6 +60,8 @@
     </main>
   </div>
 </div>
+
+<CommandPalette />
 
 <style>
   .shell { display: flex; flex-direction: column; height: 100%; }
