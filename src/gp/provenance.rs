@@ -12,7 +12,7 @@ use crate::ast::Expr;
 use crate::optimize::de::Rng;
 
 use super::grammar::{effective_form_count, form_name, sample_form, Candidate, GpContext};
-use super::operators::same_skeleton;
+use super::operators::{concrete_matches_skeleton, same_skeleton};
 
 /// 识别一个候选属于语法的哪种 form（按骨架结构匹配各 form 的标准骨架）。
 /// 返回 form idx；不匹配任何 form（如被 input-swap 成自定义结构）→ None。
@@ -23,6 +23,23 @@ pub fn identify_form(cand: &Candidate, grammar: &str, ctx: &GpContext) -> Option
         let mut rng = Rng::new(0);
         if let Some(canon) = sample_form(grammar, idx, ctx, &mut rng) {
             if same_skeleton(&cand.expr, &canon.expr) {
+                return Some(idx);
+            }
+        }
+    }
+    None
+}
+
+/// 识别一个**具体表达式**（如模型现有方程，可调位为字面常数/模型参数）属于语法的哪种 form。
+/// 用于 B2「自动取现有形式名」判 rediscovery——不必让作者手填 `baseline_form`。
+/// 不匹配任何 form（手写形式超出语法表达力）→ None（诚实，不声称 rediscovery）。
+pub fn identify_form_of_expr(expr: &Expr, grammar: &str, ctx: &GpContext) -> Option<usize> {
+    let n = effective_form_count(grammar, ctx);
+    for idx in 0..n {
+        // 标准骨架与常数值无关（可调常数是 __c 占位）→ 用任意种子采样
+        let mut rng = Rng::new(0);
+        if let Some(canon) = sample_form(grammar, idx, ctx, &mut rng) {
+            if concrete_matches_skeleton(expr, &canon.expr) {
                 return Some(idx);
             }
         }
@@ -148,6 +165,37 @@ mod tests {
                 form_name("monotone_gate", idx)
             );
         }
+    }
+
+    /// B2：现有方程（可调位为字面常数 / 命名参数）应被识别回其机理形式；可调位放变量则不匹配。
+    #[test]
+    fn test_identify_form_of_concrete_expr() {
+        use crate::ast::Expr;
+        let ctx = gate_ctx();
+        let g = "monotone_gate";
+        for idx in 0..effective_form_count(g, &ctx) {
+            let mut rng = Rng::new(50 + idx as u64);
+            let canon = sample_form(g, idx, &ctx, &mut rng).unwrap();
+            // 1) 可调常数 __c{i} → 字面 Const（手写现有方程的常见写法）
+            let mut lit = canon.expr.clone();
+            for i in 0..canon.consts.len() {
+                lit = lit.substitute(&Candidate::const_name(i), &Expr::constant(0.5 + i as f64));
+            }
+            assert_eq!(identify_form_of_expr(&lit, g, &ctx), Some(idx), "字面常数版 form {idx} 应被识别");
+            // 2) 可调常数 → 命名模型参数 Param（也应识别）
+            let mut par = canon.expr.clone();
+            for i in 0..canon.consts.len() {
+                par = par.substitute(&Candidate::const_name(i), &Expr::param(format!("k{i}")));
+            }
+            assert_eq!(identify_form_of_expr(&par, g, &ctx), Some(idx), "命名参数版 form {idx} 应被识别");
+        }
+        // 3) 无关表达式 → None（不误报 rediscovery）
+        assert_eq!(identify_form_of_expr(&Expr::var("ChillAccum"), g, &ctx), None);
+        // 4) 可调位放变量（变量≠常数）→ 不再判为 form 0（拒 Var 占可调槽，避免误报）
+        let mut rng = Rng::new(0);
+        let canon0 = sample_form(g, 0, &ctx, &mut rng).unwrap();
+        let with_var = canon0.expr.substitute(&Candidate::const_name(0), &Expr::var("GDD"));
+        assert_ne!(identify_form_of_expr(&with_var, g, &ctx), Some(0));
     }
 
     /// rediscovery：识别出的形式 == baseline → rediscovery=true，建议升级。

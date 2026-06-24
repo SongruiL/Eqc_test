@@ -1540,8 +1540,16 @@ fn run_evolve(
 
     // 溯源回流：识别 GP 选了哪种机理形式 + 分类建议（rediscovery vs 新假设）
     let cplx = gp::complexity(&res.best.expr);
+    // baseline_form：spec 显式优先；否则自动识别当前方程的机理形式（B2，免手填）。
+    let baseline_form = s.baseline_form.clone().or_else(|| {
+        file.equations
+            .iter()
+            .find(|e| e.id == s.target)
+            .and_then(|e| gp::identify_form_of_expr(&e.expression, &grammar, &ctx))
+            .map(|i| gp::form_name(&grammar, i).to_string())
+    });
     let report = gp::form_report(
-        &res.best, res.best_error, cplx, &grammar, &ctx, s.baseline_form.as_deref(),
+        &res.best, res.best_error, cplx, &grammar, &ctx, baseline_form.as_deref(),
     );
 
     println!("\n✅ 进化完成");

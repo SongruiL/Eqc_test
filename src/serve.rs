@@ -1119,8 +1119,15 @@ fn run_evolve(m: &ModelEntry, query: &str) -> Result<String, String> {
     let seed = query_usize(query, "seed").map(|s| s as u64).unwrap_or(1);
     let sweep_hi = query_f64(query, "sweep_hi").unwrap_or(50.0);
     let archive_cap = query_usize(query, "archive_cap").unwrap_or(24);
-    // baseline_form（B1）：缺省不声明 rediscovery；真「自动取现有形式」为后续 B2。
-    let baseline_form = query_get(query, "baseline_form");
+    // baseline_form：query 显式值优先；否则 **自动识别当前方程的机理形式**（B2）——这样面板
+    // 不传也能判 rediscovery（GP 撞回现有形式=机理验证）。识别不出（手写形式超语法）→ None。
+    let baseline_form = query_get(query, "baseline_form").or_else(|| {
+        file.equations
+            .iter()
+            .find(|e| e.id == target)
+            .and_then(|e| gp::identify_form_of_expr(&e.expression, &grammar, &ctx))
+            .map(|i| gp::form_name(&grammar, i).to_string())
+    });
 
     let pcfg = gp::ParetoConfig { pop, gens, seed, sweep_hi, archive_cap, memetic: None };
     let target_c = target.clone();

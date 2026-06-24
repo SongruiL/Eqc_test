@@ -126,6 +126,45 @@ pub(crate) fn same_skeleton(a: &Expr, b: &Expr) -> bool {
     }
 }
 
+/// 判断一个**具体表达式** `concrete`（可调位为字面 `Const` 或模型 `Param`）是否匹配某 form
+/// 的**标准骨架** `template`（可调常数为 `__c{i}` 占位 Param、结构常数为字面 `Const`）。
+///
+/// 与 [`same_skeleton`] 的唯一区别：template 里的 `__c` 占位匹配 concrete 里**任意标量叶**
+/// （`Const`/模型 `Param`/`Pi`/`E`）——即"字面常数或命名参数都算填进可调槽"。用于 B2「自动
+/// 识别现有方程属于哪种机理形式」。结构常数仍须字面相等、`Var` 仍按名匹配（拒子树/拒 `Var`
+/// 占可调位，避免误匹配）。**单向**：第一参=具体方程、第二参=标准骨架，不可对调。
+pub(crate) fn concrete_matches_skeleton(concrete: &Expr, template: &Expr) -> bool {
+    use Expr::*;
+    // 标准骨架的可调占位（__c..）→ 匹配具体表达式里任意标量叶
+    if let Param(name) = template {
+        if name.starts_with("__c") {
+            return matches!(concrete, Const(_) | Param(_) | Pi | E);
+        }
+    }
+    match (concrete, template) {
+        (Const(x), Const(y)) => x == y, // 结构常数须一致
+        (Var(n), Var(m)) | (Param(n), Param(m)) => n == m,
+        (Pi, Pi) | (E, E) => true,
+        (Neg(x), Neg(y)) | (Exp(x), Exp(y)) | (Ln(x), Ln(y)) => concrete_matches_skeleton(x, y),
+        (Add(x1, x2), Add(y1, y2))
+        | (Sub(x1, x2), Sub(y1, y2))
+        | (Mul(x1, x2), Mul(y1, y2))
+        | (Div(x1, x2), Div(y1, y2))
+        | (Pow(x1, x2), Pow(y1, y2)) => {
+            concrete_matches_skeleton(x1, y1) && concrete_matches_skeleton(x2, y2)
+        }
+        (Clamp(x1, x2, x3), Clamp(y1, y2, y3)) => {
+            concrete_matches_skeleton(x1, y1)
+                && concrete_matches_skeleton(x2, y2)
+                && concrete_matches_skeleton(x3, y3)
+        }
+        (Max(xs), Max(ys)) | (Min(xs), Min(ys)) => {
+            xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| concrete_matches_skeleton(x, y))
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
