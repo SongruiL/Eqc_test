@@ -189,6 +189,17 @@ export interface ObservationsJson {
   error?: string
 }
 
+// —— 耦合仿真/优化（/api/couple、/api/couple-optimize）契约 ——
+export interface CoupleOptResult {
+  coupled?: boolean
+  best_objective?: number
+  best_knobs?: Record<string, number>
+  objective?: string
+  sense?: string
+  convergence_svg?: string
+  error?: string
+}
+
 // —— 模型编辑器（/api/source、/api/validate）契约 ——
 export interface SourceJson {
   source?: string

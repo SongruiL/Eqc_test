@@ -1,7 +1,7 @@
 // 对 EQC `/api/*` 契约的薄封装。前端只消费，不重实现逻辑（EQC 持有事实）。
 import type {
   ModelsJson, ModelJson, EvolveStatus, OptResult, SimSeries, ZoneInfo, ObservationsJson,
-  SourceJson, ValidateJson,
+  SourceJson, ValidateJson, CoupleOptResult,
 } from './contract'
 
 /** `?model=` / `&model=`（id 为空则省略）。 */
@@ -100,6 +100,18 @@ export async function fetchSimulate(
   if (ds) u += `&d=${encodeURIComponent(ds)}`
   return (await fetch(u, { cache: 'no-store' })).json()
 }
+// —— 耦合仿真/优化（可仿真耦合条目）——
+export async function fetchCouple(model: string): Promise<SimSeries> {
+  return (await fetch('/api/couple?_=' + Date.now() + modelQS(model), { cache: 'no-store' })).json()
+}
+export function coupleChartUrl(model: string, vars: string[]): string {
+  return '/api/couple.svg?vars=' + encodeURIComponent(vars.join(',')) + modelQS(model) + '&_=' + Date.now()
+}
+export async function runCoupleOptimize(model: string, spec: string): Promise<CoupleOptResult> {
+  const u = '/api/couple-optimize?spec=' + encodeURIComponent(spec) + modelQS(model) + '&_=' + Date.now()
+  return (await fetch(u, { cache: 'no-store' })).json()
+}
+
 export async function fetchZone(model: string, zone: string): Promise<ZoneInfo> {
   return (await fetch(`/api/zone?zone=${encodeURIComponent(zone)}` + modelQS(model) + `&_=${Date.now()}`, { cache: 'no-store' })).json()
 }

@@ -14,6 +14,7 @@
   import Understand from './workspaces/Understand.svelte'
   import Entry from './workspaces/Entry.svelte'
   import Edit from './workspaces/Edit.svelte'
+  import Couple from './workspaces/Couple.svelte'
   import Placeholder from './workspaces/Placeholder.svelte'
 
   const LABELS: Record<string, string> = {
@@ -54,6 +55,8 @@
         <Entry />
       {:else if store.workspace === 'edit'}
         <Edit />
+      {:else if store.workspace === 'couple'}
+        <Couple />
       {:else}
         <Placeholder name={store.workspace} label={LABELS[store.workspace] ?? store.workspace} />
       {/if}

@@ -47,6 +47,7 @@ export async function loadModels() {
     store.mode = ls('eqc_v2_mode') === 'park' ? 'park' : 'expert'
     const ws = ls('eqc_v2_ws')
     if (ws) store.workspace = ws
+    fixWorkspaceForModel()
     await reloadModel()
   } catch {
     store.connected = false
@@ -84,10 +85,19 @@ export function applyKnobs(knobs: Knob[]) {
   }
 }
 
+/** 切到耦合条目时把工作区收敛到 结构/耦合（其它工作区对耦合条目会报错）。 */
+function fixWorkspaceForModel() {
+  const e = store.models.find((m) => m.id === store.model)
+  if (!e?.coupled) return
+  const allowed = e.sim_capable ? ['structure', 'couple'] : ['structure']
+  if (!allowed.includes(store.workspace)) store.workspace = 'structure'
+}
+
 export function switchModel(id: string) {
   if (!id || id === store.model) return
   store.model = id
   save('eqc_v2_model', id)
+  fixWorkspaceForModel()
   reloadModel()
 }
 

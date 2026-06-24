@@ -15,7 +15,13 @@
     { id: 'entry', label: '录入' },
     { id: 'calibrate', label: '标定' },
   ]
-  const items = $derived(store.mode === 'park' ? PARK : EXPERT)
+  // 耦合视图条目：导航换成 结构（+ 可仿真时 耦合仿真）；否则按模式给专家/园区。
+  const entry = $derived(store.models.find((m) => m.id === store.model))
+  const coupledItems = $derived([
+    { id: 'structure', label: '结构' },
+    ...(entry?.sim_capable ? [{ id: 'couple', label: '耦合仿真' }] : []),
+  ])
+  const items = $derived(entry?.coupled ? coupledItems : store.mode === 'park' ? PARK : EXPERT)
 </script>
 
 <nav>
