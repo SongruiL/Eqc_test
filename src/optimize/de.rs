@@ -13,13 +13,13 @@
 //! 代价函数自己负责把「垃圾候选」（仿真发散/出错）映射成一个很大的有限值
 //! （见 [`super::core::WORST_COST`]）；DE 只做比较与选择，天然把它们淘汰。
 
-/// 确定性 PRNG（SplitMix64）。
-struct Rng {
+/// 确定性 PRNG（SplitMix64）。`pub(crate)` 供 GP 层（`gp::`）复用同一 PRNG。
+pub(crate) struct Rng {
     state: u64,
 }
 
 impl Rng {
-    fn new(seed: u64) -> Self {
+    pub(crate) fn new(seed: u64) -> Self {
         Self { state: seed }
     }
 
@@ -32,12 +32,17 @@ impl Rng {
     }
 
     /// [0, 1) 均匀，53 位尾数。
-    fn next_f64(&mut self) -> f64 {
+    pub(crate) fn next_f64(&mut self) -> f64 {
         (self.next_u64() >> 11) as f64 / ((1u64 << 53) as f64)
     }
 
+    /// [lo, hi) 均匀。
+    pub(crate) fn next_range(&mut self, lo: f64, hi: f64) -> f64 {
+        lo + (hi - lo) * self.next_f64()
+    }
+
     /// [0, n) 整数（n>0）。
-    fn next_usize(&mut self, n: usize) -> usize {
+    pub(crate) fn next_usize(&mut self, n: usize) -> usize {
         (self.next_u64() % (n as u64)) as usize
     }
 }

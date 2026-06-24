@@ -27,6 +27,8 @@ pub mod export;
 #[cfg(feature = "cli")]
 pub mod generators;
 #[cfg(feature = "cli")]
+pub mod gp;
+#[cfg(feature = "cli")]
 pub mod optimize;
 #[cfg(feature = "cli")]
 pub mod parser;
