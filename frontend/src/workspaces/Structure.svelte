@@ -62,13 +62,20 @@
     state: '存量', rate: '速率', driving: '驱动', auxiliary: '辅助', parameter: '参数', control: '控制', semi_state: '半状态', boundary: '边界',
   }
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  // 遍历**所有**模块（耦合视图=温室+作物多模块；单模型=1 模块）。返回首个匹配。
   function findVar(name: string): { kind: 'var'; v: VarJson } | { kind: 'param'; p: ParamJson } | null {
-    const m = contract?.modules?.[0]; if (!m) return null
-    const v = m.variables.find((x) => x.name === name); if (v) return { kind: 'var', v }
-    const p = m.parameters.find((x) => x.name === name); if (p) return { kind: 'param', p }
+    for (const m of contract?.modules ?? []) {
+      const v = m.variables.find((x) => x.name === name); if (v) return { kind: 'var', v }
+      const p = m.parameters.find((x) => x.name === name); if (p) return { kind: 'param', p }
+    }
     return null
   }
-  const findEq = (name: string): EqJson | undefined => contract?.modules?.[0]?.equations.find((e) => e.output === name)
+  function findEq(name: string): EqJson | undefined {
+    for (const m of contract?.modules ?? []) {
+      const e = m.equations.find((x) => x.output === name); if (e) return e
+    }
+    return undefined
+  }
   function dispName(name: string) {
     const r = findVar(name); if (!r) return name
     return (r.kind === 'var' ? r.v.display_name : r.p.display_name || r.p.name_cn) || name
