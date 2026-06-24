@@ -32,6 +32,20 @@ fn bind_consts(env: &mut Env, consts: &[f64]) {
     }
 }
 
+/// 在给定输入取值下求值一个候选（绑可调常数 + 输入）。非有限/失败 → None。
+/// 供 GP 适应度（表达式级复原）/诊断用。
+pub fn eval_candidate(cand: &Candidate, inputs: &[(&str, f64)]) -> Option<f64> {
+    let mut env = Env::new();
+    bind_consts(&mut env, &cand.consts);
+    for (n, v) in inputs {
+        env.put(n, *v);
+    }
+    match cand.expr.eval_scalar(&env) {
+        Ok(y) if y.is_finite() => Some(y),
+        _ => None,
+    }
+}
+
 /// 量纲软过滤：**只拒绝两个"物理有量纲"（均非无量纲）之间的 Mismatch**。
 ///
 /// 可调常数是 `Param("__c*")` → 不在 `env` → `infer` 返回 None（未知）→ 天然跳过、不误报；

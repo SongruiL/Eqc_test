@@ -10,10 +10,12 @@
 //! - G2 树遗传算子 / G3 主循环+适应度 / G4 Pareto+memetic / G5 多槽位+溯源回流（后续）。
 
 pub mod constraints;
+pub mod evolve;
 pub mod grammar;
 pub mod operators;
 
-pub use constraints::{bounds_ok, check_candidate, monotone_ok, units_ok, CandidateCheck};
+pub use constraints::{bounds_ok, check_candidate, eval_candidate, monotone_ok, units_ok, CandidateCheck};
+pub use evolve::{evolve, EvolveConfig, EvolveResult};
 pub use grammar::{form_count, sample, Candidate, GpContext, KNOWN_GRAMMARS};
 pub use operators::{complexity, crossover, mutate, perturb_constants};
 
