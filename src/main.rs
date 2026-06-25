@@ -331,6 +331,10 @@ enum Commands {
         /// 附加网络指标（度/介数/PageRank 中心性 + 社区/模块度 + 深度，找枢纽/对照 meta.modules）
         #[arg(long)]
         metrics: bool,
+
+        /// 附加 3D 力导向坐标（Rust 算，确定性；深度→z、社区→簇位、介数→大小；前端只渲染）
+        #[arg(long)]
+        layout3d: bool,
     },
 
     /// 版本结构 diff：两个模型版本的结构演化（增删点/边 + 形式改变的方程 + 结构距离）
@@ -484,7 +488,7 @@ fn main() {
             equation_compiler::serve::serve(&input, port, drivers.as_ref(), params.as_ref(), data_dir.as_ref())
         }
         Commands::Export { input, output } => run_export(&input, output.as_ref()),
-        Commands::Structure { input, json, identifiability, metrics } => run_structure(&input, json, identifiability, metrics),
+        Commands::Structure { input, json, identifiability, metrics, layout3d } => run_structure(&input, json, identifiability, metrics, layout3d),
         Commands::Diff { old, new, json } => run_diff(&old, &new, json),
         Commands::Optimize { input, spec, drivers, steps, prescreen, output } => {
             run_optimize(&input, &spec, drivers.as_ref(), steps, prescreen, output.as_ref())
@@ -1004,8 +1008,8 @@ fn run_export(input: &PathBuf, output: Option<&PathBuf>) -> Result<(), Box<dyn s
 }
 
 #[cfg(feature = "cli")]
-fn run_structure(input: &PathBuf, json: bool, identifiability: bool, metrics: bool) -> Result<(), Box<dyn std::error::Error>> {
-    use equation_compiler::graph::{analyze_identifiability, analyze_metrics, analyze_structure};
+fn run_structure(input: &PathBuf, json: bool, identifiability: bool, metrics: bool, layout3d: bool) -> Result<(), Box<dyn std::error::Error>> {
+    use equation_compiler::graph::{analyze_identifiability, analyze_metrics, analyze_structure, layout3d as compute_layout3d};
     use equation_compiler::{parse_directory, parse_file};
 
     let files = if input.is_dir() {
@@ -1016,9 +1020,10 @@ fn run_structure(input: &PathBuf, json: bool, identifiability: bool, metrics: bo
     let report = analyze_structure(&files);
     let ident = if identifiability { Some(analyze_identifiability(&files)) } else { None };
     let mets = if metrics { Some(analyze_metrics(&files)) } else { None };
+    let layout = if layout3d { Some(compute_layout3d(&files)) } else { None };
 
     if json {
-        println!("{}", equation_compiler::export::structure_json_pretty(&report, ident.as_ref(), mets.as_ref()));
+        println!("{}", equation_compiler::export::structure_json_pretty(&report, ident.as_ref(), mets.as_ref(), layout.as_ref()));
         return Ok(());
     }
 
@@ -1123,6 +1128,18 @@ fn run_structure(input: &PathBuf, json: bool, identifiability: bool, metrics: bo
                 m.node, m.betweenness, m.pagerank, m.in_degree, m.out_degree, m.depth, m.community
             );
         }
+    }
+
+    // 3D 力导向坐标（GA-5，opt-in；坐标本身走 --json，人读只给摘要）。
+    if let Some(l) = &layout {
+        println!("\n   —— 3D 力导向坐标（Rust 算、确定性；深度→z、社区→簇位、介数→大小）——");
+        println!(
+            "   {} 个节点、{} 条边，坐标 ∈ [-{:.0},{:.0}]³。完整坐标用 --json 取（前端只渲染）。",
+            l.nodes.len(),
+            l.edges.len(),
+            l.bound,
+            l.bound
+        );
     }
     Ok(())
 }

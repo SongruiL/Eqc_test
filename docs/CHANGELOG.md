@@ -262,6 +262,15 @@ human-in-the-loop——GP 提议、科学家裁决。设计 `docs/spec-gp-studio
 - **CLI** `eqc diff <旧> <新> [--json]`（人读 + `GraphDiffJson` 契约，additive，`schema_version` 不变）。GP `eqc evolve` 接线本轮**不做**（留给 GP arc 一行调 `diff_models(before, after)` 溯源）。
 - **验证**：合成对拍（同模型→零 diff、distance=0、similarity=1；加方程→精确报新节点+边+方程；同 output 换形式→恰 1 条 changed、distance=0；删方程→removed）。**真模型草莓 S4→S8**：distance=145（56 新节点、87 新边、2 删边），精确捕获 S8 长出的钙/BER、氮(NNI/Nc)、蒸腾(ET/VPD)、EC/水分胁迫子系统；并标出 **DDM 形式改变 SB-03→SB-NPROD**（简单 `I·LUE` 换成氮限制生产，删边 `I→DDM`/`LUE_dyn→DDM` 印证重接线）——正是 GP 进化溯源要的信号。4 新测试，两 feature 配置共 280 lib 绿。
 
+### 模型图论分析 arc · GA-5（3D 力导向坐标）
+Rust 算 3D 坐标，守单一真相源，前端只渲染（spec §4 GA-5）。新增 `src/graph/layout3d.rs`：
+- **3D Fruchterman–Reingold**，直接扩展 `report/layout.rs` 的 2D 力导向：黄金角/Vogel 螺旋初始铺位、FR 斥力/引力、温度退火、固定 500 迭代、重合点按下标确定性错开——**全程无 RNG，同输入逐位一致**。
+- **指标驱动**：① **深度→z**（z 初始化并软锚定到归一化计算深度，"计算沿 z 向上流"的可读分层 3D，x,y 全力导向）；② **社区→簇位**（同社区节点被各自质心吸引，模块空间聚团）；③ **介数→大小**（每节点吐 `size`∝介数归一 0–1，是属性非位置，前端定球半径）。
+- 坐标归一化到居中立方体 `[-1,1]³`（保形、有限、无 NaN）。
+- **CLI** `eqc structure --layout3d`（人读摘要 + `StructureJson.layout3d` 契约：节点 `{id,x,y,z,size,community,depth}` + 边 + bound，additive，`schema_version` 不变）。坐标走 `--json`。
+- **验证**：合成对拍（**坐标逐位确定性**——两次跑 `to_bits` 相等；坐标有限且 ∈[-1,1]；链 → z 随深度单调递增，验深度锚定；枢纽 size 最大）。**真模型草莓 S8**：104 节点/146 边坐标 ∈[-1,1]³，枢纽 **DDM size=1.0**（GA-3 介数首位，depth=7），叶子参数 size=0。
+- **立场**：2D（现有 SVG 报告/Forrester）仍是默认分析视图；3D 是补充（总览+生长叙事）。**渲染本身是 GA-6**（前端 three.js/threlte，单独 Studio 子 arc，消费本契约）。4 新测试，两 feature 配置共 284 lib 绿。
+
 ## 下一步（未做）/ 当前不足
 
 **EQC 工具层**

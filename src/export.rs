@@ -294,6 +294,52 @@ pub struct StructureJson {
     /// 网络指标（GA-3，可选；仅 `--metrics` 时计算并附上）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metrics: Option<MetricsJson>,
+    /// 3D 力导向坐标（GA-5，可选；仅 `--layout3d` 时计算并附上）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layout3d: Option<Layout3dJson>,
+}
+
+/// 一个 3D 节点 + 渲染属性（GA-5）。
+#[derive(Debug, Clone, Serialize)]
+pub struct Node3dJson {
+    pub id: String,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    /// ∝ 介数，归一 0–1（前端定球半径）。
+    pub size: f64,
+    pub community: usize,
+    pub depth: usize,
+}
+
+/// 3D 力导向布局的 JSON 契约（GA-5）。坐标 Rust 算、前端只渲染。
+#[derive(Debug, Clone, Serialize)]
+pub struct Layout3dJson {
+    pub nodes: Vec<Node3dJson>,
+    pub edges: Vec<[String; 2]>,
+    /// 坐标范围 [-bound, bound]。
+    pub bound: f64,
+}
+
+/// 把 3D 布局导出为契约结构。
+pub fn to_layout3d_json(l: &crate::graph::Layout3d) -> Layout3dJson {
+    Layout3dJson {
+        nodes: l
+            .nodes
+            .iter()
+            .map(|n| Node3dJson {
+                id: n.id.clone(),
+                x: n.x,
+                y: n.y,
+                z: n.z,
+                size: n.size,
+                community: n.community,
+                depth: n.depth,
+            })
+            .collect(),
+        edges: l.edges.iter().map(|(a, b)| [a.clone(), b.clone()]).collect(),
+        bound: l.bound,
+    }
 }
 
 /// 把网络指标报告导出为契约结构。
@@ -345,6 +391,7 @@ pub fn to_structure_json(
     report: &crate::graph::StructureReport,
     ident: Option<&crate::graph::IdentifiabilityReport>,
     metrics: Option<&crate::graph::MetricsReport>,
+    layout: Option<&crate::graph::Layout3d>,
 ) -> StructureJson {
     StructureJson {
         schema_version: SCHEMA_VERSION,
@@ -364,6 +411,7 @@ pub fn to_structure_json(
         matching_unique: report.matching.unique,
         identifiability: ident.map(to_identifiability_json),
         metrics: metrics.map(to_metrics_json),
+        layout3d: layout.map(to_layout3d_json),
     }
 }
 
@@ -445,8 +493,9 @@ pub fn structure_json_pretty(
     report: &crate::graph::StructureReport,
     ident: Option<&crate::graph::IdentifiabilityReport>,
     metrics: Option<&crate::graph::MetricsReport>,
+    layout: Option<&crate::graph::Layout3d>,
 ) -> String {
-    serde_json::to_string_pretty(&to_structure_json(report, ident, metrics))
+    serde_json::to_string_pretty(&to_structure_json(report, ident, metrics, layout))
         .unwrap_or_else(|_| "{}".to_string())
 }
 
