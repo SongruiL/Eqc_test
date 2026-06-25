@@ -730,6 +730,11 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
         None => (target, ""),
     };
 
+    // 流式 LLM：直接接管 TcpStream 逐块写 SSE（不走下面「组完整 body 再一次写」的常规路径）。
+    if route == "/api/llm/stream" && method == "POST" {
+        return proxy_llm_stream(&mut stream, &req_body);
+    }
+
     // 当前模型（按 `?model=<id>`，缺省第一个）。/、/__version、/api/models 不依赖它，但解析无害。
     let m = resolve_model(ctx, query);
 
@@ -965,6 +970,70 @@ fn proxy_llm(body: &[u8]) -> String {
             llm_error("upstream_unreachable", &format!("连接 Claude 失败（检查网络/代理 EQC_LLM_PROXY）：{t}"))
         }
     }
+}
+
+/// `POST /api/llm/stream`：同 proxy_llm，但**强制 `stream:true` 并把上游 SSE 原样透传**给浏览器
+/// （`Connection: close`，逐块 flush；前端用 fetch 流式 reader 解析）。错误也以一条 SSE `data:` 事件下发。
+fn proxy_llm_stream(stream: &mut TcpStream, body: &[u8]) -> std::io::Result<()> {
+    const SSE_HEAD: &str = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
+    // 写 SSE 头 + 一条事件（用于在「尚未透传上游流」时下发错误/上游错误 JSON）。
+    fn sse_once(stream: &mut TcpStream, data: &str) -> std::io::Result<()> {
+        stream.write_all(SSE_HEAD.as_bytes())?;
+        stream.write_all(format!("data: {data}\n\n").as_bytes())?;
+        stream.flush()
+    }
+
+    let key = match std::env::var("ANTHROPIC_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return sse_once(stream, &llm_error("missing_api_key", "后端未配置 ANTHROPIC_API_KEY；设置后重启 serve 即可启用 AI。")),
+    };
+    let mut v: serde_json::Value = match serde_json::from_slice(body) {
+        Ok(v) => v,
+        Err(_) => return sse_once(stream, &llm_error("bad_request", "请求体不是合法 JSON")),
+    };
+    v["stream"] = serde_json::Value::Bool(true);
+    if let Ok(m) = std::env::var("EQC_LLM_MODEL") {
+        if !m.is_empty() {
+            v["model"] = serde_json::Value::String(m);
+        }
+    }
+    let payload = serde_json::to_vec(&v).unwrap_or_else(|_| body.to_vec());
+
+    let req = build_llm_agent()
+        .post("https://api.anthropic.com/v1/messages")
+        .set("x-api-key", &key)
+        .set("anthropic-version", "2023-06-01")
+        .set("content-type", "application/json")
+        .timeout(Duration::from_secs(300));
+    let resp = match req.send_bytes(&payload) {
+        Ok(r) => r,
+        // 4xx/5xx：上游返回的是非流式错误 JSON（已是 {type:error,...}）→ 包成一条 SSE 事件透传。
+        Err(ureq::Error::Status(_c, r)) => {
+            let txt = r.into_string().unwrap_or_default();
+            let data = if txt.trim().is_empty() { llm_error("upstream_error", "Claude 返回错误") } else { txt };
+            return sse_once(stream, &data);
+        }
+        Err(ureq::Error::Transport(t)) => {
+            return sse_once(stream, &llm_error("upstream_unreachable", &format!("连接 Claude 失败（检查网络/代理 EQC_LLM_PROXY）：{t}")));
+        }
+    };
+
+    // 透传上游 SSE：写头后逐块 read→write→flush，直到上游关闭。
+    stream.write_all(SSE_HEAD.as_bytes())?;
+    stream.flush()?;
+    let mut reader = resp.into_reader();
+    let mut buf = [0u8; 4096];
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                stream.write_all(&buf[..n])?;
+                stream.flush()?;
+            }
+            Err(_) => break, // 浏览器断开/上游中断 → 收尾
+        }
+    }
+    stream.flush()
 }
 
 /// `?vars=Y,TDM` → ["Y","TDM"]。

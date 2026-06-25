@@ -138,13 +138,103 @@ function askConfirm(c: Command, input: Record<string, unknown>): Promise<boolean
   })
 }
 
-async function callLlm(body: unknown): Promise<any> {
-  const r = await fetch('/api/llm', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  return r.json()
+// 流式调用 /api/llm/stream：push 一条「活」的助手消息，边收 SSE delta 边填它（文字逐字蹦），
+// message_stop 后返回组装好的 {content, stop_reason}（或 error）。
+type LiveBlock = Block & { _json?: string }
+async function streamLlm(body: Record<string, unknown>): Promise<{ content: Block[]; stop_reason: string; error?: string }> {
+  let resp: Response
+  try {
+    resp = await fetch('/api/llm/stream', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...body, stream: true }),
+    })
+  } catch (e) {
+    return { content: [], stop_reason: '', error: `连接失败：${e}` }
+  }
+  if (!resp.body) return { content: [], stop_reason: '', error: '无响应流' }
+
+  // 关键（Svelte 5）：mutate 必须经 $state 代理才响应式——push 后用 agent.convo[idx]（代理）拿 blocks，
+  // 不能用 push 进去的裸对象引用（裸引用绕过代理 → 文字不会逐字蹦）。
+  const idx = agent.convo.push({ role: 'assistant', content: [] as Block[] }) - 1
+  const blocks = agent.convo[idx].content as LiveBlock[]
+  let stop_reason = ''
+  let error = ''
+
+  const onEvent = (ev: any) => {
+    switch (ev?.type) {
+      case 'content_block_start': {
+        const cb = ev.content_block
+        if (cb?.type === 'text') blocks[ev.index] = { type: 'text', text: cb.text ?? '' }
+        else if (cb?.type === 'tool_use') blocks[ev.index] = { type: 'tool_use', id: cb.id, name: cb.name, input: {}, _json: '' }
+        break
+      }
+      case 'content_block_delta': {
+        const b = blocks[ev.index]
+        if (!b) break
+        if (ev.delta?.type === 'text_delta' && b.type === 'text') b.text += ev.delta.text
+        else if (ev.delta?.type === 'input_json_delta' && b.type === 'tool_use') b._json = (b._json ?? '') + ev.delta.partial_json
+        break
+      }
+      case 'content_block_stop': {
+        const b = blocks[ev.index]
+        if (b && b.type === 'tool_use') {
+          try {
+            b.input = b._json ? JSON.parse(b._json) : {}
+          } catch {
+            b.input = {}
+          }
+          delete b._json
+        }
+        break
+      }
+      case 'message_delta':
+        if (ev.delta?.stop_reason) stop_reason = ev.delta.stop_reason
+        break
+      case 'error':
+        error = ev.error?.message ?? '调用 Claude 失败'
+        break
+    }
+  }
+
+  const reader = resp.body.getReader()
+  const dec = new TextDecoder()
+  let buf = ''
+  const flushLines = (final = false) => {
+    let i: number
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i).replace(/\r$/, '')
+      buf = buf.slice(i + 1)
+      if (line.startsWith('data:')) {
+        const d = line.slice(5).trim()
+        if (d) {
+          try {
+            onEvent(JSON.parse(d))
+          } catch {
+            /* 跨块的半行：忽略，等下一块拼齐 */
+          }
+        }
+      }
+    }
+    if (final && buf.trim().startsWith('data:')) {
+      try {
+        onEvent(JSON.parse(buf.trim().slice(5).trim()))
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += dec.decode(value, { stream: true })
+    flushLines()
+  }
+  flushLines(true)
+
+  for (const b of blocks) if (b && b._json !== undefined) delete b._json
+  if (error && blocks.length === 0) agent.convo.splice(idx, 1) // 出错且没产出 → 撤掉空气泡
+  return { content: blocks as Block[], stop_reason, error: error || undefined }
 }
 
 async function runLoop() {
@@ -153,17 +243,14 @@ async function runLoop() {
   try {
     const map = buildToolMap()
     for (let iter = 0; iter < MAX_ITERS; iter++) {
-      const data = await callLlm(buildRequest())
-      if (data?.type === 'error') {
-        agent.error = data.error?.message ?? '调用 Claude 失败'
+      const res = await streamLlm(buildRequest())
+      if (res.error) {
+        agent.error = res.error
         break
       }
-      const content: Block[] = Array.isArray(data?.content) ? data.content : []
-      agent.convo.push({ role: 'assistant', content })
+      if (res.stop_reason !== 'tool_use') break // end_turn / 其它 → 结束
 
-      if (data?.stop_reason !== 'tool_use') break // end_turn / 其它 → 结束
-
-      const toolUses = content.filter((b): b is Extract<Block, { type: 'tool_use' }> => b.type === 'tool_use')
+      const toolUses = res.content.filter((b): b is Extract<Block, { type: 'tool_use' }> => b.type === 'tool_use')
       const results: Block[] = []
       for (const tu of toolUses) {
         const cmd = map[tu.name]
