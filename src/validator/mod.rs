@@ -7,6 +7,7 @@
 
 mod cycle_detector;
 mod reference_checker;
+mod structural_checker;
 mod type_checker;
 
 pub use crate::error::ValidationError;
@@ -49,6 +50,9 @@ pub fn validate(files: &[EquationFile]) -> CompileResult<()> {
             path: cycle.join(" -> "),
         });
     }
+
+    // 5. 结构检查：跨模块系统级过定（图论分析；逐文件检查看不到的缺口）。
+    all_errors.extend(structural_checker::check_structure(files));
 
     // 返回结果
     if all_errors.is_empty() {

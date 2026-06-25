@@ -205,6 +205,70 @@ pub fn to_json_string(files: &[EquationFile]) -> String {
     serde_json::to_string(&to_model_json(files)).unwrap_or_else(|_| "{}".to_string())
 }
 
+// ============================================
+// 结构分析契约（GA-1）：独立的 `eqc structure --json` 输出。
+// additive：`schema_version` 不动；前端可据此画「求解顺序 / 代数环 / 过欠定」高亮。
+// 暂不嵌入 `ModelJson`（待契约稳定后再加可选字段），保持本轮最小面。
+// ============================================
+
+/// 一个求解块（块下三角顺序里的一格）。
+#[derive(Debug, Clone, Serialize)]
+pub struct SolveBlockJson {
+    /// 本块方程键（`MODULE::eq_id`）。
+    pub equations: Vec<String>,
+    /// 本块解出的变量节点 id。
+    pub variables: Vec<String>,
+    /// 是否代数环（须联立求解；本 arc 只定位不求解）。false 省略。
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub algebraic_loop: bool,
+}
+
+/// 模型结构分析的 JSON 契约。
+#[derive(Debug, Clone, Serialize)]
+pub struct StructureJson {
+    pub schema_version: u32,
+    /// 自由变量（欠定块）= 参数 + 驱动量 + 无方程状态量。
+    pub free_vars: Vec<String>,
+    /// 方定块，已按块下三角求解顺序排列。
+    pub solve_blocks: Vec<SolveBlockJson>,
+    /// 超定方程键（多条方程写同一 output）。空则省略。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub over_determined: Vec<String>,
+    /// 结构是否奇异（最大匹配 < 方程数）。
+    pub structurally_singular: bool,
+    /// 作者 `output:` 是否本身是完美匹配。
+    pub author_matching_perfect: bool,
+    /// 最大匹配是否唯一（best-effort；未判定则省略）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matching_unique: Option<bool>,
+}
+
+/// 把结构报告导出为契约 JSON 结构。
+pub fn to_structure_json(report: &crate::graph::StructureReport) -> StructureJson {
+    StructureJson {
+        schema_version: SCHEMA_VERSION,
+        free_vars: report.free_vars.clone(),
+        solve_blocks: report
+            .solve_blocks
+            .iter()
+            .map(|b| SolveBlockJson {
+                equations: b.equations.clone(),
+                variables: b.variables.clone(),
+                algebraic_loop: b.is_algebraic_loop,
+            })
+            .collect(),
+        over_determined: report.over_determined.clone(),
+        structurally_singular: report.structurally_singular,
+        author_matching_perfect: report.matching.author_is_perfect,
+        matching_unique: report.matching.unique,
+    }
+}
+
+/// 结构分析 JSON（带缩进，`eqc structure --json` 用）。
+pub fn structure_json_pretty(report: &crate::graph::StructureReport) -> String {
+    serde_json::to_string_pretty(&to_structure_json(report)).unwrap_or_else(|_| "{}".to_string())
+}
+
 /// 序列化为带缩进的 JSON（`eqc export` 用，便于人读）。
 pub fn to_json_pretty(files: &[EquationFile]) -> String {
     serde_json::to_string_pretty(&to_model_json(files)).unwrap_or_else(|_| "{}".to_string())

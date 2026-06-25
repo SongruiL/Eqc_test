@@ -315,6 +315,16 @@ enum Commands {
         output: Option<PathBuf>,
     },
 
+    /// 结构分析：变量-方程二部图 + 匹配 + DM 分解（自由变量 / 求解顺序 / 代数环 / 过欠定）
+    Structure {
+        /// 模型文件（.eq.yaml）或目录
+        input: PathBuf,
+
+        /// 输出 StructureJson 契约（缺省打印人读报告）
+        #[arg(long)]
+        json: bool,
+    },
+
     /// 仿真优化：读模型 + 决策 spec，用差分进化 DE 搜旋钮空间，输出最优旋钮 + 目标值
     Optimize {
         /// 模型文件（单个 .eq.yaml）
@@ -453,6 +463,7 @@ fn main() {
             equation_compiler::serve::serve(&input, port, drivers.as_ref(), params.as_ref(), data_dir.as_ref())
         }
         Commands::Export { input, output } => run_export(&input, output.as_ref()),
+        Commands::Structure { input, json } => run_structure(&input, json),
         Commands::Optimize { input, spec, drivers, steps, prescreen, output } => {
             run_optimize(&input, &spec, drivers.as_ref(), steps, prescreen, output.as_ref())
         }
@@ -966,6 +977,84 @@ fn run_export(input: &PathBuf, output: Option<&PathBuf>) -> Result<(), Box<dyn s
             println!("✅ 模型 JSON 契约已写入 {}", path.display());
         }
         None => println!("{json}"),
+    }
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+fn run_structure(input: &PathBuf, json: bool) -> Result<(), Box<dyn std::error::Error>> {
+    use equation_compiler::graph::analyze_structure;
+    use equation_compiler::{parse_directory, parse_file};
+
+    let files = if input.is_dir() {
+        parse_directory(input)?
+    } else {
+        vec![parse_file(input)?]
+    };
+    let report = analyze_structure(&files);
+
+    if json {
+        println!("{}", equation_compiler::export::structure_json_pretty(&report));
+        return Ok(());
+    }
+
+    // 人读报告。
+    println!("🔬 结构分析: {}", input.display());
+    let m = &report.matching;
+    println!(
+        "   方程数 {} | 变量数 {} | 最大匹配 {}",
+        m.n_equations,
+        report.free_vars.len() + report.solve_blocks.iter().map(|b| b.variables.len()).sum::<usize>(),
+        m.max_matching_size
+    );
+
+    // 适定性。
+    if report.structurally_singular {
+        println!("   ❌ 结构奇异：最大匹配 {} < 方程数 {}（过/欠定，无法每方程配 distinct 变量）", m.max_matching_size, m.n_equations);
+    } else {
+        println!("   ✅ 结构非奇异（存在覆盖全部方程的匹配；必要非充分，不替代数值检查）");
+    }
+    if m.author_is_perfect {
+        match m.unique {
+            Some(true) => println!("   ✅ 作者 output: 是完美匹配，且最大匹配唯一"),
+            Some(false) => println!("   ⚠️  作者 output: 是完美匹配，但最大匹配非唯一（作者在多个合法指派中做了选择）"),
+            None => println!("   ✅ 作者 output: 是完美匹配"),
+        }
+    } else {
+        println!("   ⚠️  作者 output: 不是完美匹配（有 output 重复或方程配不上变量）");
+    }
+    if !m.differs_from_author.is_empty() {
+        println!("   ℹ️  算法匹配与作者 output 指派不同的方程: {}", m.differs_from_author.join(", "));
+    }
+
+    // 超定。
+    if !report.over_determined.is_empty() {
+        println!("   ❌ 超定（多条方程写同一 output）: {}", report.over_determined.join(", "));
+    }
+
+    // 自由变量。
+    println!("\n   自由变量（{} 个，= 参数/驱动/无方程状态量）:", report.free_vars.len());
+    println!("   {}", report.free_vars.join(", "));
+
+    // 求解顺序 + 代数环。
+    println!("\n   求解块（块下三角顺序，共 {} 块）:", report.solve_blocks.len());
+    for (i, b) in report.solve_blocks.iter().enumerate() {
+        if b.is_algebraic_loop {
+            println!(
+                "   {:>3}. 🔁 代数环：联立求解 {{{}}}  via [{}]",
+                i + 1,
+                b.variables.join(", "),
+                b.equations.join(", ")
+            );
+        } else {
+            println!("   {:>3}. {}  ←  [{}]", i + 1, b.variables.join(", "), b.equations.join(", "));
+        }
+    }
+    let loops = report.algebraic_loops();
+    if loops.is_empty() {
+        println!("\n   ✅ 无代数环（全是单点块，可逐步显式求解）");
+    } else {
+        println!("\n   🔁 共 {} 个代数环块（须隐式联立求解；本工具当前为显式 Euler，见隐式求解器缺口）", loops.len());
     }
     Ok(())
 }

@@ -220,6 +220,15 @@ human-in-the-loop——GP 提议、科学家裁决。设计 `docs/spec-gp-studio
 - **#4 e2e 方案 C（Playwright，系统 Edge）**：① 后端 **Mock 模式**（`EQC_LLM_MOCK=1`）——从最后一条 user 消息读 `[[MOCK 工具 {json}]]` 指令确定性返回 tool_use，驱动**真**前端 loop/handler/confirm/store；`build_mock` 兼容 #3 缓存的数组包装形态。② `e2e/mock.spec.cjs`（默认 5 用例：select_vars 真执行 / confirm 允许真落盘 / confirm 取消 / 并行多工具 / 后端错误）+ `e2e/real.spec.cjs`（`EQC_E2E_REAL=1` 才跑 2 真冒烟），`test.skip` 互斥门控。实测 mock 5 passed（零成本）、real 2 passed。跑法见 USAGE。
 - **★标准约定**：以后**新增任何用户可在前端操作的功能，必须同时在 `frontend/src/lib/commands.svelte.ts` 注册一条命令**（带 description/params/access），这样 ⌘K 面板与 AI 助手自动同获该能力——加功能=加命令，零额外胶水。
 
+### 模型图论分析 arc · GA-1（结构分析地基：二部图 + 匹配 + DM 分解）
+把模型当**图**来严谨分析的第一阶段（理论见 `docs/theory-model-graph-analysis.md`，spec §4）。纯 Rust、数据无关、可单测，不碰数值求解（只**定位**代数环）。新增 `src/graph/`：
+- **`bipartite.rs`**：`EquationFile[] → BipartiteGraph`。复用 `get_variable_refs/get_parameter_refs` 抽边；一个方程的边集 = `refs ∪ {output}`（EQC 里 `output` 是 LHS、不在 refs 里）。参数/驱动/状态全算变量节点（让 DM 自动分出自由变量）。节点用 `MODULE.name`（同 DAG 约定），跨模块 `source:` 输入折叠进上游 output 节点 → 多模块作为一个结构系统。
+- **`matching.rs`**：Hopcroft–Karp 最大匹配（O(E·√V)）+ 与作者 `output:` 对照 → `MatchingReport{最大匹配大小, 作者是否完美匹配, 结构是否奇异, 唯一性(best-effort 交替环检测), 与作者指派差异}`。适定性的结构必要条件（必要非充分，不替代数值）。
+- **`dm.rs`**：Dulmage–Mendelsohn 分解 → `StructureReport{自由变量(欠定块), 求解块(方定块,块下三角顺序), 超定方程, 结构奇异, 匹配报告}`。方定块用作者 output 定向 + petgraph `tarjan_scc` 求块三角；SCC>1 或 RHS 自引用 = 代数环。= EQC 现有「拓扑排序 + 环检测」的严谨完整版。
+- **CLI `eqc structure <模型> [--json]`**：人读报告（适定性/自由变量/求解顺序/代数环）或 `StructureJson` 契约（`export.rs`，additive，`schema_version` 不变）。
+- **接入 `validate`**：诚实边界——单文件重复 output（→`DuplicateDefinition`）、代数环（→`CyclicDependency`）现有校验已覆盖；本轮只补**跨模块系统级过定**（耦合折叠后不同模块两方程撞同一节点）这个现有校验看不到的缺口（`structural_checker.rs` + `StructurallyOverDetermined`）。
+- **验证**：合成玩具图逐一对拍（链式=全单点块三角；造环=一个 SCC 块；自引用=单点环；写重 output=超定；漏方程=落自由变量非错误；方程多于变量=结构奇异）。真模型：草莓 S4（26 eqs，完美唯一匹配、无环）、v1 cohort（66 eqs）跑通，validate 无回归。**关键洞察**：动态模型里状态量（如 DF）本步是**携带的自由变量**，故 FF/产量路在本步独立于光合路——结构分析正确分离了「本步代数依赖」与「跨步状态耦合」。12 个新测试，两 feature 配置（cli / cli+advanced_math）共 267 lib 绿。
+
 ## 下一步（未做）/ 当前不足
 
 **EQC 工具层**

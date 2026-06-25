@@ -85,6 +85,11 @@ pub enum ValidationError {
     #[error("循环依赖: {path}")]
     CyclicDependency { path: String },
 
+    /// 结构过定：跨模块多条方程解算同一个变量（耦合折叠后撞在同一节点）。
+    /// 单文件内的重复 output 由 DuplicateDefinition 报告；这里专报**跨模块**的系统级过定。
+    #[error("结构过定: 变量 '{variable}' 被多条方程解算（{equations}）")]
+    StructurallyOverDetermined { variable: String, equations: String },
+
     /// 类型错误
     #[error("类型错误: {message} 在 {location}")]
     TypeError { message: String, location: String },
