@@ -938,6 +938,13 @@ fn build_llm_agent() -> ureq::Agent {
 /// `POST /api/llm`：把前端组好的完整 Anthropic 请求体注入 key 后转发，原样回传 Claude 的 JSON。
 /// key 取自 env `ANTHROPIC_API_KEY`（不进浏览器/repo）；缺失→友好错误，前端禁用 AI、其余照常。
 fn proxy_llm(body: &[u8]) -> String {
+    if mock_enabled() {
+        let (blocks, stop, err) = build_mock(body);
+        return match err {
+            Some(e) => llm_error("mock_error", &e),
+            None => serde_json::json!({"type":"message","role":"assistant","model":"mock","content":blocks,"stop_reason":stop,"usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0}}).to_string(),
+        };
+    }
     let key = match std::env::var("ANTHROPIC_API_KEY") {
         Ok(k) if !k.is_empty() => k,
         _ => return llm_error("missing_api_key", "后端未配置 ANTHROPIC_API_KEY；设置该环境变量后重启 serve 即可启用 AI。"),
@@ -975,7 +982,9 @@ fn proxy_llm(body: &[u8]) -> String {
 /// `POST /api/llm/stream`：同 proxy_llm，但**强制 `stream:true` 并把上游 SSE 原样透传**给浏览器
 /// （`Connection: close`，逐块 flush；前端用 fetch 流式 reader 解析）。错误也以一条 SSE `data:` 事件下发。
 fn proxy_llm_stream(stream: &mut TcpStream, body: &[u8]) -> std::io::Result<()> {
-    const SSE_HEAD: &str = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
+    if mock_enabled() {
+        return mock_stream(stream, body);
+    }
     // 写 SSE 头 + 一条事件（用于在「尚未透传上游流」时下发错误/上游错误 JSON）。
     fn sse_once(stream: &mut TcpStream, data: &str) -> std::io::Result<()> {
         stream.write_all(SSE_HEAD.as_bytes())?;
@@ -1034,6 +1043,106 @@ fn proxy_llm_stream(stream: &mut TcpStream, body: &[u8]) -> std::io::Result<()> 
         }
     }
     stream.flush()
+}
+
+/// SSE 响应头（流式 LLM 与 mock 共用）。
+const SSE_HEAD: &str = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
+
+// ───────────────────────── Mock LLM（确定性 e2e 用） ─────────────────────────
+
+/// `EQC_LLM_MOCK` 非空即启用 mock：不调 Anthropic，按请求里的 `[[MOCK …]]` 指令确定性作答。
+fn mock_enabled() -> bool {
+    std::env::var("EQC_LLM_MOCK").map(|x| !x.is_empty()).unwrap_or(false)
+}
+
+/// 从最后一条 user 消息读指令，确定性产出助手内容块 + stop_reason（+ 可选错误）：
+/// - 最后一条是 tool_result（content 为数组）→ 一句文本 + `end_turn`（结束 loop）。
+/// - 文本含 `[[MOCK_ERROR 信息]]` → 返回错误。
+/// - 文本含一个或多个 `[[MOCK 工具名 {json入参}]]` → 对应 tool_use（多条=并行）+ `tool_use`。
+/// - 否则 → 一句文本 + `end_turn`。
+/// 这样测试用例自描述「模型该调哪个工具」，驱动**真**前端 loop/handler/confirm，零成本可重复。
+fn build_mock(body: &[u8]) -> (Vec<serde_json::Value>, String, Option<String>) {
+    use serde_json::json;
+    let v: serde_json::Value = serde_json::from_slice(body).unwrap_or(json!({}));
+    let last = v.get("messages").and_then(|m| m.as_array()).and_then(|a| a.last());
+    let content = last.and_then(|m| m.get("content"));
+    // tool_result 轮：数组里含 tool_result 块 → 结束。（注意：#3 缓存把末条 user 字符串也包成
+    // text 块数组，所以「是数组」不等于 tool_result，必须按块 type 判定。）
+    let blocks_arr = content.and_then(|c| c.as_array());
+    let is_tool_result = blocks_arr
+        .map(|a| a.iter().any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_result")))
+        .unwrap_or(false);
+    if is_tool_result {
+        return (vec![json!({"type":"text","text":"完成 ✅（mock）"})], "end_turn".into(), None);
+    }
+    // 取用户文本：字符串内容，或数组里 text 块拼接（覆盖缓存包装后的形态）。
+    let owned;
+    let text: &str = if let Some(s) = content.and_then(|c| c.as_str()) {
+        s
+    } else if let Some(a) = blocks_arr {
+        owned = a
+            .iter()
+            .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("text"))
+            .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+            .collect::<Vec<_>>()
+            .join(" ");
+        owned.as_str()
+    } else {
+        ""
+    };
+    if let Some(s) = text.find("[[MOCK_ERROR") {
+        let msg = text[s + "[[MOCK_ERROR".len()..].split("]]").next().unwrap_or("").trim();
+        return (vec![], String::new(), Some(if msg.is_empty() { "mock 错误".into() } else { msg.to_string() }));
+    }
+    let mut blocks = vec![];
+    let mut rest = text;
+    while let Some(s) = rest.find("[[MOCK ") {
+        let after = &rest[s + "[[MOCK ".len()..];
+        let end = match after.find("]]") {
+            Some(e) => e,
+            None => break,
+        };
+        let spec = after[..end].trim();
+        rest = &after[end + 2..];
+        let (name, inp) = match spec.find('{') {
+            Some(b) => (spec[..b].trim().to_string(), spec[b..].trim().to_string()),
+            None => (spec.to_string(), "{}".to_string()),
+        };
+        let input: serde_json::Value = serde_json::from_str(&inp).unwrap_or(json!({}));
+        blocks.push(json!({"type":"tool_use","id":format!("mock_{}", blocks.len()),"name":name,"input":input}));
+    }
+    if blocks.is_empty() {
+        return (vec![json!({"type":"text","text":"（mock）我已就绪。"})], "end_turn".into(), None);
+    }
+    (blocks, "tool_use".into(), None)
+}
+
+/// mock 的流式 SSE：把 build_mock 的内容块拆成 Anthropic SSE 事件序列写给浏览器。
+fn mock_stream(stream: &mut TcpStream, body: &[u8]) -> std::io::Result<()> {
+    use serde_json::json;
+    let (blocks, stop, err) = build_mock(body);
+    stream.write_all(SSE_HEAD.as_bytes())?;
+    let mut send = |data: serde_json::Value| -> std::io::Result<()> {
+        stream.write_all(format!("data: {}\n\n", data).as_bytes())?;
+        stream.flush()
+    };
+    if let Some(e) = err {
+        return send(json!({"type":"error","error":{"type":"mock_error","message":e}}));
+    }
+    send(json!({"type":"message_start","message":{"model":"mock","role":"assistant","content":[],"usage":{"input_tokens":1,"output_tokens":1}}}))?;
+    for (i, b) in blocks.iter().enumerate() {
+        if b["type"] == "text" {
+            send(json!({"type":"content_block_start","index":i,"content_block":{"type":"text","text":""}}))?;
+            send(json!({"type":"content_block_delta","index":i,"delta":{"type":"text_delta","text":b["text"]}}))?;
+        } else {
+            send(json!({"type":"content_block_start","index":i,"content_block":{"type":"tool_use","id":b["id"],"name":b["name"],"input":{}}}))?;
+            let pj = serde_json::to_string(&b["input"]).unwrap_or_else(|_| "{}".into());
+            send(json!({"type":"content_block_delta","index":i,"delta":{"type":"input_json_delta","partial_json":pj}}))?;
+        }
+        send(json!({"type":"content_block_stop","index":i}))?;
+    }
+    send(json!({"type":"message_delta","delta":{"stop_reason":stop}}))?;
+    send(json!({"type":"message_stop"}))
 }
 
 /// `?vars=Y,TDM` → ["Y","TDM"]。
