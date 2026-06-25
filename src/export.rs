@@ -246,6 +246,30 @@ pub struct IdentifiabilityJson {
     pub params: Vec<ParamReachJson>,
 }
 
+/// 单节点网络指标（GA-3）。
+#[derive(Debug, Clone, Serialize)]
+pub struct NodeMetricsJson {
+    pub id: String,
+    pub in_degree: usize,
+    pub out_degree: usize,
+    pub betweenness: f64,
+    pub pagerank: f64,
+    pub depth: usize,
+    pub community: usize,
+}
+
+/// 网络指标（GA-3）的 JSON 契约。
+#[derive(Debug, Clone, Serialize)]
+pub struct MetricsJson {
+    /// 各节点指标，按介数降序（枢纽在前）。
+    pub nodes: Vec<NodeMetricsJson>,
+    pub n_communities: usize,
+    pub modularity_detected: f64,
+    /// 作者 meta.modules 划分的模块度（声明了才有）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modularity_modules: Option<f64>,
+}
+
 /// 模型结构分析的 JSON 契约。
 #[derive(Debug, Clone, Serialize)]
 pub struct StructureJson {
@@ -267,6 +291,31 @@ pub struct StructureJson {
     /// 结构可辨识性（GA-2，可选；仅 `--identifiability` 时计算并附上）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub identifiability: Option<IdentifiabilityJson>,
+    /// 网络指标（GA-3，可选；仅 `--metrics` 时计算并附上）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<MetricsJson>,
+}
+
+/// 把网络指标报告导出为契约结构。
+pub fn to_metrics_json(r: &crate::graph::MetricsReport) -> MetricsJson {
+    MetricsJson {
+        nodes: r
+            .nodes
+            .iter()
+            .map(|m| NodeMetricsJson {
+                id: m.node.clone(),
+                in_degree: m.in_degree,
+                out_degree: m.out_degree,
+                betweenness: m.betweenness,
+                pagerank: m.pagerank,
+                depth: m.depth,
+                community: m.community,
+            })
+            .collect(),
+        n_communities: r.n_communities,
+        modularity_detected: r.modularity_detected,
+        modularity_modules: r.modularity_modules,
+    }
 }
 
 /// 把可辨识性报告导出为契约结构。
@@ -291,10 +340,11 @@ pub fn to_identifiability_json(r: &crate::graph::IdentifiabilityReport) -> Ident
     }
 }
 
-/// 把结构报告（+可选可辨识性）导出为契约 JSON 结构。
+/// 把结构报告（+可选可辨识性/网络指标）导出为契约 JSON 结构。
 pub fn to_structure_json(
     report: &crate::graph::StructureReport,
     ident: Option<&crate::graph::IdentifiabilityReport>,
+    metrics: Option<&crate::graph::MetricsReport>,
 ) -> StructureJson {
     StructureJson {
         schema_version: SCHEMA_VERSION,
@@ -313,6 +363,7 @@ pub fn to_structure_json(
         author_matching_perfect: report.matching.author_is_perfect,
         matching_unique: report.matching.unique,
         identifiability: ident.map(to_identifiability_json),
+        metrics: metrics.map(to_metrics_json),
     }
 }
 
@@ -320,8 +371,9 @@ pub fn to_structure_json(
 pub fn structure_json_pretty(
     report: &crate::graph::StructureReport,
     ident: Option<&crate::graph::IdentifiabilityReport>,
+    metrics: Option<&crate::graph::MetricsReport>,
 ) -> String {
-    serde_json::to_string_pretty(&to_structure_json(report, ident))
+    serde_json::to_string_pretty(&to_structure_json(report, ident, metrics))
         .unwrap_or_else(|_| "{}".to_string())
 }
 

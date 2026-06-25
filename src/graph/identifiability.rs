@@ -11,16 +11,15 @@
 //! ⚠️ 严谨边界：图法只给**必要条件**（可达性、混淆候选），不给充分判定；**完整**判定用微分代数
 //! （Lie 导数、特征集，见 SIAN / StructuralIdentifiability.jl）。定位为快速筛 + 可视化。
 //!
-//! **有向影响图**（专为可达性建，不复用 GA-1 无向二部图、也不用 `build_dag`——后者缺积分边）：
-//! 节点 = 全部符号；有向边 = `ref→output`（数据流）∪ `source→input`（跨模块耦合）
-//! ∪ `rate源→state`（积分：状态量受其速率影响）∪ `prev源→semistate`（延迟）。
-//! 含积分/延迟边是关键：动态模型里 `param→rate→state→可测` 才连得通，否则误报不可辨识。
+//! **有向影响图**（[`super::digraph::DiGraph`]，含 `rate→state`/`prev→semistate` 积分延迟边——
+//! 动态模型里 `param→rate→state→可测` 才连得通，否则误报不可辨识）上做参数→可测的可达性。
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use crate::schema::{EquationFile, VariableType};
 
 use super::bipartite::NodeResolver;
+use super::digraph::DiGraph;
 
 /// 单个参数的可达性结论。
 #[derive(Debug, Clone)]
@@ -46,78 +45,10 @@ pub struct IdentifiabilityReport {
     pub confounded_candidates: Vec<(String, String)>,
 }
 
-/// 有向影响图（邻接表：节点 id → 它**影响**的下游节点 ids）。
-struct InfluenceGraph {
-    adj: HashMap<String, Vec<String>>,
-}
-
-impl InfluenceGraph {
-    /// 从一组方程文件建有向影响图（含积分/延迟边）。
-    fn build(files: &[EquationFile], resolver: &NodeResolver) -> InfluenceGraph {
-        let mut adj: HashMap<String, Vec<String>> = HashMap::new();
-        let mut add = |from: String, to: String, adj: &mut HashMap<String, Vec<String>>| {
-            adj.entry(from).or_default().push(to);
-        };
-        for f in files {
-            let m = &f.meta.id;
-            // 数据流：方程每个 ref（变量+参数）→ output。
-            for eq in &f.equations {
-                let out = resolver.resolve(m, &eq.output);
-                for name in eq.get_variable_refs().iter().chain(eq.get_parameter_refs().iter()) {
-                    add(resolver.resolve(m, name), out.clone(), &mut adj);
-                }
-            }
-            // 积分 / 延迟 / 跨模块耦合边（build_dag 没有前两者）。
-            for (vname, var) in &f.variables {
-                let node = resolver.resolve(m, vname);
-                if let Some(src) = &var.rate {
-                    add(resolver.resolve(m, src), node.clone(), &mut adj); // rate源 → state
-                }
-                if let Some(src) = &var.prev {
-                    add(resolver.resolve(m, src), node.clone(), &mut adj); // prev源 → semistate
-                }
-                if var.var_type == VariableType::Input {
-                    if let Some((sm, sv)) = var.parse_source() {
-                        // source 折叠后 node==上游节点，这条边自环无意义；仅当未折叠才加。
-                        let up = format!("{sm}.{sv}");
-                        if up != node {
-                            add(up, node.clone(), &mut adj);
-                        }
-                    }
-                }
-            }
-        }
-        InfluenceGraph { adj }
-    }
-
-    /// 从 `start` 出发可达的全部节点（不含 start 自身）。
-    fn reachable(&self, start: &str) -> HashSet<String> {
-        let mut seen: HashSet<String> = HashSet::new();
-        let mut q: VecDeque<String> = VecDeque::new();
-        if let Some(succ) = self.adj.get(start) {
-            for s in succ {
-                if seen.insert(s.clone()) {
-                    q.push_back(s.clone());
-                }
-            }
-        }
-        while let Some(u) = q.pop_front() {
-            if let Some(succ) = self.adj.get(&u) {
-                for s in succ {
-                    if seen.insert(s.clone()) {
-                        q.push_back(s.clone());
-                    }
-                }
-            }
-        }
-        seen
-    }
-}
-
 /// 对一组方程文件做结构可辨识性分析。
 pub fn analyze_identifiability(files: &[EquationFile]) -> IdentifiabilityReport {
     let resolver = NodeResolver::build(files);
-    let graph = InfluenceGraph::build(files, &resolver);
+    let graph = DiGraph::from_files(files);
 
     // 1) 可测集 = measurable:true 的变量；若一个都没标，回退所有 output 型变量（同数值版默认）。
     let mut measurable: Vec<String> = Vec::new();

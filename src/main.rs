@@ -327,6 +327,10 @@ enum Commands {
         /// 附加结构可辨识性分析（参数→可测变量可达性 + 混淆候选，图论必要条件版）
         #[arg(long)]
         identifiability: bool,
+
+        /// 附加网络指标（度/介数/PageRank 中心性 + 社区/模块度 + 深度，找枢纽/对照 meta.modules）
+        #[arg(long)]
+        metrics: bool,
     },
 
     /// 仿真优化：读模型 + 决策 spec，用差分进化 DE 搜旋钮空间，输出最优旋钮 + 目标值
@@ -467,7 +471,7 @@ fn main() {
             equation_compiler::serve::serve(&input, port, drivers.as_ref(), params.as_ref(), data_dir.as_ref())
         }
         Commands::Export { input, output } => run_export(&input, output.as_ref()),
-        Commands::Structure { input, json, identifiability } => run_structure(&input, json, identifiability),
+        Commands::Structure { input, json, identifiability, metrics } => run_structure(&input, json, identifiability, metrics),
         Commands::Optimize { input, spec, drivers, steps, prescreen, output } => {
             run_optimize(&input, &spec, drivers.as_ref(), steps, prescreen, output.as_ref())
         }
@@ -986,8 +990,8 @@ fn run_export(input: &PathBuf, output: Option<&PathBuf>) -> Result<(), Box<dyn s
 }
 
 #[cfg(feature = "cli")]
-fn run_structure(input: &PathBuf, json: bool, identifiability: bool) -> Result<(), Box<dyn std::error::Error>> {
-    use equation_compiler::graph::{analyze_identifiability, analyze_structure};
+fn run_structure(input: &PathBuf, json: bool, identifiability: bool, metrics: bool) -> Result<(), Box<dyn std::error::Error>> {
+    use equation_compiler::graph::{analyze_identifiability, analyze_metrics, analyze_structure};
     use equation_compiler::{parse_directory, parse_file};
 
     let files = if input.is_dir() {
@@ -997,9 +1001,10 @@ fn run_structure(input: &PathBuf, json: bool, identifiability: bool) -> Result<(
     };
     let report = analyze_structure(&files);
     let ident = if identifiability { Some(analyze_identifiability(&files)) } else { None };
+    let mets = if metrics { Some(analyze_metrics(&files)) } else { None };
 
     if json {
-        println!("{}", equation_compiler::export::structure_json_pretty(&report, ident.as_ref()));
+        println!("{}", equation_compiler::export::structure_json_pretty(&report, ident.as_ref(), mets.as_ref()));
         return Ok(());
     }
 
@@ -1081,6 +1086,28 @@ fn run_structure(input: &PathBuf, json: bool, identifiability: bool) -> Result<(
             for (a, b) in &idr.confounded_candidates {
                 println!("      {{{a}, {b}}}");
             }
+        }
+    }
+
+    // 网络指标（GA-3，opt-in）。
+    if let Some(mr) = &mets {
+        println!("\n   —— 网络指标（描述性；绑定到枢纽定位 / 模块验证）——");
+        println!(
+            "   节点 {} | 社区 {} | 模块度 Q(检测)={:.3}{}",
+            mr.nodes.len(),
+            mr.n_communities,
+            mr.modularity_detected,
+            match mr.modularity_modules {
+                Some(qm) => format!(" | Q(meta.modules)={qm:.3}"),
+                None => String::new(),
+            }
+        );
+        println!("   枢纽 Top-8（按介数中心性；高扇出参数/驱动量会因度数靠前，属正常）:");
+        for m in mr.nodes.iter().take(8) {
+            println!(
+                "      {:<28} 介数={:>7.1}  PR={:.4}  入/出={}/{}  深度={}  社区={}",
+                m.node, m.betweenness, m.pagerank, m.in_degree, m.out_degree, m.depth, m.community
+            );
         }
     }
     Ok(())
