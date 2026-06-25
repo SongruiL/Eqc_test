@@ -367,6 +367,79 @@ pub fn to_structure_json(
     }
 }
 
+// ============================================
+// 版本结构 diff 契约（GA-4）：独立的 `eqc diff --json` 输出。
+// ============================================
+
+/// diff 节点（本地名 + 角色）。
+#[derive(Debug, Clone, Serialize)]
+pub struct DiffNodeJson {
+    pub id: String,
+    pub kind: String,
+}
+
+/// 一条方程形式改变。
+#[derive(Debug, Clone, Serialize)]
+pub struct EqChangeJson {
+    pub output: String,
+    pub from_id: String,
+    pub to_id: String,
+}
+
+/// 版本结构 diff 的 JSON 契约。
+#[derive(Debug, Clone, Serialize)]
+pub struct GraphDiffJson {
+    pub schema_version: u32,
+    pub added_nodes: Vec<DiffNodeJson>,
+    pub removed_nodes: Vec<DiffNodeJson>,
+    pub kept_nodes: usize,
+    pub added_edges: Vec<[String; 2]>,
+    pub removed_edges: Vec<[String; 2]>,
+    pub kept_edges: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub added_equations: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub removed_equations: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub changed_equations: Vec<EqChangeJson>,
+    /// 图编辑数（增删点 + 增删边）。
+    pub distance: usize,
+    /// 边 Jaccard 相似度（0–1）。
+    pub edge_similarity: f64,
+}
+
+/// 把结构 diff 导出为契约结构。
+pub fn to_graph_diff_json(d: &crate::graph::GraphDiff) -> GraphDiffJson {
+    let node = |n: &crate::graph::DiffNode| DiffNodeJson { id: n.id.clone(), kind: n.kind.clone() };
+    GraphDiffJson {
+        schema_version: SCHEMA_VERSION,
+        added_nodes: d.added_nodes.iter().map(node).collect(),
+        removed_nodes: d.removed_nodes.iter().map(node).collect(),
+        kept_nodes: d.kept_nodes,
+        added_edges: d.added_edges.iter().map(|(a, b)| [a.clone(), b.clone()]).collect(),
+        removed_edges: d.removed_edges.iter().map(|(a, b)| [a.clone(), b.clone()]).collect(),
+        kept_edges: d.kept_edges,
+        added_equations: d.added_equations.clone(),
+        removed_equations: d.removed_equations.clone(),
+        changed_equations: d
+            .changed_equations
+            .iter()
+            .map(|c| EqChangeJson {
+                output: c.output.clone(),
+                from_id: c.from_id.clone(),
+                to_id: c.to_id.clone(),
+            })
+            .collect(),
+        distance: d.distance,
+        edge_similarity: d.edge_similarity,
+    }
+}
+
+/// 结构 diff JSON（带缩进，`eqc diff --json` 用）。
+pub fn graph_diff_json_pretty(d: &crate::graph::GraphDiff) -> String {
+    serde_json::to_string_pretty(&to_graph_diff_json(d)).unwrap_or_else(|_| "{}".to_string())
+}
+
 /// 结构分析 JSON（带缩进，`eqc structure --json` 用）。
 pub fn structure_json_pretty(
     report: &crate::graph::StructureReport,

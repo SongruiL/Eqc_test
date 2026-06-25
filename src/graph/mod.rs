@@ -14,10 +14,14 @@
 //! GA-3（网络指标，描述性，绑定到枢纽定位/模块验证）：
 //! - [`metrics`] —— 度/介数(Brandes)/PageRank 中心性、社区(贪心模块度)、DAG 深度。
 //!
+//! GA-4（版本结构 diff，喂 GP 进化溯源 + 3D 生长动画）：
+//! - [`diff`] —— 两版本带标签节点对齐 → 增删点/边 + 形式改变的方程 + 结构距离。
+//!
 //! 纯 Rust、数据无关、可单测、确定性（无 RNG）；不碰数值求解（只**定位**代数环，隐式求解另案）。
 //! 理论见 `docs/theory-model-graph-analysis.md`，实现 spec 见 `docs/spec-graph-analysis.md` §4。
 
 pub mod bipartite;
+pub mod diff;
 pub mod digraph;
 pub mod dm;
 pub mod identifiability;
@@ -25,6 +29,7 @@ pub mod matching;
 pub mod metrics;
 
 pub use bipartite::{BipartiteGraph, EqNode, NodeResolver};
+pub use diff::{diff_models, DiffNode, EqChange, GraphDiff};
 pub use digraph::DiGraph;
 pub use dm::{analyze_graph, analyze_structure, SolveBlock, StructureReport};
 pub use identifiability::{analyze_identifiability, IdentifiabilityReport, ParamReach};

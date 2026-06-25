@@ -333,6 +333,19 @@ enum Commands {
         metrics: bool,
     },
 
+    /// 版本结构 diff：两个模型版本的结构演化（增删点/边 + 形式改变的方程 + 结构距离）
+    Diff {
+        /// 旧版本模型（.eq.yaml）或目录
+        old: PathBuf,
+
+        /// 新版本模型（.eq.yaml）或目录
+        new: PathBuf,
+
+        /// 输出 GraphDiffJson 契约（缺省打印人读报告）
+        #[arg(long)]
+        json: bool,
+    },
+
     /// 仿真优化：读模型 + 决策 spec，用差分进化 DE 搜旋钮空间，输出最优旋钮 + 目标值
     Optimize {
         /// 模型文件（单个 .eq.yaml）
@@ -472,6 +485,7 @@ fn main() {
         }
         Commands::Export { input, output } => run_export(&input, output.as_ref()),
         Commands::Structure { input, json, identifiability, metrics } => run_structure(&input, json, identifiability, metrics),
+        Commands::Diff { old, new, json } => run_diff(&old, &new, json),
         Commands::Optimize { input, spec, drivers, steps, prescreen, output } => {
             run_optimize(&input, &spec, drivers.as_ref(), steps, prescreen, output.as_ref())
         }
@@ -1109,6 +1123,77 @@ fn run_structure(input: &PathBuf, json: bool, identifiability: bool, metrics: bo
                 m.node, m.betweenness, m.pagerank, m.in_degree, m.out_degree, m.depth, m.community
             );
         }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+fn run_diff(old: &PathBuf, new: &PathBuf, json: bool) -> Result<(), Box<dyn std::error::Error>> {
+    use equation_compiler::graph::diff_models;
+    use equation_compiler::{parse_directory, parse_file};
+
+    let load = |p: &PathBuf| -> Result<Vec<_>, Box<dyn std::error::Error>> {
+        Ok(if p.is_dir() { parse_directory(p)? } else { vec![parse_file(p)?] })
+    };
+    let old_files = load(old)?;
+    let new_files = load(new)?;
+    let d = diff_models(&old_files, &new_files);
+
+    if json {
+        println!("{}", equation_compiler::export::graph_diff_json_pretty(&d));
+        return Ok(());
+    }
+
+    println!("🔀 结构 diff: {} → {}", old.display(), new.display());
+    println!(
+        "   结构距离={}（增删点 {}/{} + 增删边 {}/{}）| 边相似度(Jaccard)={:.3}",
+        d.distance,
+        d.added_nodes.len(),
+        d.removed_nodes.len(),
+        d.added_edges.len(),
+        d.removed_edges.len(),
+        d.edge_similarity
+    );
+    println!("   保留：节点 {} | 边 {}", d.kept_nodes, d.kept_edges);
+
+    if !d.added_nodes.is_empty() {
+        println!("\n   ➕ 新增节点（{}）:", d.added_nodes.len());
+        for n in &d.added_nodes {
+            println!("      {} [{}]", n.id, n.kind);
+        }
+    }
+    if !d.removed_nodes.is_empty() {
+        println!("\n   ➖ 删除节点（{}）:", d.removed_nodes.len());
+        for n in &d.removed_nodes {
+            println!("      {} [{}]", n.id, n.kind);
+        }
+    }
+    if !d.added_equations.is_empty() {
+        println!("\n   ➕ 新增方程（按 output）: {}", d.added_equations.join(", "));
+    }
+    if !d.removed_equations.is_empty() {
+        println!("   ➖ 删除方程（按 output）: {}", d.removed_equations.join(", "));
+    }
+    if !d.changed_equations.is_empty() {
+        println!("\n   🔧 形式改变的方程（同 output、表达式变了；GP 进化核心信号）:");
+        for c in &d.changed_equations {
+            println!("      {}  ({} → {})", c.output, c.from_id, c.to_id);
+        }
+    }
+    if !d.added_edges.is_empty() {
+        println!("\n   ➕ 新增边（{}）:", d.added_edges.len());
+        for (a, b) in &d.added_edges {
+            println!("      {a} → {b}");
+        }
+    }
+    if !d.removed_edges.is_empty() {
+        println!("\n   ➖ 删除边（{}）:", d.removed_edges.len());
+        for (a, b) in &d.removed_edges {
+            println!("      {a} → {b}");
+        }
+    }
+    if d.distance == 0 && d.changed_equations.is_empty() {
+        println!("\n   ✅ 两版本结构完全一致");
     }
     Ok(())
 }

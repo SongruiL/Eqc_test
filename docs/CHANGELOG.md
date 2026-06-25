@@ -252,6 +252,16 @@ human-in-the-loop——GP 提议、科学家裁决。设计 `docs/spec-gp-studio
 - **验证**：合成对拍（星形→中心介数最高；两团一桥→社区≥2、Q>0；链→深度 0/1/2/3 递增；PageRank 和=1）。**真模型**：草莓 S8 枢纽 **DDM**（日干物质，介数 1999 居首）正中要害，Q(检测)=0.451 > Q(meta.modules)=0.367；温室 v1 枢纽 **rate_T/T_air**（温度核心状态）合理，Q=0.468 vs 0.190。
 - **诚实边界**：① 网络指标是描述性的，价值在于绑定到上述具体问题，不堆"好看的数"。② 计算 DAG 偏树状、社区结构本就弱，**单层 Louvain 会碎**（S8 104 节点→40 社区）；多层聚合（合并小社区）本轮**未做**，但枢纽定位与 Q 对照不受影响。4 新测试，两 feature 配置共 276 lib 绿。
 
+### 模型图论分析 arc · GA-4（版本结构 diff）
+量化两个模型版本的结构演化 —— 喂 GP 进化溯源 + GA-5/6 的"长出新枝"生长动画（理论笔记 §3.4，spec §4 GA-4）。新增 `src/graph/diff.rs`：
+- 理论：精确图编辑距离 GED 是 NP-难，但**版本对比有稳定标签** → 退化成集合差，便宜够用。在共享 `DiGraph` 上做**三层 diff**：① 节点（added/removed/kept）② 边（added/removed/kept）③ 方程（added/removed/**changed**，按 output 对齐）。
+- **changed 方程** = 同 output、表达式形式不同（`a·x → a·x²` 这类 refs 不变但形式变的演化，纯点/边 diff 抓不到，是 GP 进化的核心信号）。`Expr` 不 derive `PartialEq`，用 Debug 串做结构指纹比较。
+- **对齐键 = 本地名**（去模块前缀）：版本间 `meta.id` 常不同（`STRAWBERRY_S4` vs `STRAWBERRY_S8`），全 id 对不齐；本地名让单模块版本对比正确（多模块跨模块同名碰撞为已知边界）。
+- **距离** = 图编辑数（增删点+增删边，不含 changed）；**edge_similarity** = 边 Jaccard。
+- **added 节点带 kind**（parameter/state/rate/...）供 3D 动画上色。
+- **CLI** `eqc diff <旧> <新> [--json]`（人读 + `GraphDiffJson` 契约，additive，`schema_version` 不变）。GP `eqc evolve` 接线本轮**不做**（留给 GP arc 一行调 `diff_models(before, after)` 溯源）。
+- **验证**：合成对拍（同模型→零 diff、distance=0、similarity=1；加方程→精确报新节点+边+方程；同 output 换形式→恰 1 条 changed、distance=0；删方程→removed）。**真模型草莓 S4→S8**：distance=145（56 新节点、87 新边、2 删边），精确捕获 S8 长出的钙/BER、氮(NNI/Nc)、蒸腾(ET/VPD)、EC/水分胁迫子系统；并标出 **DDM 形式改变 SB-03→SB-NPROD**（简单 `I·LUE` 换成氮限制生产，删边 `I→DDM`/`LUE_dyn→DDM` 印证重接线）——正是 GP 进化溯源要的信号。4 新测试，两 feature 配置共 280 lib 绿。
+
 ## 下一步（未做）/ 当前不足
 
 **EQC 工具层**
