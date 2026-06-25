@@ -182,6 +182,17 @@ pub fn serve(
     params_path: Option<&PathBuf>,
     data_dir_arg: Option<&PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // 本地密钥文件（gitignored）：设一次 key/代理/模型，启动自动加载进 env（不覆盖已设的）。
+    load_secret_file();
+    match std::env::var("ANTHROPIC_API_KEY") {
+        Ok(k) if !k.is_empty() => {
+            let model = std::env::var("EQC_LLM_MODEL").unwrap_or_else(|_| "claude-sonnet-4-6".into());
+            let proxy = std::env::var("EQC_LLM_PROXY").unwrap_or_else(|_| "直连".into());
+            println!("🤖 AI 助手已配置（模型 {model}；出站 {proxy}）");
+        }
+        _ => println!("🤖 AI 助手未配置（设 ANTHROPIC_API_KEY 或写 .eqc-secret 后重启即可启用）"),
+    }
+
     // 工作区清单（多模型）优先；否则单模型/目录合并模式（与历史逐位一致）。
     let models = if let Some(manifest) = workspace_manifest_path(path) {
         if drivers_path.is_some() || params_path.is_some() || data_dir_arg.is_some() {
@@ -856,6 +867,13 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
             },
             _ => ("405 Method Not Allowed", "text/plain; charset=utf-8", "Method Not Allowed".to_string()),
         },
+        // 前端 LLM Agent：薄代理 Claude（Anthropic Messages API）。前端跑 agent loop、组完整
+        // 请求体（model/system+cache_control/tools/messages），后端只**注入 key + 转发**，key 绝不下发浏览器。
+        // 失败统一返回 Anthropic 风格 {type:"error",error:{...}} 信封，前端一处处理、可降级。
+        "/api/llm" => match method {
+            "POST" => ("200 OK", "application/json; charset=utf-8", proxy_llm(&req_body)),
+            _ => ("405 Method Not Allowed", "text/plain; charset=utf-8", "Method Not Allowed".to_string()),
+        },
         _ => ("404 Not Found", "text/plain; charset=utf-8", "Not Found".to_string()),
     };
 
@@ -865,6 +883,88 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
     );
     stream.write_all(resp.as_bytes())?;
     stream.flush()
+}
+
+// ───────────────────────── 前端 LLM Agent 代理 ─────────────────────────
+
+/// 本地密钥文件（gitignored）→ env。`EQC_SECRET_FILE` 指定路径，否则用 CWD `.eqc-secret`。
+/// 格式：每行 `KEY=VALUE`（`#` 注释、空行忽略；值不去引号外的空白）。只设尚未存在的 env，
+/// 即真·环境变量优先于文件。可放 ANTHROPIC_API_KEY / EQC_LLM_PROXY / EQC_LLM_MODEL。
+fn load_secret_file() {
+    let path = std::env::var("EQC_SECRET_FILE").unwrap_or_else(|_| ".eqc-secret".into());
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return, // 没有文件 = 正常（用真 env 或未配置）
+    };
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((k, v)) = line.split_once('=') {
+            let (k, v) = (k.trim(), v.trim());
+            if !k.is_empty() && std::env::var(k).is_err() {
+                std::env::set_var(k, v);
+            }
+        }
+    }
+    println!("🔑 已加载密钥文件：{path}");
+}
+
+/// Anthropic 风格错误信封（前端与真·API 错误一处处理）。
+fn llm_error(kind: &str, msg: &str) -> String {
+    serde_json::json!({ "type": "error", "error": { "type": kind, "message": msg } }).to_string()
+}
+
+/// 出站 HTTPS Agent。`EQC_LLM_PROXY`（如 `http://127.0.0.1:10808`）设了就走代理，否则直连。
+/// （本机实测：直连被 403 地理封锁，必须走本地代理；见 tests/llm_spike.rs。）
+fn build_llm_agent() -> ureq::Agent {
+    let b = ureq::AgentBuilder::new();
+    if let Ok(p) = std::env::var("EQC_LLM_PROXY") {
+        if !p.is_empty() {
+            if let Ok(proxy) = ureq::Proxy::new(&p) {
+                return b.proxy(proxy).build();
+            }
+        }
+    }
+    b.build()
+}
+
+/// `POST /api/llm`：把前端组好的完整 Anthropic 请求体注入 key 后转发，原样回传 Claude 的 JSON。
+/// key 取自 env `ANTHROPIC_API_KEY`（不进浏览器/repo）；缺失→友好错误，前端禁用 AI、其余照常。
+fn proxy_llm(body: &[u8]) -> String {
+    let key = match std::env::var("ANTHROPIC_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => return llm_error("missing_api_key", "后端未配置 ANTHROPIC_API_KEY；设置该环境变量后重启 serve 即可启用 AI。"),
+    };
+    let read_resp = |r: ureq::Response| -> String {
+        r.into_string().unwrap_or_else(|e| llm_error("read_error", &format!("读取 Claude 响应失败: {e}")))
+    };
+    // 模型一行 env 切换（EQC_LLM_MODEL）：覆盖前端请求体里的 model，无需重建前端。
+    let payload: Vec<u8> = match std::env::var("EQC_LLM_MODEL") {
+        Ok(m) if !m.is_empty() => match serde_json::from_slice::<serde_json::Value>(body) {
+            Ok(mut v) => {
+                v["model"] = serde_json::Value::String(m);
+                serde_json::to_vec(&v).unwrap_or_else(|_| body.to_vec())
+            }
+            Err(_) => body.to_vec(),
+        },
+        _ => body.to_vec(),
+    };
+    let req = build_llm_agent()
+        .post("https://api.anthropic.com/v1/messages")
+        .set("x-api-key", &key)
+        .set("anthropic-version", "2023-06-01")
+        .set("content-type", "application/json")
+        .timeout(Duration::from_secs(120));
+    match req.send_bytes(&payload) {
+        Ok(resp) => read_resp(resp),
+        // 4xx/5xx：Anthropic 已返回 {type:"error",...} JSON，原样透传给前端。
+        Err(ureq::Error::Status(_code, resp)) => read_resp(resp),
+        Err(ureq::Error::Transport(t)) => {
+            llm_error("upstream_unreachable", &format!("连接 Claude 失败（检查网络/代理 EQC_LLM_PROXY）：{t}"))
+        }
+    }
 }
 
 /// `?vars=Y,TDM` → ["Y","TDM"]。

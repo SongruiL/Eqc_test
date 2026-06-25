@@ -16,6 +16,7 @@
   import Edit from './workspaces/Edit.svelte'
   import Couple from './workspaces/Couple.svelte'
   import Placeholder from './workspaces/Placeholder.svelte'
+  import AgentChat from './components/AgentChat.svelte'
 
   const LABELS: Record<string, string> = {
     structure: '结构', simulate: '仿真', optimize: '优化', calibrate: '标定',
@@ -65,6 +66,7 @@
 </div>
 
 <CommandPalette />
+<AgentChat />
 
 <style>
   .shell { display: flex; flex-direction: column; height: 100%; }

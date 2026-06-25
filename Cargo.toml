@@ -21,7 +21,7 @@ required-features = ["cli"]
 
 [features]
 default = []
-cli = ["clap", "walkdir"]
+cli = ["clap", "walkdir", "ureq"]
 advanced_math = ["statrs", "puruspe", "num-complex"]
 gsl_math = ["GSL"]
 calculus = ["peroxide"]
@@ -46,6 +46,10 @@ petgraph = "0.6"
 # CLI（可选）
 clap = { version = "4.0", features = ["derive"], optional = true }
 walkdir = { version = "2.4", optional = true }
+
+# 出站 HTTPS 客户端（serve 的 /api/llm 代理 Claude 用）：阻塞、同步、rustls 纯 Rust TLS
+# （契合手写阻塞 server，无需 tokio；rustls 自带根证书，免系统证书库 = 适配无管理员的机器）
+ureq = { version = "2", optional = true }
 
 # 日志
 tracing = "0.1"

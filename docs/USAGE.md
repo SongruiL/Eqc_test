@@ -163,7 +163,7 @@ eqc evolve <模型.eq.yaml> --spec gp.yaml --drivers w.csv --observed obs.csv [-
 ```
 
 > **EQC Studio（交互式前端）**：`eqc serve <模型> --drivers w.csv` 起一个本地服务（`http://localhost:7878/`）。浏览器里左边是 Forrester 图 + 二维公式，右边是**整季仿真折线图**（勾选变量即画其轨迹，如产量 Y）。编辑模型保存即自动刷新。
-> - 端点：`/api/model`（JSON 契约）、`/api/report[?layout=force]`（HTML 报告）、`/api/simulate`（轨迹 JSON）、`/api/chart.svg?vars=Y,TDM`（折线图 SVG）、`/api/optimize?spec=problem.yaml`（跑优化、返回最优旋钮+收敛轨迹+收敛曲线 SVG）、`/api/models`（多模型工作区花名册，前端建选择器用）。
+> - 端点：`/api/model`（JSON 契约）、`/api/report[?layout=force]`（HTML 报告）、`/api/simulate`（轨迹 JSON）、`/api/chart.svg?vars=Y,TDM`（折线图 SVG）、`/api/optimize?spec=problem.yaml`（跑优化、返回最优旋钮+收敛轨迹+收敛曲线 SVG）、`/api/models`（多模型工作区花名册，前端建选择器用）、`/api/llm`（前端 AI 助手代理 Claude，见下）。
 > - **GP 端点**：`/api/evolve?target=<靶id>&zone=&pop=&gens=`（同步单靶 Pareto，返回前沿+每点公式/拟合/rediscovery/采纳产物）；`/api/evolve/start?...&memetic=&targets=A,B`（异步起后台任务→`{task_id}`，放开 memetic/大规模、`targets=` 多靶=联合进化）；`/api/evolve/status?id=`（轮询进度：当前代+实时收敛曲线 SVG，完成内嵌完整前沿 JSON）。
 > - **多模型工作区（免重启切模型）**：`eqc serve` 指向一个 `eqc-workspace.yaml`（或含它的目录）→ Studio 顶部出现模型下拉，切草莓/番茄/蓝莓/温室不重启，与粒度/布局/处理区自由组合。清单逐条声明 `{id, name, path, drivers?, params?, data_dir?}`（路径相对清单目录；每模型实测数据默认隔离在 `observations/<id>/`）。作物目录里是版本史（s1..s8）且每模型驱动不同，故用**显式清单**而非目录扫描。所有 model-bound 端点接 `?model=<id>`（缺省=花名册第一个）。**单模型模式（指向单个 `.eq.yaml`）行为逐位不变**、选择器隐藏。
 > - **耦合视图（温室↔作物连成一张大图）**：清单加 `couplings: [{id, name, models:[id..], links:[{to: CROP.invar, from: GH.outvar}]}]` → 选择器多出「耦合视图」分组项；选中即把多个模型的结构图连成一张图（作物驱动 ← 温室输出，跨模型边由 `source:` 机制画出）。**不改 canonical 模型**——serve 加载耦合条目时在内存里给作物 Input 注入 `source`（不落盘）。耦合条目**只看结构图**（仿真/录入/标定需选单作物模型，会友好拦截）；模块级要清爽需被耦合的模型都有 `meta.modules`。
@@ -175,7 +175,8 @@ eqc evolve <模型.eq.yaml> --spec gp.yaml --drivers w.csv --observed obs.csv [-
 > - **受约束 GP 面板（专家视图，human-in-the-loop）**：列出模型的 🟠 进化靶点（`gp_target`）→ **多选**（选 1=单靶、≥2=联合进化，捕捉槽位间耦合）→ 配置 pop/gens/seed + memetic 勾选 → 「开始进化」。走异步后台任务：spinner 显示**第 g/G 代 + 实时收敛曲线**；完成出 **Pareto 前沿散点**（精度 vs 复杂度，点拐点）。点某前沿点 → 候选详情：rediscovery 徽章（🟢 复原现有形式=机理验证 / 🟠 新假设 / 自定义）、二维公式（MathML）、与现有形式**并排对比**（rmse/复杂度）+ 拟合轨迹叠观测、**采纳**（生成可编辑的溯源条目草稿 + 可粘贴的 `.eq.yaml` 方程片段，复制/下载，**只产文本不写盘**）。联合模式下候选详情按**槽位分区**，每槽各自上述全套。观测取当前处理区录入数据（拟合各靶点的输出变量）。GP 提议、科学家裁决——不自动改模型。
 > - **结构图拖拽**：拖**空白**=平移画布；拖**节点方框**=移动它、连线跟随（手动错开遮挡，会话内有效、刷新复位）；**轻点**节点=选中。三者按落点/位移自动区分。
 > - **友好显示名（非数学用户看懂）**：图表勾选框、耦合勾选框、图例、结构图节点统一显**中文名**（代号进 hover）。显示名由 EQC 单一权威算（契约 `display_name`：变量 `label` → 方程中文名 → 参数 `name_cn` → 延迟寄存器派生「源（上一步）」→ 代号兜底）；cohort 分量显 `果碳[1]`…`果碳[10]`、与向量分量风格一致。要给某变量定中文名 = 在模型里加 `label:`（缺省自动取方程中文名）。
-> - 原则：**EQC 始终是唯一权威**，前端只显示 EQC 生成的 SVG/MathML/JSON——前端与 EQC 之间只有一条「可检视、只增不改」的契约（`eqc export` 可随时打印它），所以随 EQC 升级而升级时低风险、易排查。后续增量：点节点高亮、浏览器内编辑、LLM 问答、GP 结构 diff。
+> - **AI 助手「问AI」（v2 前端，`/v2`）**：右上「🤖 问AI」抽屉——用自然语言指挥整个前端（导航/查模型/调情景参数/跑仿真/切模型/写处理区设置）。架构 = **命令注册表（`frontend/src/lib/commands.svelte.ts`）= 前端能力唯一真相源**：⌘K 面板与 AI 工具都从它派生，**加一条命令 = 面板按钮 + AI 能力同时获得**。前端跑 agent loop（`lib/agent.svelte.ts`：注册表→自动生成 Anthropic tools→`tool_use`→执行 handler→`tool_result`→循环至 `end_turn`），落盘类命令（写盘）执行前**弹确认框**。后端 `/api/llm` 只**注入 key + 转发** Claude（key 绝不下发浏览器）。模型默认 **Sonnet 4.6**，env `EQC_LLM_MODEL` 一行可换（无需重建前端）。**配置**：在启动 serve 的目录放一个 gitignored 的 `.eqc-secret`（`KEY=VALUE` 行，模板见 `eqc-secret.example`），填 `ANTHROPIC_API_KEY`（必填）+ `EQC_LLM_PROXY`（直连被墙的机器填本地代理）+ 可选 `EQC_LLM_MODEL`；serve 启动自动加载、打印「🤖 AI 助手已配置」。先非流式，SSE 留后续。
+> - 原则：**EQC 始终是唯一权威**，前端只显示 EQC 生成的 SVG/MathML/JSON——前端与 EQC 之间只有一条「可检视、只增不改」的契约（`eqc export` 可随时打印它），所以随 EQC 升级而升级时低风险、易排查。后续增量：LLM 流式 SSE、更多 Agent 命令、GP 结构 diff。
 
 > `report`/`check-dims` 的"目录"是装 `.eq.yaml` 的文件夹（与 build/validate 同）。`report` 会把目录内所有文件合成一张 DAG，**指向一两个相关模块的小目录**，别指整个 `examples/`（52 模块图会过大）。
 

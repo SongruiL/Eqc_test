@@ -205,6 +205,14 @@ human-in-the-loop——GP 提议、科学家裁决。设计 `docs/spec-gp-studio
 - **S5** 多槽位联合进化前端：靶点**多选**（≥2 = 联合，`targets=`）；候选详情按**槽位分区**，每槽各自公式/形式/rediscovery/拟合/采纳；Pareto 复杂度轴 = 各槽之和。
 - 验证：合成 demo（gpdemo 单靶 / gpdemo2 双门控联合）端到端 LIVE——start→轮询→done，逐槽 rediscovery、采纳片段回环。254 lib + 3 bin + 4 + 100 sexpr 两配置全绿。**剩：真进化（等云南 2026-07 田间数据）。**
 
+### EQC Studio · 前端 LLM Agent「问AI」（v2，`/v2`）
+用自然语言指挥整个前端——不止对话，能**执行命令**（导航/查模型/调情景参数/跑仿真/切模型/写处理区设置）。架构 = **命令注册表 = 前端能力唯一真相源**：⌘K 面板与 AI 工具都从 `frontend/src/lib/commands.svelte.ts` 派生，**加一条命令 = 面板按钮 + AI 能力同获**，零额外胶水。同构 EQC「契约只增不改、UI 是契约派生」。
+- **后端薄代理**：`src/serve.rs` `POST /api/llm` —— 前端组完整 Anthropic 请求体（model/system+cache_control/tools/messages），后端只**注入 key + 转发** Claude（key 绝不下发浏览器）；失败统一返回 Anthropic 风格 `{type:error,...}` 信封。新增出站 HTTPS 客户端 `ureq`（进 `cli` feature，rustls 纯 Rust TLS、自带根证书、契合手写阻塞 server）。
+- **凭证 = 本地密钥文件**：`load_secret_file()` 启动读 gitignored `.eqc-secret`（`KEY=VALUE`：`ANTHROPIC_API_KEY` + 可选 `EQC_LLM_PROXY`/`EQC_LLM_MODEL`），只设尚未存在的 env、真 env 优先；模板 `eqc-secret.example`。`EQC_LLM_PROXY` 让直连被墙的机器走本地代理；`EQC_LLM_MODEL` 后端覆盖请求体 model = 一行换模型不重建前端。
+- **前端 agent loop**：`lib/agent.svelte.ts` —— 注册表→自动生成 tools（id 含 `.` 清洗成合法 tool name）；`tool_use`→执行 handler→`tool_result`→循环至 `end_turn`（≤12 轮）；**confirm 闸**——`access:'danger'` 落盘类命令执行前弹确认框（被取消→优雅继续）。上下文 = 静态系统提示 + 模型摘要（各打 prompt 缓存断点）+ 当前界面状态（非缓存后缀）。`Command` 增可选元数据 `description/params/required/access/confirm/aiHidden`，`run` 改带参返结果。
+- **命令集**（首批）：导航 8 项 + describe_model/describe_variable/run_simulation/select_vars/set_scenario_param/reset_scenario/switch_model/switch_zone/**save_zone_management**（danger 落盘）。`components/AgentChat.svelte` 右侧抽屉（气泡+工具卡+结果+确认卡），TopBar「🤖 问AI」开关。
+- **模型 = Sonnet 4.6**（dev 默认；多轮工具往返的甜点）。**验证**：真 key 端到端跑通——Sonnet 在我们的 tools 下并行/多轮选对工具、loop 收敛、danger 命令正确触发确认框（浏览器实测）。svelte-check 0 错 0 警。先非流式，SSE 留后续。
+
 ## 下一步（未做）/ 当前不足
 
 **EQC 工具层**
