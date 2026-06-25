@@ -99,6 +99,24 @@ function currentState(): string {
   ].join('\n')
 }
 
+// 给 messages 的【最后一块】打缓存断点：多轮工具循环每轮重发增长的历史，缓存到此点
+// → 后续轮复用前几轮（增量命中）。字符串内容先包成 text 块才能挂 cache_control。
+function messagesWithCache(msgs: Msg[]): unknown[] {
+  if (!msgs.length) return msgs
+  const out: unknown[] = msgs.slice(0, -1)
+  const last = msgs[msgs.length - 1]
+  const cc = { type: 'ephemeral' }
+  let content: unknown
+  if (typeof last.content === 'string') {
+    content = [{ type: 'text', text: last.content, cache_control: cc }]
+  } else {
+    const arr = last.content
+    content = arr.map((b, i) => (i === arr.length - 1 ? { ...b, cache_control: cc } : b))
+  }
+  out.push({ role: last.role, content })
+  return out
+}
+
 function buildRequest() {
   return {
     model: MODEL,
@@ -107,11 +125,12 @@ function buildRequest() {
       // 稳定前缀（system + tools 一起缓存）：静态提示 + 按模型变的摘要，各打缓存断点。
       { type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } },
       { type: 'text', text: modelSummary(), cache_control: { type: 'ephemeral' } },
-      // 易变后缀（每请求重读、不缓存、很小）：当前界面状态。
+      // 易变后缀（每请求重读、不缓存、很小）：当前界面状态——放在断点之后，绝不使前缀失效。
       { type: 'text', text: currentState() },
     ],
     tools: buildTools(),
-    messages: agent.convo,
+    // 第 3 个缓存断点（≤4）：对话历史前缀，惠及多轮循环与长对话。
+    messages: messagesWithCache(agent.convo),
   }
 }
 
