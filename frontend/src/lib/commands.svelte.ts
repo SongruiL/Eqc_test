@@ -10,7 +10,7 @@
 //   aiHidden     纯 UI 命令不暴露给 AI（如打开面板）
 // run 现可接受 args 并返回结果（字符串/对象）= tool_result；UI 按钮不传参、忽略返回。
 import { store, setWorkspace, setMode, switchModel } from './store.svelte'
-import { fetchSimulate, saveZone, fetchZone } from './api'
+import { fetchSimulate, saveZone, fetchZone, runOptimize, runCalibrate } from './api'
 import type { VarJson, ParamJson } from './contract'
 
 export interface Command {
@@ -118,6 +118,99 @@ export const AGENT_COMMANDS: Command[] = [
         }
       }
       return { steps: r.steps, 末值: finals }
+    },
+  },
+  {
+    id: 'get_value_at',
+    label: '查某天某变量的值',
+    group: 'AI',
+    access: 'read',
+    params: { var: { type: 'string', description: '变量代号' }, day: { type: 'integer', description: '第几天（1-based DAT）' } },
+    required: ['var', 'day'],
+    description: '用当前情景跑仿真，返回某变量在第 N 天的值（及整季末值）。回答“LAI 在第 60 天多少”这类问题用它。',
+    run: async (args) => {
+      const v = String(args?.var ?? '')
+      const day = Math.round(Number(args?.day))
+      if (!findVar(v)) return `未找到变量「${v}」`
+      if (!Number.isFinite(day) || day < 1) return '天数需为 ≥1 的整数（1-based DAT）'
+      const r = await fetchSimulate(store.model, store.scenario.p, store.scenario.d)
+      if (r.error) return `仿真失败：${r.error}`
+      const series = r.series ?? {}
+      const arr = series[v] ?? series[`${v}[1]`]
+      if (!arr?.length) return `变量「${v}」无标量轨迹（可能是向量，试 ${v}[1]）`
+      if (day > arr.length) return `第 ${day} 天超出整季 ${arr.length} 天`
+      return { var: v, day, value: arr[day - 1], 末值: arr[arr.length - 1] }
+    },
+  },
+  {
+    id: 'set_scenario_init',
+    label: '调一个状态量初值',
+    group: 'AI',
+    access: 'write',
+    params: { name: { type: 'string', description: '状态量代号' }, value: { type: 'number' } },
+    required: ['name', 'value'],
+    description: '把某状态量的初值设为指定值作为情景覆盖（只影响曲线，不写盘）。',
+    run: (args) => {
+      const name = String(args?.name ?? '')
+      const value = Number(args?.value)
+      if (!findVar(name)) return `未找到变量「${name}」`
+      if (!Number.isFinite(value)) return '值无效'
+      store.scenario.i = { ...store.scenario.i, [name]: value }
+      setMode('expert'); setWorkspace('simulate')
+      return `已把 ${name} 的初值设为 ${value}`
+    },
+  },
+  {
+    id: 'set_scenario_driver',
+    label: '把某驱动设为恒定值',
+    group: 'AI',
+    access: 'write',
+    params: { name: { type: 'string', description: '驱动量代号（如 CO2）' }, value: { type: 'number' } },
+    required: ['name', 'value'],
+    description: '把某驱动量整列设为一个常数作为情景覆盖（如 CO2 恒定 800；只影响曲线，不写盘）。',
+    run: (args) => {
+      const name = String(args?.name ?? '')
+      const value = Number(args?.value)
+      if (!Number.isFinite(value)) return '值无效'
+      store.scenario.d = { ...store.scenario.d, [name]: value }
+      setMode('expert'); setWorkspace('simulate')
+      return `已把驱动量 ${name} 整季设为常数 ${value}`
+    },
+  },
+  {
+    id: 'run_optimize',
+    label: '跑决策优化',
+    group: 'AI',
+    access: 'danger',
+    params: { spec: { type: 'string', description: '决策 spec 文件路径（相对模型目录），如 optimize_s8_park.yaml' } },
+    required: ['spec'],
+    description: '用一个已有的决策 spec 跑决策优化（DE，数十秒的较长计算），返回最优旋钮+目标值+可行性。需要作者已写好 spec。',
+    run: async (args) => {
+      const spec = String(args?.spec ?? '')
+      if (!spec) return 'spec 路径为空'
+      const r = await runOptimize(store.model, spec)
+      if (r.error) return `优化失败：${r.error}`
+      setMode('expert'); setWorkspace('optimize')
+      const knobs = (r.best_knobs ?? []).map((k) => `${k.var}=${k.value}${k.unit ?? ''}`).join('、')
+      return { 目标值: r.objective_value, 可行: r.feasible, 最优旋钮: knobs }
+    },
+  },
+  {
+    id: 'run_calibrate',
+    label: '用本区数据标定',
+    group: 'AI',
+    access: 'danger',
+    params: { spec: { type: 'string', description: '标定 spec 文件路径（相对模型目录）' } },
+    required: ['spec'],
+    description: '用当前处理区录入的实测数据跑参数标定（反推参数，数十秒的较长计算），返回拟合参数+误差。',
+    run: async (args) => {
+      const spec = String(args?.spec ?? '')
+      if (!spec) return 'spec 路径为空'
+      const r = await runCalibrate(store.model, spec, store.zone)
+      if (r.error) return `标定失败：${r.error}`
+      setMode('expert'); setWorkspace('calibrate')
+      const knobs = (r.best_knobs ?? []).map((k) => `${k.var}=${k.value}`).join('、')
+      return { 误差: r.objective_value, 拟合参数: knobs, n_obs: r.n_obs }
     },
   },
   {
