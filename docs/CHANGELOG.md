@@ -211,7 +211,14 @@ human-in-the-loop——GP 提议、科学家裁决。设计 `docs/spec-gp-studio
 - **凭证 = 本地密钥文件**：`load_secret_file()` 启动读 gitignored `.eqc-secret`（`KEY=VALUE`：`ANTHROPIC_API_KEY` + 可选 `EQC_LLM_PROXY`/`EQC_LLM_MODEL`），只设尚未存在的 env、真 env 优先；模板 `eqc-secret.example`。`EQC_LLM_PROXY` 让直连被墙的机器走本地代理；`EQC_LLM_MODEL` 后端覆盖请求体 model = 一行换模型不重建前端。
 - **前端 agent loop**：`lib/agent.svelte.ts` —— 注册表→自动生成 tools（id 含 `.` 清洗成合法 tool name）；`tool_use`→执行 handler→`tool_result`→循环至 `end_turn`（≤12 轮）；**confirm 闸**——`access:'danger'` 落盘类命令执行前弹确认框（被取消→优雅继续）。上下文 = 静态系统提示 + 模型摘要（各打 prompt 缓存断点）+ 当前界面状态（非缓存后缀）。`Command` 增可选元数据 `description/params/required/access/confirm/aiHidden`，`run` 改带参返结果。
 - **命令集**（首批）：导航 8 项 + describe_model/describe_variable/run_simulation/select_vars/set_scenario_param/reset_scenario/switch_model/switch_zone/**save_zone_management**（danger 落盘）。`components/AgentChat.svelte` 右侧抽屉（气泡+工具卡+结果+确认卡），TopBar「🤖 问AI」开关。
-- **模型 = Sonnet 4.6**（dev 默认；多轮工具往返的甜点）。**验证**：真 key 端到端跑通——Sonnet 在我们的 tools 下并行/多轮选对工具、loop 收敛、danger 命令正确触发确认框（浏览器实测）。svelte-check 0 错 0 警。先非流式，SSE 留后续。
+- **模型 = Sonnet 4.6**（dev 默认；多轮工具往返的甜点；`EQC_LLM_MODEL` 一行可换 Opus/商用）。**验证**：真 key 端到端跑通——Sonnet 在我们的 tools 下并行/多轮选对工具、loop 收敛、danger 命令正确触发确认框（浏览器实测）。svelte-check 0 错 0 警。
+
+**前端 Agent 后续四块（#1–#4，均已推送）**
+- **#1 流式 SSE**：`POST /api/llm/stream` 强制 `stream:true`、把上游 Anthropic SSE 原样透传（`Connection: close` 逐块 flush，手写 server 每连接一线程不阻塞）；前端 `streamLlm` 用 fetch 流式 reader 解析 `content_block_delta` 等、边收边填活消息 → 文字逐字蹦。★Svelte5 坑：push 进 `$state` 后须经 `agent.convo[idx]`（代理）mutate。
+- **#2 扩命令**：`get_value_at`（查某天某变量值）、`set_scenario_init`/`set_scenario_driver`（补全情景三件套）、`run_optimize`/`run_calibrate`（danger，跑 DE/标定）。复用 api.ts。
+- **#3 上下文/缓存**：`messagesWithCache` 给对话末块挂第 3 个 `cache_control` 断点（多轮循环/长对话增量命中）；前缀干净（静态提示+模型摘要在断点内、当前界面状态在断点后不失效）。实测两次相同请求经 /api/llm：1st `cache_creation=6362`、2nd `cache_read=6362`（命中~0.1×）；前缀 ≥~2048 token（sonnet 下限）才激活。
+- **#4 e2e 方案 C（Playwright，系统 Edge）**：① 后端 **Mock 模式**（`EQC_LLM_MOCK=1`）——从最后一条 user 消息读 `[[MOCK 工具 {json}]]` 指令确定性返回 tool_use，驱动**真**前端 loop/handler/confirm/store；`build_mock` 兼容 #3 缓存的数组包装形态。② `e2e/mock.spec.cjs`（默认 5 用例：select_vars 真执行 / confirm 允许真落盘 / confirm 取消 / 并行多工具 / 后端错误）+ `e2e/real.spec.cjs`（`EQC_E2E_REAL=1` 才跑 2 真冒烟），`test.skip` 互斥门控。实测 mock 5 passed（零成本）、real 2 passed。跑法见 USAGE。
+- **★标准约定**：以后**新增任何用户可在前端操作的功能，必须同时在 `frontend/src/lib/commands.svelte.ts` 注册一条命令**（带 description/params/access），这样 ⌘K 面板与 AI 助手自动同获该能力——加功能=加命令，零额外胶水。
 
 ## 下一步（未做）/ 当前不足
 
