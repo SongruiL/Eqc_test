@@ -5,9 +5,11 @@
   "scripts": {
     "dev": "vite",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "build": "vite build && node -e \"require('fs').copyFileSync('dist/index.html','../src/serve_assets/studio_v2.html')\""
+    "build": "vite build && node -e \"require('fs').copyFileSync('dist/index.html','../src/serve_assets/studio_v2.html')\"",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
