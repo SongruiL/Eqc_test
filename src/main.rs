@@ -323,6 +323,10 @@ enum Commands {
         /// 输出 StructureJson 契约（缺省打印人读报告）
         #[arg(long)]
         json: bool,
+
+        /// 附加结构可辨识性分析（参数→可测变量可达性 + 混淆候选，图论必要条件版）
+        #[arg(long)]
+        identifiability: bool,
     },
 
     /// 仿真优化：读模型 + 决策 spec，用差分进化 DE 搜旋钮空间，输出最优旋钮 + 目标值
@@ -463,7 +467,7 @@ fn main() {
             equation_compiler::serve::serve(&input, port, drivers.as_ref(), params.as_ref(), data_dir.as_ref())
         }
         Commands::Export { input, output } => run_export(&input, output.as_ref()),
-        Commands::Structure { input, json } => run_structure(&input, json),
+        Commands::Structure { input, json, identifiability } => run_structure(&input, json, identifiability),
         Commands::Optimize { input, spec, drivers, steps, prescreen, output } => {
             run_optimize(&input, &spec, drivers.as_ref(), steps, prescreen, output.as_ref())
         }
@@ -982,8 +986,8 @@ fn run_export(input: &PathBuf, output: Option<&PathBuf>) -> Result<(), Box<dyn s
 }
 
 #[cfg(feature = "cli")]
-fn run_structure(input: &PathBuf, json: bool) -> Result<(), Box<dyn std::error::Error>> {
-    use equation_compiler::graph::analyze_structure;
+fn run_structure(input: &PathBuf, json: bool, identifiability: bool) -> Result<(), Box<dyn std::error::Error>> {
+    use equation_compiler::graph::{analyze_identifiability, analyze_structure};
     use equation_compiler::{parse_directory, parse_file};
 
     let files = if input.is_dir() {
@@ -992,9 +996,10 @@ fn run_structure(input: &PathBuf, json: bool) -> Result<(), Box<dyn std::error::
         vec![parse_file(input)?]
     };
     let report = analyze_structure(&files);
+    let ident = if identifiability { Some(analyze_identifiability(&files)) } else { None };
 
     if json {
-        println!("{}", equation_compiler::export::structure_json_pretty(&report));
+        println!("{}", equation_compiler::export::structure_json_pretty(&report, ident.as_ref()));
         return Ok(());
     }
 
@@ -1055,6 +1060,28 @@ fn run_structure(input: &PathBuf, json: bool) -> Result<(), Box<dyn std::error::
         println!("\n   ✅ 无代数环（全是单点块，可逐步显式求解）");
     } else {
         println!("\n   🔁 共 {} 个代数环块（须隐式联立求解；本工具当前为显式 Euler，见隐式求解器缺口）", loops.len());
+    }
+
+    // 结构可辨识性（GA-2，opt-in）。
+    if let Some(idr) = &ident {
+        println!("\n   —— 结构可辨识性（图论必要条件版；不替代微分代数充分判定）——");
+        println!("   可测变量（{} 个）: {}", idr.measurable.len(), idr.measurable.join(", "));
+        let n_param = idr.params.len();
+        let n_unid = idr.unidentifiable.len();
+        if n_unid == 0 {
+            println!("   ✅ 全部 {n_param} 个参数都能到达至少一个可测变量（无结构不可辨识）");
+        } else {
+            println!("   ❌ 不可辨识参数（{n_unid}/{n_param}，到任何可测都无路径，数据再多也定不出）:");
+            println!("      {}", idr.unidentifiable.join(", "));
+        }
+        if idr.confounded_candidates.is_empty() {
+            println!("   ✅ 无结构混淆候选");
+        } else {
+            println!("   ⚠️  混淆候选（进入完全相同方程集、结构无法区分；necessary-not-sufficient，建议数值版确认）:");
+            for (a, b) in &idr.confounded_candidates {
+                println!("      {{{a}, {b}}}");
+            }
+        }
     }
     Ok(())
 }

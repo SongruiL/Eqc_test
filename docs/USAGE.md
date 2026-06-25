@@ -144,7 +144,7 @@ optimize:
 ```bash
 eqc build --input <目录> --output <目录> --format all   # 生成 Python/Rust/JSON/Markdown/LaTeX；动态模型额外生成 python/<id>_sim.py（可独立运行的逐日仿真器，与 eqc simulate 同语义）
 eqc validate <目录>                                      # 校验（解析/引用/类型/环检测 + 跨模块结构过定）
-eqc structure <模型.eq.yaml> [--json]                    # 结构分析：变量-方程二部图 + 匹配 + DM 分解（自由变量/块三角求解顺序/代数环/过欠定）；--json 出 StructureJson 契约
+eqc structure <模型.eq.yaml> [--json] [--identifiability]  # 结构分析：二部图+匹配+DM 分解（自由变量/块三角求解顺序/代数环/过欠定）；--identifiability 加结构可辨识性（参数→可测可达性=不可辨识 + 混淆候选，图论必要条件版，互补数值 eqc identify）；--json 出 StructureJson 契约
 eqc graph <目录> --format mermaid                        # 输出依赖图（mermaid/dot）
 eqc list <目录>                                          # 列出方程
 eqc convert "(add x (mul y 2))" -o out.eq.yaml           # 单个 S 表达式 -> YAML

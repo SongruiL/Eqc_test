@@ -229,6 +229,17 @@ human-in-the-loop——GP 提议、科学家裁决。设计 `docs/spec-gp-studio
 - **接入 `validate`**：诚实边界——单文件重复 output（→`DuplicateDefinition`）、代数环（→`CyclicDependency`）现有校验已覆盖；本轮只补**跨模块系统级过定**（耦合折叠后不同模块两方程撞同一节点）这个现有校验看不到的缺口（`structural_checker.rs` + `StructurallyOverDetermined`）。
 - **验证**：合成玩具图逐一对拍（链式=全单点块三角；造环=一个 SCC 块；自引用=单点环；写重 output=超定；漏方程=落自由变量非错误；方程多于变量=结构奇异）。真模型：草莓 S4（26 eqs，完美唯一匹配、无环）、v1 cohort（66 eqs）跑通，validate 无回归。**关键洞察**：动态模型里状态量（如 DF）本步是**携带的自由变量**，故 FF/产量路在本步独立于光合路——结构分析正确分离了「本步代数依赖」与「跨步状态耦合」。12 个新测试，两 feature 配置（cli / cli+advanced_math）共 267 lib 绿。
 
+### 模型图论分析 arc · GA-2（结构可辨识性，图论必要条件版）
+互补数值 `eqc identify` 的**便宜、数据无关、更早**的图论先验筛（理论笔记 §2.4，spec §4 GA-2）。新增 `src/graph/identifiability.rs`：
+- **有向影响图**（专建，不复用 GA-1 无向二部图、也不用 `build_dag`——后者缺积分边）：节点=全部符号，边 = `ref→output` ∪ `source→input` ∪ **`rate源→state`（积分）** ∪ **`prev源→semistate`（延迟）**。含积分/延迟边是关键：动态模型里 `param→rate→state→可测` 才连得通，否则误报不可辨识。
+- **不可辨识（可达性）**：参数在影响图上到任何可测变量都无路径 ⇒ 结构不可辨识（数据再多也定不出）。necessary。
+- **混淆候选**：进入**完全相同方程集合**的参数对 ⇒ 下游影响路径集必然相同 ⇒ 无观测能区分。necessary-not-sufficient，喂数值版确认。
+- **可测集** = `measurable:true` 变量；若一个都没标，回退所有 `type:output` 变量（同数值版默认）。
+- **节点命名单一真相源**：把 GA-1 内联的规范化/source 折叠抽成 `bipartite.rs::NodeResolver`，两张图共用。
+- **CLI** `eqc structure <模型> --identifiability`（人读 + `StructureJson.identifiability` 可选字段，additive，`schema_version` 不变）。
+- **诚实边界**：图法只给必要条件，不替代微分代数充分判定（SIAN 类）。
+- **验证**：合成对拍（只测 y → 只到 z 的参数判不可辨识；动态链 `k→rate→(积分)→S→y` 判可辨识，验积分边接对；同方程参数 → 混淆候选；不同方程 → 不配对）。**真模型草莓 S4**：10 参数全可达可测（无不可辨识），并正确标出混淆候选 **{Cref, Kc}**——二者只同进 CO₂ 响应式 SB-CO2（`f_CO2=(CO2/Cref)·(Cref+Kc)/(CO2+Kc)`），恰是理论预言的「Kc 在 CO₂≡参考点不可辨识」现象；且 necessary-not-sufficient（CO₂ 变化时可分离）正好交数值版确认。4 新测试，两 feature 配置共 272 lib 绿。
+
 ## 下一步（未做）/ 当前不足
 
 **EQC 工具层**

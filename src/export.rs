@@ -223,6 +223,29 @@ pub struct SolveBlockJson {
     pub algebraic_loop: bool,
 }
 
+/// 单参数可达性（GA-2）。
+#[derive(Debug, Clone, Serialize)]
+pub struct ParamReachJson {
+    pub param: String,
+    /// 可达的可测节点。
+    pub reaches: Vec<String>,
+    pub identifiable: bool,
+}
+
+/// 结构可辨识性（GA-2）的 JSON 契约。
+#[derive(Debug, Clone, Serialize)]
+pub struct IdentifiabilityJson {
+    /// 实际采用的可测变量节点。
+    pub measurable: Vec<String>,
+    /// 不可辨识参数（到任何可测都无路径）。
+    pub unidentifiable: Vec<String>,
+    /// 混淆候选参数对（结构无法区分；necessary-not-sufficient，喂数值版确认）。空则省略。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub confounded_candidates: Vec<[String; 2]>,
+    /// 每参数可达性明细。
+    pub params: Vec<ParamReachJson>,
+}
+
 /// 模型结构分析的 JSON 契约。
 #[derive(Debug, Clone, Serialize)]
 pub struct StructureJson {
@@ -241,10 +264,38 @@ pub struct StructureJson {
     /// 最大匹配是否唯一（best-effort；未判定则省略）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub matching_unique: Option<bool>,
+    /// 结构可辨识性（GA-2，可选；仅 `--identifiability` 时计算并附上）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identifiability: Option<IdentifiabilityJson>,
 }
 
-/// 把结构报告导出为契约 JSON 结构。
-pub fn to_structure_json(report: &crate::graph::StructureReport) -> StructureJson {
+/// 把可辨识性报告导出为契约结构。
+pub fn to_identifiability_json(r: &crate::graph::IdentifiabilityReport) -> IdentifiabilityJson {
+    IdentifiabilityJson {
+        measurable: r.measurable.clone(),
+        unidentifiable: r.unidentifiable.clone(),
+        confounded_candidates: r
+            .confounded_candidates
+            .iter()
+            .map(|(a, b)| [a.clone(), b.clone()])
+            .collect(),
+        params: r
+            .params
+            .iter()
+            .map(|p| ParamReachJson {
+                param: p.param.clone(),
+                reaches: p.reaches.clone(),
+                identifiable: p.identifiable,
+            })
+            .collect(),
+    }
+}
+
+/// 把结构报告（+可选可辨识性）导出为契约 JSON 结构。
+pub fn to_structure_json(
+    report: &crate::graph::StructureReport,
+    ident: Option<&crate::graph::IdentifiabilityReport>,
+) -> StructureJson {
     StructureJson {
         schema_version: SCHEMA_VERSION,
         free_vars: report.free_vars.clone(),
@@ -261,12 +312,17 @@ pub fn to_structure_json(report: &crate::graph::StructureReport) -> StructureJso
         structurally_singular: report.structurally_singular,
         author_matching_perfect: report.matching.author_is_perfect,
         matching_unique: report.matching.unique,
+        identifiability: ident.map(to_identifiability_json),
     }
 }
 
 /// 结构分析 JSON（带缩进，`eqc structure --json` 用）。
-pub fn structure_json_pretty(report: &crate::graph::StructureReport) -> String {
-    serde_json::to_string_pretty(&to_structure_json(report)).unwrap_or_else(|_| "{}".to_string())
+pub fn structure_json_pretty(
+    report: &crate::graph::StructureReport,
+    ident: Option<&crate::graph::IdentifiabilityReport>,
+) -> String {
+    serde_json::to_string_pretty(&to_structure_json(report, ident))
+        .unwrap_or_else(|_| "{}".to_string())
 }
 
 /// 序列化为带缩进的 JSON（`eqc export` 用，便于人读）。

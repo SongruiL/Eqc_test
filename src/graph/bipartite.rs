@@ -16,6 +16,46 @@ use std::collections::HashMap;
 
 use crate::schema::{EquationFile, VariableType};
 
+/// 节点命名的**单一真相源**：把「(模块, 本地名)」规范化成图节点 id `MODULE.name`，
+/// 并把跨模块 `source:` 输入折叠进上游 output 节点（耦合边两端归一）。
+///
+/// GA-1 二部图与 GA-2 有向影响图共用，保证两张图节点命名一致。
+#[derive(Debug, Clone)]
+pub struct NodeResolver {
+    /// (模块 id, 本地变量名) → 规范化节点 id。
+    canon: HashMap<(String, String), String>,
+}
+
+impl NodeResolver {
+    /// 扫描所有文件的变量声明，建解析表。
+    pub fn build(files: &[EquationFile]) -> NodeResolver {
+        let mut canon: HashMap<(String, String), String> = HashMap::new();
+        for f in files {
+            let m = &f.meta.id;
+            for (vname, var) in &f.variables {
+                let id = if var.var_type == VariableType::Input {
+                    match var.parse_source() {
+                        Some((sm, sv)) => format!("{sm}.{sv}"),
+                        None => format!("{m}.{vname}"),
+                    }
+                } else {
+                    format!("{m}.{vname}")
+                };
+                canon.insert((m.clone(), vname.clone()), id);
+            }
+        }
+        NodeResolver { canon }
+    }
+
+    /// 在某模块上下文里规范化一个被引用/输出的名字（未声明的名字 → 直接 `模块.名字`）。
+    pub fn resolve(&self, module: &str, name: &str) -> String {
+        self.canon
+            .get(&(module.to_string(), name.to_string()))
+            .cloned()
+            .unwrap_or_else(|| format!("{module}.{name}"))
+    }
+}
+
 /// 二部图里的一个方程节点。
 #[derive(Debug, Clone)]
 pub struct EqNode {
@@ -50,30 +90,9 @@ pub struct BipartiteGraph {
 impl BipartiteGraph {
     /// 从一组方程文件构造二部图（单/多文件均可；多文件按 `source:` 折叠成一个系统）。
     pub fn from_files(files: &[EquationFile]) -> BipartiteGraph {
-        // 1) 建「(模块, 本地名) → 规范化变量节点 id」解析器。
-        //    跨模块 Input（带 source: MOD2.var2）折叠到上游节点 `MOD2.var2`；其余 = `本模块.名字`。
-        let mut canon: HashMap<(String, String), String> = HashMap::new();
-        for f in files {
-            let m = &f.meta.id;
-            for (vname, var) in &f.variables {
-                let id = if var.var_type == VariableType::Input {
-                    match var.parse_source() {
-                        Some((sm, sv)) => format!("{sm}.{sv}"),
-                        None => format!("{m}.{vname}"),
-                    }
-                } else {
-                    format!("{m}.{vname}")
-                };
-                canon.insert((m.clone(), vname.clone()), id);
-            }
-        }
-        // 在某模块上下文里规范化一个被引用/输出的名字（未声明的名字 → 直接 `模块.名字`）。
-        let resolve = |module: &str, name: &str| -> String {
-            canon
-                .get(&(module.to_string(), name.to_string()))
-                .cloned()
-                .unwrap_or_else(|| format!("{module}.{name}"))
-        };
+        // 1) 节点命名走共享解析器（跨模块 source: 折叠进上游 output）。
+        let resolver = NodeResolver::build(files);
+        let resolve = |module: &str, name: &str| -> String { resolver.resolve(module, name) };
 
         let mut variables: Vec<String> = Vec::new();
         let mut var_index: HashMap<String, usize> = HashMap::new();
