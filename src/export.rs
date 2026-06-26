@@ -369,6 +369,90 @@ pub fn layout3d_json_string(l: &crate::graph::Layout3d) -> String {
     serde_json::to_string(&to_layout3d_json(l)).unwrap_or_else(|_| "{}".to_string())
 }
 
+// ============================================
+// 生长动画契约（GA-6b）：把模型按 `meta.modules` 子系统**声明顺序**拆成"章节"，
+// 前端（2D 报告 + 3D 拓扑同步）逐章把节点显形 = "模型一块块长出来"的演示（同一张图渐进
+// 显形、节点位置不变 → 无跳变；不需要版本 diff）。节点用**本地名**（去模块前缀），与 2D
+// `data-var` / 3D `localName` 同键 → 一份 plan 同驱两视图。
+// ============================================
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GrowthChapterJson {
+    /// 章节键（`base` 或子系统名）。
+    pub key: String,
+    /// 章节标题（显示用）。
+    pub title: String,
+    /// 旁白字幕（非专家文案）。
+    pub narration: String,
+    /// 本章揭示的节点**本地名**列表（与 data-var / 3D localName 同键）。
+    pub nodes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GrowthJson {
+    pub chapters: Vec<GrowthChapterJson>,
+}
+
+/// 子系统 → 旁白（草莓 demo 文案；其它子系统回退通用句）。改这一处即改字幕。
+fn growth_narration(key: &str) -> String {
+    let s = match key {
+        "base" => "先接上外部输入与常数：天气（光照、温度、CO₂、湿度）和标定参数——模型的「土壤」。",
+        "光合" => "长出光合引擎：把光、CO₂ 和温度转成糖，这是干物质的来源。",
+        "温度" => "加入温度响应：冷热如何加快或拖慢各个过程。",
+        "物候" => "接上物候时钟：按积温推进发育阶段，决定何时开花结果。",
+        "叶" => "铺开叶系统：叶面积决定能截多少光、长多少新叶。",
+        "果实" => "挂上果实：糖往果里分配、按发育阶段成熟，最后采收。",
+        "水" => "通上水路：蒸腾耗水、灌溉补水，缺水会限制生长。",
+        "氮" => "加进氮营养：氮够不够，决定各器官能不能全速生长。",
+        "EC" => "接入盐分（EC）：基质太咸会渗透胁迫、压低光合。",
+        "钙" => "最后接上钙：钙随蒸腾流进果实，不足会引发脐腐（品质风险）。",
+        _ => return format!("长出「{key}」子系统。"),
+    };
+    s.to_string()
+}
+
+/// 生长动画 plan JSON（`/api/growth` 用）。章节 = base（驱动+参数+未分组）→ 各子系统（声明序）。
+pub fn growth_json_string(files: &[crate::schema::EquationFile]) -> String {
+    let slots = crate::palette::module_slots(files); // 声明序的命名子系统
+    let dag = match crate::dag::build_dag(files) {
+        Ok(d) => d,
+        Err(_) => return "{\"chapters\":[]}".to_string(),
+    };
+    let mut base: Vec<String> = Vec::new();
+    let mut by_sub: indexmap::IndexMap<String, Vec<String>> = indexmap::IndexMap::new();
+    for name in slots.keys() {
+        by_sub.insert(name.clone(), Vec::new()); // 预置以保声明顺序
+    }
+    for n in &dag.nodes {
+        let local = n.id.split_once('.').map(|(_, b)| b).unwrap_or(n.id.as_str()).to_string();
+        match by_sub.get_mut(&n.module) {
+            Some(v) => v.push(local),       // 命名子系统
+            None => base.push(local),       // 自动桶（驱动/参数/其他）→ base
+        }
+    }
+    let mut chapters = Vec::new();
+    if !base.is_empty() {
+        chapters.push(GrowthChapterJson {
+            key: "base".to_string(),
+            title: "外部输入与常数".to_string(),
+            narration: growth_narration("base"),
+            nodes: base,
+        });
+    }
+    for (name, nodes) in by_sub {
+        if nodes.is_empty() {
+            continue;
+        }
+        chapters.push(GrowthChapterJson {
+            narration: growth_narration(&name),
+            title: name.clone(),
+            key: name,
+            nodes,
+        });
+    }
+    serde_json::to_string(&GrowthJson { chapters }).unwrap_or_else(|_| "{}".to_string())
+}
+
 /// 把网络指标报告导出为契约结构。
 pub fn to_metrics_json(r: &crate::graph::MetricsReport) -> MetricsJson {
     MetricsJson {

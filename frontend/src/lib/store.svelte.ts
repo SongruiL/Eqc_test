@@ -1,7 +1,7 @@
 // 全局响应式状态（Svelte 5 runes in .svelte.ts）：模型/处理区/模式/当前工作区。
 // 组件 import 这个 store 读写即响应式联动——比 v1 的全局变量 + 手动 DOM 同步干净得多。
-import type { ModelEntry, ModelJson, Knob } from './contract'
-import { fetchModels, fetchModel } from './api'
+import type { ModelEntry, ModelJson, Knob, GrowthJson } from './contract'
+import { fetchModels, fetchModel, fetchGrowth } from './api'
 
 export const EXPERT_WS = ['structure', 'simulate', 'optimize', 'calibrate', 'gp', 'edit'] as const
 export const PARK_WS = ['understand', 'entry', 'calibrate'] as const
@@ -23,6 +23,13 @@ export const store = $state({
     p: Record<string, number> // 参数覆盖
     i: Record<string, number> // 初值覆盖
     d: Record<string, number> // 恒定驱动覆盖（driver_const，无滑块、只影响曲线）
+  },
+  // 生长动画（GA-6b）：按子系统逐章把模型"长出来"；2D 报告 + 3D 拓扑共享此态、同步演示。
+  growth: {
+    active: false, // 演示模式开（关时各视图正常显示全图）
+    plan: null as GrowthJson | null,
+    chapter: 0, // 当前已揭示到第几章（显示 chapters[0..=chapter]）
+    playing: false, // 自动推进中
   },
 })
 
@@ -114,4 +121,49 @@ export function setMode(m: 'expert' | 'park') {
   save('eqc_v2_mode', m)
   const allowed: readonly string[] = m === 'park' ? PARK_WS : EXPERT_WS
   if (!allowed.includes(store.workspace)) setWorkspace(m === 'park' ? 'understand' : 'simulate')
+}
+
+// —— 生长动画控制（GA-6b）：2D/3D 视图都读 store.growth、由这些函数驱动 —— //
+
+/** 拉取当前模型的生长 plan 并开演（从第 0 章自动播放）。无章节则不动。 */
+export async function startGrowth() {
+  const plan = await fetchGrowth(store.model)
+  if (!plan?.chapters?.length) return
+  store.growth = { active: true, plan, chapter: 0, playing: true }
+}
+
+/** 退出演示，回到正常全图。 */
+export function stopGrowth() {
+  store.growth = { ...store.growth, active: false, playing: false, chapter: 0 }
+}
+
+/** 单步前进/后退（暂停自动播放）。到末章不再前进。 */
+export function growthStep(dir: number) {
+  const n = store.growth.plan?.chapters.length ?? 0
+  if (!n) return
+  const c = Math.max(0, Math.min(n - 1, store.growth.chapter + dir))
+  store.growth = { ...store.growth, chapter: c, playing: false }
+}
+
+/** 播放/暂停切换（已在末章则从头重播）。 */
+export function growthTogglePlay() {
+  const n = store.growth.plan?.chapters.length ?? 0
+  if (!n) return
+  const atEnd = store.growth.chapter >= n - 1
+  store.growth = {
+    ...store.growth,
+    chapter: atEnd && !store.growth.playing ? 0 : store.growth.chapter,
+    playing: !store.growth.playing,
+  }
+}
+
+/** 自动播放推进一章；到末章则停（保留全图）。供定时器调用。 */
+export function growthTick() {
+  const n = store.growth.plan?.chapters.length ?? 0
+  if (!store.growth.playing || !n) return
+  if (store.growth.chapter >= n - 1) {
+    store.growth = { ...store.growth, playing: false }
+  } else {
+    store.growth = { ...store.growth, chapter: store.growth.chapter + 1 }
+  }
 }

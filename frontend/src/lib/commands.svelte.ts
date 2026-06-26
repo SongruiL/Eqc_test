@@ -9,7 +9,7 @@
 //   confirm      显式覆盖 access 推断
 //   aiHidden     纯 UI 命令不暴露给 AI（如打开面板）
 // run 现可接受 args 并返回结果（字符串/对象）= tool_result；UI 按钮不传参、忽略返回。
-import { store, setWorkspace, setMode, switchModel } from './store.svelte'
+import { store, setWorkspace, setMode, switchModel, startGrowth } from './store.svelte'
 import { fetchSimulate, saveZone, fetchZone, runOptimize, runCalibrate } from './api'
 import type { VarJson, ParamJson } from './contract'
 
@@ -41,6 +41,7 @@ export const COMMANDS: Command[] = [
   { id: 'go.structure', label: '结构', group: '专家', run: goto('expert', 'structure'), keywords: 'structure dag forrester 图 结构', access: 'read', description: '打开「结构」工作区：模型的 Forrester 库存-流量图 / DAG 依赖图。' },
   { id: 'view_topology_3d', label: '3D 拓扑视图', group: '专家', run: () => { setMode('expert'); setWorkspace('structure'); store.structureView = '3d'; return '已切到结构工作区的 3D 拓扑视图' }, keywords: 'topology 3d 三维 拓扑 结构 立体 graph', access: 'read', description: '打开结构工作区并切到 3D 拓扑视图：three.js 渲染依赖图的 3D 力导向布局（节点大小∝介数中心性、颜色=Forrester 类别；可轨道旋转/缩放/平移、悬停看注释、点选与 2D/仿真视图联动）。' },
   { id: 'view_structure_2d', label: '2D 结构报告', group: '专家', run: () => { setMode('expert'); setWorkspace('structure'); store.structureView = '2d'; return '已切到结构工作区的 2D 报告视图' }, keywords: 'structure 2d 报告 forrester dag 图', access: 'read', description: '打开结构工作区并切到 2D 结构报告视图（Forrester 库存-流量图 / DAG 依赖图）。' },
+  { id: 'play_growth', label: '播放生长演示', group: '专家', run: async () => { setMode('expert'); setWorkspace('structure'); store.structureView = '3d'; await startGrowth(); return '已开始生长演示：按作者子系统(meta.modules)顺序把模型一块块「长出来」，配旁白字幕' }, keywords: 'growth 生长 演示 动画 长出 grow demo', access: 'read', description: '播放「生长演示」(GA-6b)：在 3D 拓扑里按作者声明的子系统(光合→温度→…)顺序，把模型一块块「长出来」+ 旁白字幕。给非专家/甲方看模型怎么搭起来的演示。' },
   { id: 'go.simulate', label: '仿真', group: '专家', run: goto('expert', 'simulate'), keywords: 'simulate chart 轨迹 仿真', access: 'read', description: '打开「仿真」工作区：整季轨迹折线图 + 情景滑块。' },
   { id: 'go.optimize', label: '优化', group: '专家', run: goto('expert', 'optimize'), keywords: 'optimize de 决策', access: 'read', description: '打开「优化」工作区：决策优化（DE 求最优旋钮）。' },
   { id: 'go.calibrate', label: '标定', group: '专家', run: goto('expert', 'calibrate'), keywords: 'calibrate 标定', access: 'read', description: '打开「标定」工作区：用实测数据反推模型参数。' },

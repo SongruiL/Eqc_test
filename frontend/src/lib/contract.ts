@@ -264,3 +264,16 @@ export interface Layout3dJson {
   /** 坐标范围 [-bound, bound]。 */
   bound: number
 }
+
+// —— 生长动画（/api/growth；GA-6b）：按子系统声明序的"章节"，2D/3D 同步逐章显形 ——
+export interface GrowthChapter {
+  key: string
+  title: string
+  /** 旁白字幕（非专家文案）。 */
+  narration: string
+  /** 本章揭示的节点本地名（与 data-var / 3D localName 同键）。 */
+  nodes: string[]
+}
+export interface GrowthJson {
+  chapters: GrowthChapter[]
+}

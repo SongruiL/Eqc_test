@@ -1,7 +1,7 @@
 // 对 EQC `/api/*` 契约的薄封装。前端只消费，不重实现逻辑（EQC 持有事实）。
 import type {
   ModelsJson, ModelJson, EvolveStatus, OptResult, SimSeries, ZoneInfo, ObservationsJson,
-  SourceJson, ValidateJson, CoupleOptResult, Layout3dJson,
+  SourceJson, ValidateJson, CoupleOptResult, Layout3dJson, GrowthJson,
 } from './contract'
 
 /** `?model=` / `&model=`（id 为空则省略）。 */
@@ -20,6 +20,11 @@ export async function fetchModel(model: string): Promise<ModelJson> {
 /** 3D 拓扑力导向坐标（GA-5 Rust 算、GA-6 前端渲染）。返回 {nodes,edges,bound} 或后端错误信封。 */
 export async function fetchLayout3d(model: string): Promise<Layout3dJson> {
   return (await fetch('/api/layout3d?_=' + Date.now() + modelQS(model), { cache: 'no-store' })).json()
+}
+
+/** 生长动画 plan（GA-6b）：按子系统声明序的章节 + 旁白，2D/3D 同步逐章显形。 */
+export async function fetchGrowth(model: string): Promise<GrowthJson> {
+  return (await fetch('/api/growth?_=' + Date.now() + modelQS(model), { cache: 'no-store' })).json()
 }
 
 /** 整季轨迹图 SVG（EQC 自生成）。`p`/`init`/`d` = 情景覆盖（参数/初值/恒定驱动）。 */

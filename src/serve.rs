@@ -768,6 +768,15 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
             ),
             Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
         },
+        // GA-6b 生长动画 plan（按子系统声明序的章节 + 旁白；2D/3D 同步消费）。
+        "/api/growth" => match load_model_files(m) {
+            Ok(files) => (
+                "200 OK",
+                "application/json; charset=utf-8",
+                crate::export::growth_json_string(&files),
+            ),
+            Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
+        },
         "/api/simulate" => {
             let (pv, iv, dv) = (
                 parse_overrides(query, "p"),

@@ -2,7 +2,7 @@
   // 结构工作区：EQC 自生成报告（Forrester 图 + 二维公式）嵌 iframe + 粒度/布局/缩放 + 节点交互。
   // 报告本身零 JS（只带 data-* 属性）；交互逻辑在此，伸进同源 iframe 挂事件（移植 v1）。
   import { onMount, onDestroy } from 'svelte'
-  import { store } from '../lib/store.svelte'
+  import { store, startGrowth, stopGrowth, growthStep, growthTogglePlay, growthTick } from '../lib/store.svelte'
   import { reportUrl, fetchModel } from '../lib/api'
   import type { ModelJson } from '../lib/contract'
   import { tipHtml } from '../lib/annotate'
@@ -18,6 +18,21 @@
   let lastModel = ''
   // 配色（store.topoColorMode）2D/3D 共用：仅变量级 Forrester 吃 color（模块级后端忽略）。
   const src = $derived(reportUrl(store.model, layout, level, store.topoColorMode))
+
+  // —— 生长演示（GA-6b）：控件在头部、旁白浮画面底；自动播放定时器在此 ——
+  const gChapters = $derived(store.growth.plan?.chapters ?? [])
+  const gCur = $derived(gChapters[store.growth.chapter])
+  const gLast = $derived(store.growth.chapter >= gChapters.length - 1)
+  async function startGrowthDemo() {
+    store.structureView = '3d' // Phase 1：3D 先行（Phase 2 接 2D 同步后此行可去）
+    await startGrowth()
+  }
+  // 自动播放：playing 时每 2.6s 推进一章（到末章 growthTick 自停 → 本 effect 清掉定时器）。
+  $effect(() => {
+    if (!store.growth.playing) return
+    const id = setInterval(growthTick, 2600)
+    return () => clearInterval(id)
+  })
 
   $effect(() => {
     if (store.model === lastModel) return
@@ -209,6 +224,18 @@
       <button class:active={store.structureView === '2d'} onclick={() => (store.structureView = '2d')}>2D 报告</button>
       <button class:active={store.structureView === '3d'} onclick={() => (store.structureView = '3d')}>3D 拓扑</button>
     </span>
+    <!-- 生长演示（GA-6b）：按子系统逐块把模型「长出来」；2D/3D 共用此控件 -->
+    {#if !store.growth.active}
+      <span class="seg"><button class="grow" onclick={startGrowthDemo} title="按子系统逐块把模型「长出来」（演示）">▶ 生长演示</button></span>
+    {:else}
+      <span class="seg" title="生长演示">
+        <button onclick={growthTogglePlay}>{store.growth.playing ? '⏸ 暂停' : gLast ? '↻ 重播' : '▶ 播放'}</button>
+        <button onclick={() => growthStep(-1)} disabled={store.growth.chapter <= 0}>‹</button>
+        <button onclick={() => growthStep(1)} disabled={gLast}>›</button>
+        <button onclick={stopGrowth}>✕ 退出</button>
+      </span>
+      <span class="zlab">{store.growth.chapter + 1}/{gChapters.length}</span>
+    {/if}
     {#if store.structureView === '2d'}
       <span class="seg" title="结构图粒度">{#each levels as l}<button class:active={level === l.id} onclick={() => (level = l.id)}>{l.label}</button>{/each}</span>
       {#if level === 'variable' || level === 'equation'}{@render colorToggle()}{/if}
@@ -226,6 +253,13 @@
     {/if}
   </div>
   <div class="frame">
+    {#if store.growth.active && gCur}
+      <!-- 生长旁白字幕（浮在画面底；2D/3D 共用） -->
+      <div class="narration">
+        <span class="ntitle">{gCur.title}</span>
+        <span class="ntext">{gCur.narration}</span>
+      </div>
+    {/if}
     {#if store.structureView === '2d'}
       <iframe bind:this={iframeEl} title="结构图" {src} onload={onLoad}></iframe>
     {:else}
@@ -242,9 +276,21 @@
   .seg button + button { border-left: 1px solid var(--line); }
   .seg button.active { background: var(--accent); color: #fff; }
   .seg button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .seg button.grow { color: #16a34a; font-weight: 700; }
   .zlab { font-size: 12px; color: var(--sub); }
   .tip-note { font-size: 11px; color: var(--sub); margin-left: auto; }
-  .frame { flex: 1; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
+  .frame { position: relative; flex: 1; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
+  /* 生长旁白字幕：浮在画面底部居中（2D/3D 共用） */
+  .narration {
+    position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 20;
+    max-width: 78%; display: flex; align-items: baseline; gap: 10px;
+    background: rgba(15, 23, 42, 0.86); color: #f1f5f9; border: 1px solid #334155;
+    border-radius: 10px; padding: 9px 16px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4); backdrop-filter: blur(2px);
+    animation: nfade 0.4s ease;
+  }
+  .narration .ntitle { font-weight: 800; color: #7dd3fc; white-space: nowrap; }
+  .narration .ntext { font-size: 13px; line-height: 1.5; }
+  @keyframes nfade { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
   iframe { width: 100%; height: 100%; border: 0; }
   /* 悬停注释卡挂在 document.body（组件外）→ 全局样式 */
   :global(.eqc-nodetip) {

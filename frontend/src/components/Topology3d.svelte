@@ -39,6 +39,12 @@
   let ro: ResizeObserver | null = null
   let hovered: THREE.Mesh | null = null
   let curModel = ''
+  // 生长动画（GA-6b）：边列表 + 节点位置 + 章节映射 + 补间帧（逐章把节点显形）。
+  let nodePos = new Map<string, THREE.Vector3>()   // 节点 id → 位置（重建边用）
+  let edgeList: [string, string][] = []            // 全部边（节点 id 对），按揭示集重建
+  let edgeMesh: THREE.LineSegments | null = null   // 边对象引用（重建几何）
+  let growthCh = new Map<string, number>()         // 本地名 → 章节序（store.growth.plan）
+  let growthRAF = 0                                // 补间 requestAnimationFrame 句柄
 
   const BG = 0x0f172a       // 视口深色：让节点/边/深度更可读（仅画布内，不动全局浅色主题）
   const HALO = 0xffffff     // 选中描边色（白描边圈，区别于"亮节点"）
@@ -91,6 +97,10 @@
     group = null
     nodeMeshes = []
     hovered = null
+    edgeMesh = null
+    edgeList = []
+    nodePos.clear()
+    if (growthRAF) { cancelAnimationFrame(growthRAF); growthRAF = 0 }
   }
 
   async function loadGraph(model: string) {
@@ -126,7 +136,7 @@
     hasOther = data.nodes.some((n) => !n.module)
     store.topoHasModules = presentModules.length > 0
     if (!store.topoHasModules) store.topoColorMode = 'class' // 无子系统 → 复位，切换控件与显示一致
-    const pos = new Map<string, THREE.Vector3>()
+    nodePos = new Map<string, THREE.Vector3>()
     for (const n of data.nodes) {
       const ln = localName(n.id)
       // 半立体材质：emissive=自身色（loadGraph 末统一上色），高 roughness 去高光、避免洗白。
@@ -143,22 +153,16 @@
       mesh.userData = { id: n.id, ln, r, module: n.module, halo }
       g.add(mesh)
       nodeMeshes.push(mesh)
-      pos.set(n.id, mesh.position)
+      nodePos.set(n.id, mesh.position)
     }
     recomputeClasses()   // 当前出现的 Forrester 类别（依赖 contract，晚到时由 $effect 重算）
     recolorByMode()      // 按当前配色模式上色（含 emissive 自发光）
-    // 影响边（有向，本 v1 不画箭头，只画连线）
-    if (data.edges.length) {
-      const verts: number[] = []
-      for (const [a, b] of data.edges) {
-        const pa = pos.get(a), pb = pos.get(b)
-        if (!pa || !pb) continue
-        verts.push(pa.x, pa.y, pa.z, pb.x, pb.y, pb.z)
-      }
-      const eg = new THREE.BufferGeometry()
-      eg.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3))
-      g.add(new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: 0x64748b, transparent: true, opacity: 0.35 })))
-    }
+    // 影响边（有向，本 v1 不画箭头，只画连线）；存 edgeList + edgeMesh 引用供生长动画按章重建。
+    edgeList = data.edges
+    const eg = new THREE.BufferGeometry()
+    eg.setAttribute('position', new THREE.Float32BufferAttribute(edgeVerts(edgeList), 3))
+    edgeMesh = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: 0x64748b, transparent: true, opacity: 0.35 }))
+    g.add(edgeMesh)
     sc.add(g)
     group = g
     if (camera && controls) {
@@ -167,8 +171,73 @@
       controls.update()
     }
     status = data.nodes.length ? 'ok' : 'empty'
+    buildGrowthMap()
+    if (store.growth.active) applyGrowth(true) // 演示进行中切模型/重载 → 直接套用当前章节
     applySelection(store.selectedVars)
     render()
+  }
+
+  /** 由边列表 + 节点位置生成 LineSegments 顶点数组。 */
+  function edgeVerts(edges: [string, string][]): number[] {
+    const v: number[] = []
+    for (const [a, b] of edges) {
+      const pa = nodePos.get(a), pb = nodePos.get(b)
+      if (!pa || !pb) continue
+      v.push(pa.x, pa.y, pa.z, pb.x, pb.y, pb.z)
+    }
+    return v
+  }
+
+  // —— 生长动画（GA-6b）：逐章把节点显形（缩放 0→r 补间）+ 按揭示集重建边 —— //
+  /** 从 store.growth.plan 建「本地名 → 章节序」映射。 */
+  function buildGrowthMap() {
+    growthCh = new Map()
+    ;(store.growth.plan?.chapters ?? []).forEach((ch, i) =>
+      ch.nodes.forEach((ln) => { if (!growthCh.has(ln)) growthCh.set(ln, i) }),
+    )
+  }
+  /** 某本地名当前是否已揭示（演示关=全显；不在 plan 的随第 0 章）。 */
+  function revealed(ln: string): boolean {
+    if (!store.growth.active) return true
+    return (growthCh.get(ln) ?? 0) <= store.growth.chapter
+  }
+  /** 套用当前章节：各节点目标缩放（已揭示=r / 未揭示=0）+ 重建可见边 + 启动补间。 */
+  function applyGrowth(instant = false) {
+    for (const mesh of nodeMeshes) {
+      const ud = mesh.userData as { ln: string; r: number; target?: number }
+      ud.target = revealed(ud.ln) ? ud.r : 0
+      if (instant) mesh.scale.setScalar(ud.target)
+    }
+    rebuildEdges()
+    if (instant) render()
+    else startTween()
+  }
+  /** 重建边几何：只画两端都已揭示的边（演示关=全部）。 */
+  function rebuildEdges() {
+    if (!edgeMesh) return
+    const vis = store.growth.active
+      ? edgeList.filter(([a, b]) => revealed(localName(a)) && revealed(localName(b)))
+      : edgeList
+    edgeMesh.geometry.setAttribute('position', new THREE.Float32BufferAttribute(edgeVerts(vis), 3))
+    edgeMesh.geometry.computeBoundingSphere()
+  }
+  /** 补间循环：各节点缩放渐近目标（"长出"），逐帧渲染，全到位即停。 */
+  function startTween() {
+    if (growthRAF) cancelAnimationFrame(growthRAF)
+    const step = () => {
+      let moving = false
+      for (const mesh of nodeMeshes) {
+        const ud = mesh.userData as { target?: number }
+        const t = ud.target ?? mesh.scale.x
+        const next = mesh.scale.x + (t - mesh.scale.x) * 0.18
+        const snap = Math.abs(t - next) <= 1e-4
+        mesh.scale.setScalar(snap ? t : next)
+        if (!snap) moving = true
+      }
+      render()
+      growthRAF = moving ? requestAnimationFrame(step) : 0
+    }
+    growthRAF = requestAnimationFrame(step)
   }
 
   /** 当前模型实际出现的 Forrester 类别（按 CLASS_ORDER 排序，只列出现的；依赖 contract）。 */
@@ -205,7 +274,8 @@
       const ud = mesh.userData as { ln: string; r: number; halo: THREE.Mesh }
       const on = set.has(ud.ln)
       ud.halo.visible = on               // 描边光环：选中显形（区别于"亮节点"）
-      mesh.scale.setScalar(on ? ud.r * 1.15 : ud.r)  // 轻微放大做冗余线索
+      // 生长演示进行中由 applyGrowth 掌管缩放（0→r），选中只切光环、不抢缩放。
+      if (!store.growth.active) mesh.scale.setScalar(on ? ud.r * 1.15 : ud.r)
     }
     render()
   }
@@ -255,6 +325,7 @@
   })
   onDestroy(() => {
     ro?.disconnect()
+    if (growthRAF) cancelAnimationFrame(growthRAF)
     hideTip(tip); tip?.remove()
     disposeGroup()
     controls?.dispose()
@@ -283,6 +354,14 @@
   $effect(() => {
     const sel = store.selectedVars
     if (nodeMeshes.length) applySelection(sel)
+  })
+  // 生长演示（GA-6b）：active/章节/plan 变 → 重建章节映射 + 套用揭示（补间"长出"）。
+  $effect(() => {
+    const g = store.growth
+    void g.active; void g.chapter; void g.plan
+    if (!nodeMeshes.length) return
+    buildGrowthMap()
+    applyGrowth()
   })
 
   // —— 图例数据（只列当前模型出现的项；按类别带一句话含义、按子系统列子系统名）——
