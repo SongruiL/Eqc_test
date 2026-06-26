@@ -396,7 +396,6 @@ pub struct GrowthJson {
 /// 子系统 → 旁白（草莓 demo 文案；其它子系统回退通用句）。改这一处即改字幕。
 fn growth_narration(key: &str) -> String {
     let s = match key {
-        "base" => "先接上外部输入与常数：天气（光照、温度、CO₂、湿度）和标定参数——模型的「土壤」。",
         "光合" => "长出光合引擎：把光、CO₂ 和温度转成糖，这是干物质的来源。",
         "温度" => "加入温度响应：冷热如何加快或拖慢各个过程。",
         "物候" => "接上物候时钟：按积温推进发育阶段，决定何时开花结果。",
@@ -411,42 +410,81 @@ fn growth_narration(key: &str) -> String {
     s.to_string()
 }
 
-/// 生长动画 plan JSON（`/api/growth` 用）。章节 = base（驱动+参数+未分组）→ 各子系统（声明序）。
+/// 生长动画 plan JSON（`/api/growth` 用）。章节 = 各子系统（声明序）。
+///
+/// **关键**：每个**非子系统节点**（参数/驱动/中间）在它**首次被某子系统用到**的那章才出现
+/// （= 其消费者后继章节的最小值，反向传播到不动点）——这样每章长出一个**连通的肢体**（方程 +
+/// 它新需要的输入），而不是开头堆一大片孤立参数/驱动（旧 base 章节的问题）。
 pub fn growth_json_string(files: &[crate::schema::EquationFile]) -> String {
-    let slots = crate::palette::module_slots(files); // 声明序的命名子系统
+    let slots = crate::palette::module_slots(files); // 声明序的命名子系统：name → slot
+    let nsub = slots.len();
+    if nsub == 0 {
+        return "{\"chapters\":[]}".to_string(); // 未声明子系统 → 无生长演示
+    }
     let dag = match crate::dag::build_dag(files) {
         Ok(d) => d,
         Err(_) => return "{\"chapters\":[]}".to_string(),
     };
-    let mut base: Vec<String> = Vec::new();
-    let mut by_sub: indexmap::IndexMap<String, Vec<String>> = indexmap::IndexMap::new();
-    for name in slots.keys() {
-        by_sub.insert(name.clone(), Vec::new()); // 预置以保声明顺序
-    }
-    for n in &dag.nodes {
-        let local = n.id.split_once('.').map(|(_, b)| b).unwrap_or(n.id.as_str()).to_string();
-        match by_sub.get_mut(&n.module) {
-            Some(v) => v.push(local),       // 命名子系统
-            None => base.push(local),       // 自动桶（驱动/参数/其他）→ base
+    let n = dag.nodes.len();
+    let idx: std::collections::HashMap<&str, usize> =
+        dag.nodes.iter().enumerate().map(|(i, nd)| (nd.id.as_str(), i)).collect();
+    // 后继：边 from→to 即 ref→output（ref 喂给 output）→ 节点的"消费者"= 其后继。
+    let mut succ: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for e in &dag.edges {
+        if let (Some(&a), Some(&b)) = (idx.get(e.from.as_str()), idx.get(e.to.as_str())) {
+            if a != b {
+                succ[a].push(b);
+            }
         }
     }
-    let mut chapters = Vec::new();
-    if !base.is_empty() {
-        chapters.push(GrowthChapterJson {
-            key: "base".to_string(),
-            title: "外部输入与常数".to_string(),
-            narration: growth_narration("base"),
-            nodes: base,
-        });
+    const UNSET: usize = usize::MAX;
+    let mut ch = vec![UNSET; n];
+    for (i, nd) in dag.nodes.iter().enumerate() {
+        if let Some(&s) = slots.get(nd.module.as_str()) {
+            ch[i] = s; // 命名子系统节点 → 其子系统章节
+        }
     }
-    for (name, nodes) in by_sub {
+    // 反向传播：非子系统节点的章节 = 其消费者(后继)章节的最小值，迭代到不动点。
+    loop {
+        let mut changed = false;
+        for i in 0..n {
+            if ch[i] != UNSET {
+                continue;
+            }
+            if let Some(m) = succ[i].iter().filter_map(|&j| (ch[j] != UNSET).then_some(ch[j])).min() {
+                ch[i] = m;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    for c in ch.iter_mut() {
+        if *c == UNSET {
+            *c = nsub - 1; // 无路径到任何子系统的孤立节点 → 末章（不在开头打扰）
+        }
+    }
+    // 子系统名按 slot 序，分组本地名
+    let mut sub_names: Vec<&str> = vec![""; nsub];
+    for (name, &s) in &slots {
+        sub_names[s] = name.as_str();
+    }
+    let mut byc: Vec<Vec<String>> = vec![Vec::new(); nsub];
+    for (i, nd) in dag.nodes.iter().enumerate() {
+        let local = nd.id.split_once('.').map(|(_, b)| b).unwrap_or(nd.id.as_str()).to_string();
+        byc[ch[i]].push(local);
+    }
+    let mut chapters = Vec::new();
+    for (k, nodes) in byc.into_iter().enumerate() {
         if nodes.is_empty() {
             continue;
         }
+        let name = sub_names[k];
         chapters.push(GrowthChapterJson {
-            narration: growth_narration(&name),
-            title: name.clone(),
-            key: name,
+            key: name.to_string(),
+            title: name.to_string(),
+            narration: growth_narration(name),
             nodes,
         });
     }
