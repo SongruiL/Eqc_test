@@ -10,7 +10,7 @@
   import type { ModelJson, Layout3dJson } from '../lib/contract'
   import {
     tipHtml, nodeColor3d, localName, makeTip, showTipAt, hideTip,
-    classOf, CLS_CN, CLASS_COLOR_3D, CLASS_LEGEND, CLASS_ORDER,
+    classOf, classColor3d, CLS_CN, CLASS_LEGEND, CLASS_ORDER,
     moduleColorMap, MODULE_OTHER_COLOR, MODULE_OTHER_LABEL,
   } from '../lib/annotate'
 
@@ -298,7 +298,7 @@
     return {
       title: '类别',
       items: presentClasses.map((c) => ({
-        color: CLASS_COLOR_3D[c] ?? '#9ca3af',
+        color: classColor3d(contract, c),
         name: CLS_CN[c] ?? c,
         meaning: CLASS_LEGEND[c],
       })),

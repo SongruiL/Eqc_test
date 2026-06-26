@@ -68,6 +68,41 @@ pub fn module_colors(files: &[EquationFile]) -> IndexMap<String, (String, String
         .collect()
 }
 
+// ============================================================================
+// Forrester 8 类配色（单一真相源）：3D 鲜调（深底球）+ 2D 浅调（浅底 Forrester 填充/描边）。
+// 类别色少且稳，故直接存显式三元组（不像子系统那样派生）——尤其边界=白云、控制=品红等
+// 手调约定，纯派生会破坏。2D 报告直接读 fill/stroke；3D 经契约 `class_colors` 读 vivid。
+// ============================================================================
+
+/// 一个 Forrester 类别的配色：3D 鲜调 + 2D 浅底填充 + 2D 描边。
+#[derive(Clone, Copy)]
+pub struct ClassColor {
+    pub vivid: &'static str,
+    pub fill: &'static str,
+    pub stroke: &'static str,
+}
+
+/// 类名 → 配色。接受契约名（`semi_state`）与 CSS 名（`semistate`）两种写法。
+/// 辅助=冷、参数=暖（2D 也拉开明度+色相，修"两灰难分"，与 3D 同色族）。
+pub fn class_color(class: &str) -> ClassColor {
+    let (vivid, fill, stroke) = match class {
+        "state" => ("#3b82f6", "#dbeafe", "#3b82f6"),
+        "semi_state" | "semistate" => ("#60a5fa", "#dbeafe", "#3b82f6"),
+        "rate" => ("#f97316", "#ffedd5", "#f97316"),
+        "driving" => ("#22c55e", "#dcfce7", "#22c55e"),
+        "auxiliary" => ("#dbe4ee", "#eef2f7", "#b8c4d4"), // 冷浅灰
+        "parameter" => ("#a89b86", "#ece7df", "#b3a392"), // 暖中褐
+        "control" => ("#a855f7", "#fae8ff", "#d946ef"),
+        "boundary" => ("#0ea5e9", "#ffffff", "#94a3b8"),
+        _ => ("#9ca3af", "#f3f4f6", "#9ca3af"),
+    };
+    ClassColor { vivid, fill, stroke }
+}
+
+/// 8 个 Forrester 类名（契约写法 `semi_state`）；构造契约 `class_colors`、前端按类配色用。
+pub const FORRESTER_CLASSES: [&str; 8] =
+    ["state", "rate", "driving", "auxiliary", "parameter", "control", "semi_state", "boundary"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

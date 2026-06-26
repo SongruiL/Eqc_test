@@ -99,9 +99,15 @@ export function classOf(contract: ModelJson | null, name: string): string {
   return r.kind === 'var' ? r.v.class : 'parameter'
 }
 
-/** 3D 节点球颜色（按分类，复用 2D 配色）。 */
+/** 类别 → 3D 鲜调色：优先契约 `class_colors`（Rust palette 单一真相源、与 2D 同源），
+ *  回退本地 CLASS_COLOR_3D（老契约/兜底）。图例与节点共用。 */
+export function classColor3d(contract: ModelJson | null, cls: string): string {
+  return contract?.class_colors?.[cls] ?? CLASS_COLOR_3D[cls] ?? '#9ca3af'
+}
+
+/** 3D 节点球颜色（按分类，2D/3D 同源）。 */
 export function nodeColor3d(contract: ModelJson | null, name: string): string {
-  return CLASS_COLOR_3D[classOf(contract, name)] ?? '#9ca3af'
+  return classColor3d(contract, classOf(contract, name))
 }
 
 /** 悬停注释卡 HTML：显示名 + 分类/单位 + 物理意义 + 方程 MathML + 出处。2D/3D 共用。 */

@@ -237,6 +237,8 @@ export interface ModelJson {
   modules: ModuleJson[]
   /** 是否有任一模块声明 meta.modules 子系统划分；前端「按子系统」配色据此启用（2D/3D 共用）。 */
   has_modules?: boolean
+  /** Forrester 8 类 → 3D 鲜调颜色（Rust palette 单一真相源，与 2D 报告同源）；3D 据此上色。 */
+  class_colors?: Record<string, string>
 }
 
 // —— 3D 拓扑布局（/api/layout3d；GA-5 力导向坐标，GA-6 前端渲染）契约 ——

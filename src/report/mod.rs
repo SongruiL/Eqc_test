@@ -599,14 +599,7 @@ h2 .sub { color:var(--sub); font-weight:400; font-size:13px; margin-left:8px; }
 .dag-svg.forr .fnode text { text-anchor:middle; font-size:14px; fill:#1f2933; }
 .dag-svg.forr .fcode { text-anchor:start; font-size:9px; fill:#64748b; font-weight:700; }
 .dag-svg.forr .fsh { stroke-width:1.4; }
-.dag-svg.forr .fsh.state      { fill:#dbeafe; stroke:#3b82f6; stroke-width:2.2; }
-.dag-svg.forr .fsh.semistate  { fill:#dbeafe; stroke:#3b82f6; stroke-width:1.6; stroke-dasharray:5 3; }
-.dag-svg.forr .fsh.rate       { fill:#ffedd5; stroke:#f97316; stroke-width:1.8; }
-.dag-svg.forr .fsh.driving    { fill:#dcfce7; stroke:#22c55e; }
-.dag-svg.forr .fsh.parameter  { fill:#f3f4f6; stroke:#9ca3af; }
-.dag-svg.forr .fsh.auxiliary  { fill:#f8fafc; stroke:#cbd5e1; }
-.dag-svg.forr .fsh.control    { fill:#fae8ff; stroke:#d946ef; }
-.dag-svg.forr .fsh.boundary   { fill:#ffffff; stroke:#94a3b8; stroke-dasharray:4 3; }
+/* .fsh.<类> 的填充/描边由 forr_class_css() 从 palette 单一真相源生成（含 2D 专属 width/dash），见 <style> 末尾 */
 /* —— 点节点联动：可点 + 选中高亮（事件由 Studio 注入，报告本身零 JS） —— */
 .dag-svg .fnode, .dag-svg .node { cursor:pointer; }
 .dag-svg.forr .fnode.hl .fsh { stroke:#1d4ed8 !important; stroke-width:3.4 !important; }
@@ -617,10 +610,7 @@ h2 .sub { color:var(--sub); font-weight:400; font-size:13px; margin-left:8px; }
 .dag-svg.forr .fedge.material { stroke:#f97316; stroke-width:3; }
 .dag-svg.forr .fedge.info     { stroke:#94a3b8; stroke-width:1.2; stroke-dasharray:4 3; }
 .forr-legend .l { border:1px solid var(--line); }
-.forr-legend .l.state { background:#dbeafe; } .forr-legend .l.rate { background:#ffedd5; }
-.forr-legend .l.driving { background:#dcfce7; } .forr-legend .l.auxiliary { background:#f8fafc; }
-.forr-legend .l.parameter { background:#f3f4f6; } .forr-legend .l.semistate { background:#dbeafe; border-style:dashed; }
-.forr-legend .l.boundary { background:#fff; border-style:dashed; }
+/* .forr-legend .l.<类> 的 background 同样由 forr_class_css() 从 palette 生成 */
 .forr-legend .l.mat { color:#f97316; font-weight:700; } .forr-legend .l.inf { color:#64748b; }
 .eq { background:var(--card); border:1px solid var(--line); border-radius:10px; margin:10px 28px; padding:14px 18px; }
 .eqhead { font-weight:600; font-size:14px; }
@@ -738,10 +728,44 @@ pub fn generate_report_leveled(
     format!(
         "<!DOCTYPE html><html lang=\"zh\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-         <title>{t} · EQC 模型报告</title><style>{CSS}</style></head>\
+         <title>{t} · EQC 模型报告</title><style>{CSS}{cls}</style></head>\
          <body><h1>{t} · EQC 模型报告</h1>{body}</body></html>",
-        t = xml(&title)
+        t = xml(&title),
+        cls = forr_class_css(),
     )
+}
+
+/// Forrester 8 类的填充/描边 CSS（颜色取自 [`crate::palette`] 单一真相源）+ 2D 专属几何
+/// （stroke-width / 虚线），以及图例色块背景。与 3D 经契约 `class_colors` 读的鲜调同源。
+fn forr_class_css() -> String {
+    // 2D 专属几何（粗细/虚线）：颜色是跨 2D/3D 共享的，几何只属 2D，故留在报告侧。
+    let geom = |c: &str| -> &str {
+        match c {
+            "state" => "stroke-width:2.2;",
+            "semistate" => "stroke-width:1.6;stroke-dasharray:5 3;",
+            "rate" => "stroke-width:1.8;",
+            "boundary" => "stroke-dasharray:4 3;",
+            _ => "",
+        }
+    };
+    let mut s = String::new();
+    // 节点图元（fclass_css 用 "semistate" 不带下划线）
+    for c in ["state", "semistate", "rate", "driving", "parameter", "auxiliary", "control", "boundary"] {
+        let cc = crate::palette::class_color(c);
+        s.push_str(&format!(
+            ".dag-svg.forr .fsh.{c} {{ fill:{}; stroke:{}; {} }}\n",
+            cc.fill,
+            cc.stroke,
+            geom(c)
+        ));
+    }
+    // 图例色块（与原图例同一组类，含 semistate/boundary 虚框）
+    for c in ["state", "rate", "driving", "auxiliary", "parameter", "semistate", "boundary"] {
+        let cc = crate::palette::class_color(c);
+        let dashed = if c == "semistate" || c == "boundary" { "border-style:dashed;" } else { "" };
+        s.push_str(&format!(".forr-legend .l.{c} {{ background:{}; {} }}\n", cc.fill, dashed));
+    }
+    s
 }
 
 #[cfg(test)]

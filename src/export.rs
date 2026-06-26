@@ -24,6 +24,10 @@ pub struct ModelJson {
     /// 2D 报告与 3D 拓扑共用同一判断）。additive；老前端不读照常。
     #[serde(default)]
     pub has_modules: bool,
+    /// Forrester 8 类 → 3D 鲜调颜色（单一真相源 `crate::palette`）。前端 3D 据此上色，
+    /// 不再自带类配色常量；与 2D 报告同源。additive。
+    #[serde(default)]
+    pub class_colors: indexmap::IndexMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -125,7 +129,11 @@ pub struct EqJson {
 pub fn to_model_json(files: &[EquationFile]) -> ModelJson {
     let has_modules = files.iter().any(|f| !f.meta.modules.is_empty());
     let modules = files.iter().map(module_json).collect();
-    ModelJson { schema_version: SCHEMA_VERSION, modules, has_modules }
+    let class_colors = crate::palette::FORRESTER_CLASSES
+        .iter()
+        .map(|c| (c.to_string(), crate::palette::class_color(c).vivid.to_string()))
+        .collect();
+    ModelJson { schema_version: SCHEMA_VERSION, modules, has_modules, class_colors }
 }
 
 fn module_json(f: &EquationFile) -> ModuleJson {
