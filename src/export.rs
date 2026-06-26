@@ -314,6 +314,9 @@ pub struct Node3dJson {
     /// 前端「按子系统」配色 + 图例用（additive，老前端不读照常）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub module: Option<String>,
+    /// 该子系统的鲜调颜色（`#rrggbb`，单一真相源 `crate::palette`）；前端 3D 直接用、不再自带调色板。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub module_color: Option<String>,
 }
 
 /// 3D 力导向布局的 JSON 契约（GA-5）。坐标 Rust 算、前端只渲染。
@@ -340,6 +343,7 @@ pub fn to_layout3d_json(l: &crate::graph::Layout3d) -> Layout3dJson {
                 community: n.community,
                 depth: n.depth,
                 module: n.module.clone(),
+                module_color: n.module_color.clone(),
             })
             .collect(),
         edges: l.edges.iter().map(|(a, b)| [a.clone(), b.clone()]).collect(),

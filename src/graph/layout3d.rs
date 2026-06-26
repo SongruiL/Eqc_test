@@ -34,6 +34,9 @@ pub struct Node3d {
     /// 作者声明的**子系统名**（`meta.modules` 的键，如「光合」「氮」）；参数/驱动/未分组节点
     /// 或模型未声明任何子系统 → `None`。供 GA-6 前端「按子系统」配色 + 图例。
     pub module: Option<String>,
+    /// 该子系统的**鲜调颜色**（深底 3D 用，单一真相源 [`crate::palette`]，声明顺序定色）；
+    /// 与 2D 报告同子系统同色相。`module` 为 `None` 则也 `None`。
+    pub module_color: Option<String>,
 }
 
 /// 3D 力导向布局结果。
@@ -63,6 +66,15 @@ pub fn layout3d(files: &[EquationFile]) -> Layout3d {
     let depth: Vec<usize> = (0..n).map(|i| met.get(g.nodes[i].as_str()).map_or(0, |t| t.2)).collect();
     // 每节点的作者声明子系统名（按子系统配色用，与 GA-3 module_partition 同一权威）。
     let module_of = node_modules(files, &g);
+    // 子系统 → 鲜调色（单一真相源 palette，声明顺序定槽；2D/3D 同色相）。
+    let slots = crate::palette::module_slots(files);
+    let module_color_of: Vec<Option<String>> = module_of
+        .iter()
+        .map(|m| {
+            m.as_ref()
+                .map(|name| crate::palette::vivid_for_slot(slots.get(name).copied().unwrap_or(0)).to_string())
+        })
+        .collect();
 
     let edges: Vec<(String, String)> = {
         let mut e = Vec::new();
@@ -92,6 +104,7 @@ pub fn layout3d(files: &[EquationFile]) -> Layout3d {
                 community: comm[0],
                 depth: depth[0],
                 module: module_of[0].clone(),
+                module_color: module_color_of[0].clone(),
             }],
             edges,
             bound,
@@ -101,7 +114,7 @@ pub fn layout3d(files: &[EquationFile]) -> Layout3d {
     let (px, py, pz) = force_directed_3d(&g, n, &comm, &depth);
 
     // 归一化到 [-1,1]³：以质心居中、按最大半幅统一缩放（保形、无 NaN）。
-    let nodes = normalize(&g, &px, &py, &pz, &size, &comm, &depth, &module_of, bound);
+    let nodes = normalize(&g, &px, &py, &pz, &size, &comm, &depth, &module_of, &module_color_of, bound);
     Layout3d { nodes, edges, bound }
 }
 
@@ -256,6 +269,7 @@ fn normalize(
     comm: &[usize],
     depth: &[usize],
     module_of: &[Option<String>],
+    module_color_of: &[Option<String>],
     bound: f64,
 ) -> Vec<Node3d> {
     let n = g.len();
@@ -276,6 +290,7 @@ fn normalize(
             community: comm[i],
             depth: depth[i],
             module: module_of[i].clone(),
+            module_color: module_color_of[i].clone(),
         })
         .collect()
 }

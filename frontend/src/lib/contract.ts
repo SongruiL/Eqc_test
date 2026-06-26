@@ -251,6 +251,8 @@ export interface Node3dJson {
   /** 作者声明的子系统名（meta.modules 键，如「光合」「氮」）；参数/驱动/未分组或未声明 → 省略。
    *  GA-6「按子系统」配色 + 图例用（additive）。 */
   module?: string
+  /** 该子系统的鲜调颜色（#rrggbb，Rust 单一真相源 palette 算、与 2D 同色相）；前端 3D 直接用。 */
+  module_color?: string
 }
 export interface Layout3dJson {
   nodes: Node3dJson[]

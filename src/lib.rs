@@ -33,6 +33,8 @@ pub mod graph;
 #[cfg(feature = "cli")]
 pub mod optimize;
 #[cfg(feature = "cli")]
+pub mod palette;
+#[cfg(feature = "cli")]
 pub mod parser;
 #[cfg(feature = "cli")]
 pub mod report;

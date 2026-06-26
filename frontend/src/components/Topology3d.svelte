@@ -115,8 +115,13 @@
     const bound = data.bound || 1
     const geo = new THREE.SphereGeometry(1, 20, 16)   // 单位球，逐节点缩放（本次加载内共享）
     const haloMat = new THREE.MeshBasicMaterial({ color: HALO, side: THREE.BackSide, transparent: true, opacity: 0.85 })
-    // 子系统配色：按节点顺序首现定色（节点 + 图例共用同一映射）；空映射=本模型未声明子系统。
-    modColor = moduleColorMap(data.nodes.map((n) => n.module))
+    // 子系统配色：优先用契约 module_color（Rust 单一真相源、与 2D 同色相）；老契约无此字段则回退本地调色板。
+    if (data.nodes.some((n) => n.module_color)) {
+      modColor = new Map()
+      for (const n of data.nodes) if (n.module && n.module_color && !modColor.has(n.module)) modColor.set(n.module, n.module_color)
+    } else {
+      modColor = moduleColorMap(data.nodes.map((n) => n.module)) // 老契约回退
+    }
     presentModules = [...modColor.keys()]
     hasOther = data.nodes.some((n) => !n.module)
     store.topoHasModules = presentModules.length > 0
