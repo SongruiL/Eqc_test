@@ -42,9 +42,9 @@ export function chartUrl(
   return u + `&_=${Date.now()}`
 }
 
-/** 结构图报告 HTML（iframe src）。`layout` 布局、`level` 粒度（变量/方程/模块）。 */
-export function reportUrl(model: string, layout: string, level = 'variable'): string {
-  return `/api/report?layout=${encodeURIComponent(layout)}&level=${encodeURIComponent(level)}` + modelQS(model)
+/** 结构图报告 HTML（iframe src）。`layout` 布局、`level` 粒度（变量/模块）、`color` 配色（类别/子系统）。 */
+export function reportUrl(model: string, layout: string, level = 'variable', color = 'class'): string {
+  return `/api/report?layout=${encodeURIComponent(layout)}&level=${encodeURIComponent(level)}&color=${encodeURIComponent(color)}` + modelQS(model)
 }
 
 // —— GP 异步进化 ——

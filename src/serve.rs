@@ -29,7 +29,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::dag::{build_dag, collapse_dag, DagLevel};
 use crate::parser::{parse_directory, parse_file, parse_str};
-use crate::report::{generate_report_leveled, LayoutKind};
+use crate::report::{generate_report_leveled, ColorMode, LayoutKind};
 use crate::schema::EquationFile;
 use crate::sim::{simulate, simulate_coupled, CoupledInput, SimInput, SimOutput};
 
@@ -754,7 +754,7 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
             Ok(files) => ("200 OK", "application/json; charset=utf-8", crate::export::to_json_string(&files)),
             Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
         },
-        "/api/report" => match load_model_files(m).and_then(|f| render_report(&f, parse_layout(query), parse_dag_level(query))) {
+        "/api/report" => match load_model_files(m).and_then(|f| render_report(&f, parse_layout(query), parse_dag_level(query), parse_color(query))) {
             Ok(h) => ("200 OK", "text/html; charset=utf-8", h),
             Err(e) => ("200 OK", "text/html; charset=utf-8", error_html(&e)),
         },
@@ -1210,10 +1210,25 @@ fn load_files(path: &Path) -> Result<Vec<EquationFile>, String> {
     Ok(files)
 }
 
-fn render_report(files: &[EquationFile], layout: LayoutKind, level: DagLevel) -> Result<String, String> {
+fn render_report(
+    files: &[EquationFile],
+    layout: LayoutKind,
+    level: DagLevel,
+    color: ColorMode,
+) -> Result<String, String> {
     let dag = build_dag(files).map_err(|e| e.to_string())?;
     let collapsed = collapse_dag(&dag, files, level);
-    Ok(generate_report_leveled(files, &collapsed, layout, level))
+    Ok(generate_report_leveled(files, &collapsed, layout, level, color))
+}
+
+/// `?color=module` → 按子系统配色（未提供/未知 → 按类别）。与 3D `topoColorMode` 对齐。
+fn parse_color(query: &str) -> ColorMode {
+    for kv in query.split('&') {
+        if let Some(v) = kv.strip_prefix("color=") {
+            return ColorMode::parse(&url_decode(v));
+        }
+    }
+    ColorMode::Class
 }
 
 /// `?layout=force` → 对应布局（未提供/未知 → 分层）。
@@ -2002,7 +2017,7 @@ fn run_validate(query: &str, body: &[u8]) -> String {
     if let Err(e) = crate::validator::validate(&files) {
         return serde_json::json!({ "ok": false, "errors": [e.to_string()] }).to_string();
     }
-    let report = render_report(&files, parse_layout(query), parse_dag_level(query)).unwrap_or_default();
+    let report = render_report(&files, parse_layout(query), parse_dag_level(query), parse_color(query)).unwrap_or_default();
     serde_json::json!({ "ok": true, "errors": [], "report_html": report }).to_string()
 }
 

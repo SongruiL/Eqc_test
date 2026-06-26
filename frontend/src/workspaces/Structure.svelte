@@ -16,7 +16,8 @@
   // 本组件自持一份契约（hover 注释用）：不依赖 store.modelJson 的时机/反应式作用域，随模型变化重取。
   let contract = $state<ModelJson | null>(store.modelJson)
   let lastModel = ''
-  const src = $derived(reportUrl(store.model, layout, level))
+  // 配色（store.topoColorMode）2D/3D 共用：仅变量级 Forrester 吃 color（模块级后端忽略）。
+  const src = $derived(reportUrl(store.model, layout, level, store.topoColorMode))
 
   $effect(() => {
     if (store.model === lastModel) return
@@ -32,7 +33,7 @@
   onDestroy(() => tip?.remove())
 
   const levels = [
-    { id: 'variable', label: '变量' }, { id: 'equation', label: '方程' }, { id: 'module', label: '模块' },
+    { id: 'variable', label: '变量' }, { id: 'module', label: '模块' },
   ]
   const layouts = [
     { id: 'forrester', label: 'Forrester' }, { id: 'force', label: '力导向' }, { id: 'layered', label: '分层' },
@@ -190,6 +191,18 @@
 </script>
 
 <div class="ws">
+  <!-- 配色切换（按类别/按子系统）：2D 变量级 Forrester 与 3D 拓扑共用同一开关（store.topoColorMode）。 -->
+  {#snippet colorToggle()}
+    <span class="seg" title="配色：按 Forrester 类别 / 按作者子系统（2D/3D 共用）">
+      <button class:active={store.topoColorMode === 'class'} onclick={() => (store.topoColorMode = 'class')}>按类别</button>
+      <button
+        class:active={store.topoColorMode === 'module'}
+        disabled={!contract?.has_modules}
+        title={contract?.has_modules ? '按作者声明的子系统（meta.modules）上色' : '本模型未声明子系统'}
+        onclick={() => contract?.has_modules && (store.topoColorMode = 'module')}
+      >按子系统</button>
+    </span>
+  {/snippet}
   <div class="ws-head">
     <b>模型结构</b>
     <span class="seg" title="视图：2D 报告 / 3D 拓扑">
@@ -198,6 +211,7 @@
     </span>
     {#if store.structureView === '2d'}
       <span class="seg" title="结构图粒度">{#each levels as l}<button class:active={level === l.id} onclick={() => (level = l.id)}>{l.label}</button>{/each}</span>
+      {#if level === 'variable'}{@render colorToggle()}{/if}
       <span class="seg" title="结构图布局">{#each layouts as l}<button class:active={layout === l.id} onclick={() => (layout = l.id)}>{l.label}</button>{/each}</span>
       <span class="seg" title="缩放（拖背景=平移、拖节点=移动）">
         <button onclick={() => setZoom(zoom / 1.25)}>−</button>
@@ -205,17 +219,9 @@
         <button onclick={() => setZoom(zoom * 1.25)}>+</button>
       </span>
       <span class="zlab">{Math.round(zoom * 100)}%</span>
-      <span class="tip-note">悬停看注释 · 点选高亮 · 拖背景平移 · 拖节点移动</span>
+      <span class="tip-note">悬停看注释 · 点选高亮 · 拖背景平移 · 拖节点移动 · 形状=类别·颜色=子系统</span>
     {:else}
-      <span class="seg" title="3D 配色模式">
-        <button class:active={store.topoColorMode === 'class'} onclick={() => (store.topoColorMode = 'class')}>按类别</button>
-        <button
-          class:active={store.topoColorMode === 'module'}
-          disabled={!store.topoHasModules}
-          title={store.topoHasModules ? '按作者声明的子系统（meta.modules）上色' : '本模型未声明子系统'}
-          onclick={() => store.topoHasModules && (store.topoColorMode = 'module')}
-        >按子系统</button>
-      </span>
+      {@render colorToggle()}
       <span class="tip-note">轨道：拖=旋转 · 滚轮=缩放 · 右键拖=平移 · 悬停看注释 · 点选高亮（与 2D/仿真联动）</span>
     {/if}
   </div>

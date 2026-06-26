@@ -235,6 +235,8 @@ export interface ModuleJson {
 export interface ModelJson {
   schema_version: number
   modules: ModuleJson[]
+  /** 是否有任一模块声明 meta.modules 子系统划分；前端「按子系统」配色据此启用（2D/3D 共用）。 */
+  has_modules?: boolean
 }
 
 // —— 3D 拓扑布局（/api/layout3d；GA-5 力导向坐标，GA-6 前端渲染）契约 ——

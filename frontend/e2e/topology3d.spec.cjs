@@ -67,3 +67,20 @@ test('结构工作区 · 3D 配色模式切换 + 常驻图例', async ({ page })
   const real = errors.filter((e) => !/webgl|gl_|swiftshader|groupmarker|fallback|gpu|deprecat|context lost|failed to load resource|404|favicon/i.test(e))
   expect(real, real.join('\n')).toHaveLength(0)
 })
+
+// 2D Forrester 合并冒烟：变量级配色切换（按类别/按子系统）与 3D 共用同一开关，切换改 iframe 的
+// color 参数（草莓 S8 有 meta.modules → 按子系统可用）。验证 2D/3D 配色统一的 UI 接线。
+test('结构工作区 · 2D Forrester 按子系统配色切换（形状=类别·颜色=子系统）', async ({ page }) => {
+  await page.goto('/v2')
+  await expect(page.locator('.status.ok')).toBeVisible({ timeout: 20_000 })
+  await page.locator('nav').getByRole('button', { name: '结构' }).click()
+  // 默认 2D 报告 · 变量级 → 配色切换可见、按子系统可用（草莓有子系统）
+  const byMod = page.getByRole('button', { name: '按子系统', exact: true })
+  await expect(byMod).toBeEnabled({ timeout: 10_000 })
+  await byMod.click()
+  // iframe 重载为 color=module
+  await expect(page.locator('.frame iframe')).toHaveAttribute('src', /color=module/, { timeout: 10_000 })
+  // 切回按类别 → color=class
+  await page.getByRole('button', { name: '按类别', exact: true }).click()
+  await expect(page.locator('.frame iframe')).toHaveAttribute('src', /color=class/, { timeout: 10_000 })
+})

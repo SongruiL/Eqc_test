@@ -363,32 +363,34 @@ fn fclass_css(c: VarClass) -> &'static str {
 }
 
 /// 按分类生成对应 SVG 图元（含 `fsh <css>` 类，便于 CSS 上色/描边）。
-fn fnode_shape(c: VarClass, x: f64, y: f64, bw: f64, bh: f64) -> String {
+/// `extra` = 附加属性串（如按子系统配色的 `style="fill:..;stroke:.."`，覆盖 CSS 的颜色，
+/// 但不动 stroke-width / stroke-dasharray → 形状/虚实线仍由 CSS+几何保留）。
+fn fnode_shape(c: VarClass, x: f64, y: f64, bw: f64, bh: f64, extra: &str) -> String {
     let css = fclass_css(c);
     let (cx, cy) = (x + bw / 2.0, y + bh / 2.0);
     match c {
         // 存量 / 半状态：直角矩形（半状态的虚框由 CSS 控制）
         VarClass::State | VarClass::SemiState => format!(
-            "<rect class=\"fsh {css}\" x=\"{x:.0}\" y=\"{y:.0}\" width=\"{bw:.0}\" height=\"{bh:.0}\"/>"
+            "<rect class=\"fsh {css}\"{extra} x=\"{x:.0}\" y=\"{y:.0}\" width=\"{bw:.0}\" height=\"{bh:.0}\"/>"
         ),
         // 辅助 / 控制：圆角矩形
         VarClass::Auxiliary | VarClass::Control => format!(
-            "<rect class=\"fsh {css}\" x=\"{x:.0}\" y=\"{y:.0}\" width=\"{bw:.0}\" height=\"{bh:.0}\" rx=\"9\"/>"
+            "<rect class=\"fsh {css}\"{extra} x=\"{x:.0}\" y=\"{y:.0}\" width=\"{bw:.0}\" height=\"{bh:.0}\" rx=\"9\"/>"
         ),
         // 参数：胶囊
         VarClass::Parameter => format!(
-            "<rect class=\"fsh {css}\" x=\"{x:.0}\" y=\"{y:.0}\" width=\"{bw:.0}\" height=\"{bh:.0}\" rx=\"{:.0}\"/>",
+            "<rect class=\"fsh {css}\"{extra} x=\"{x:.0}\" y=\"{y:.0}\" width=\"{bw:.0}\" height=\"{bh:.0}\" rx=\"{:.0}\"/>",
             bh / 2.0
         ),
         // 驱动：椭圆
         VarClass::Driving => format!(
-            "<ellipse class=\"fsh {css}\" cx=\"{cx:.0}\" cy=\"{cy:.0}\" rx=\"{:.0}\" ry=\"{:.0}\"/>",
+            "<ellipse class=\"fsh {css}\"{extra} cx=\"{cx:.0}\" cy=\"{cy:.0}\" rx=\"{:.0}\" ry=\"{:.0}\"/>",
             bw / 2.0,
             bh / 2.0
         ),
         // 速率：六边形阀门
         VarClass::Rate => format!(
-            "<polygon class=\"fsh {css}\" points=\"{:.0},{:.0} {:.0},{:.0} {:.0},{:.0} {:.0},{:.0} {:.0},{:.0} {:.0},{:.0}\"/>",
+            "<polygon class=\"fsh {css}\"{extra} points=\"{:.0},{:.0} {:.0},{:.0} {:.0},{:.0} {:.0},{:.0} {:.0},{:.0} {:.0},{:.0}\"/>",
             x + 12.0, y,
             x + bw - 12.0, y,
             x + bw, cy,
@@ -398,7 +400,7 @@ fn fnode_shape(c: VarClass, x: f64, y: f64, bw: f64, bh: f64) -> String {
         ),
         // 边界：梯形（源/汇）
         VarClass::Boundary => format!(
-            "<polygon class=\"fsh {css}\" points=\"{:.0},{:.0} {:.0},{:.0} {:.0},{:.0} {:.0},{:.0}\"/>",
+            "<polygon class=\"fsh {css}\"{extra} points=\"{:.0},{:.0} {:.0},{:.0} {:.0},{:.0} {:.0},{:.0}\"/>",
             x + 14.0, y,
             x + bw - 14.0, y,
             x + bw, y + bh,
@@ -407,7 +409,40 @@ fn fnode_shape(c: VarClass, x: f64, y: f64, bw: f64, bh: f64) -> String {
     }
 }
 
-fn forrester_svg(files: &[EquationFile], dag: &Dag, kind: LayoutKind) -> String {
+/// 2D 报告配色模式：按 Forrester 类别（默认）/ 按作者子系统（meta.modules）。与 3D `topoColorMode` 对齐。
+#[derive(Clone, Copy, PartialEq)]
+pub enum ColorMode {
+    Class,
+    Module,
+}
+
+impl ColorMode {
+    pub fn parse(s: &str) -> ColorMode {
+        if s == "module" {
+            ColorMode::Module
+        } else {
+            ColorMode::Class
+        }
+    }
+}
+
+/// 「按子系统」时非命名子系统（参数/驱动/未分组）节点的中性浅灰填充。
+const MODULE_OTHER_LIGHT: &str = "#e5e7eb";
+
+/// Forrester「按子系统」图例：作者声明的子系统（浅调，声明顺序）+「其他」。与 3D 图例同口径、同色相。
+fn forrester_module_legend(files: &[EquationFile]) -> String {
+    let mut s = String::from("<div class=\"legend forr-legend\">");
+    for (name, (_, light)) in crate::palette::module_colors(files) {
+        s.push_str(&format!("<span class=\"l\" style=\"background:{light}\">{}</span>", xml(&name)));
+    }
+    s.push_str(&format!(
+        "<span class=\"l\" style=\"background:{MODULE_OTHER_LIGHT}\">其他</span>\
+         <span class=\"l-note\">形状=类别 · 颜色=子系统</span></div>"
+    ));
+    s
+}
+
+fn forrester_svg(files: &[EquationFile], dag: &Dag, kind: LayoutKind, color: ColorMode) -> String {
     if dag.nodes.is_empty() {
         return "<p class=\"empty\">（无节点）</p>".to_string();
     }
@@ -416,6 +451,8 @@ fn forrester_svg(files: &[EquationFile], dag: &Dag, kind: LayoutKind) -> String 
     // 节点分类
     let class: HashMap<&str, VarClass> =
         dag.nodes.iter().map(|n| (n.id.as_str(), class_of(files, &n.id))).collect();
+    // 按子系统配色：子系统名 → 浅调（2D，单一真相源 palette）；非命名子系统回中性灰。
+    let mcol = crate::palette::module_colors(files);
 
     // 边：DAG 的数据流边（信息流）+ schema 蕴含的积分边（速率→存量，物质流）+ 延迟边（虚线信息流）
     let mut edges: Vec<(String, String, bool)> = Vec::new(); // (from, to, is_material)
@@ -480,16 +517,28 @@ fn forrester_svg(files: &[EquationFile], dag: &Dag, kind: LayoutKind) -> String 
         let (x, y) = pos[n.id.as_str()];
         let c = class[n.id.as_str()];
         let short = n.id.rsplit('.').next().unwrap_or(&n.id);
-        let label = if short.chars().count() > 16 {
-            format!("{}…", short.chars().take(15).collect::<String>())
+        // 主标签用友好中文名（变量 label→方程中文名→参数中文名→代号，build_dag 已算进
+        // metadata["label"]）；代号 short 仍进 data-var（前端交互/选中键）+ hover 注释。
+        let raw = n.metadata.get("label").map(|s| s.as_str()).unwrap_or(short);
+        let label = if raw.chars().count() > 13 {
+            format!("{}…", raw.chars().take(12).collect::<String>())
         } else {
-            short.to_string()
+            raw.to_string()
+        };
+        // 按子系统：填色=子系统浅调、描边中性（颜色=子系统；类别仍由形状/虚实线编码）。
+        let extra = match color {
+            ColorMode::Module => {
+                let light =
+                    mcol.get(n.module.as_str()).map(|(_, l)| l.as_str()).unwrap_or(MODULE_OTHER_LIGHT);
+                format!(" style=\"fill:{light};stroke:#475569\"")
+            }
+            ColorMode::Class => String::new(),
         };
         s.push_str(&format!(
             "<g class=\"fnode {}\" data-var=\"{}\" data-id=\"{}\" data-cx=\"{:.0}\" data-cy=\"{:.0}\" data-hw=\"{:.0}\" data-hh=\"{:.0}\">",
             fclass_css(c), xml(short), xml(&n.id), x + bw / 2.0, y + bh / 2.0, bw / 2.0, bh / 2.0
         ));
-        s.push_str(&fnode_shape(c, x, y, bw, bh));
+        s.push_str(&fnode_shape(c, x, y, bw, bh, &extra));
         // 分类代号角标
         s.push_str(&format!(
             "<text class=\"fcode\" x=\"{:.0}\" y=\"{:.0}\">{}</text>",
@@ -594,7 +643,7 @@ pub fn generate_report(files: &[EquationFile], dag: &Dag) -> String {
 
 /// 生成自包含 HTML 报告，指定结构图布局（向后兼容：变量级）。
 pub fn generate_report_with(files: &[EquationFile], dag: &Dag, layout: LayoutKind) -> String {
-    generate_report_leveled(files, dag, layout, DagLevel::Variable)
+    generate_report_leveled(files, dag, layout, DagLevel::Variable, ColorMode::Class)
 }
 
 /// 生成自包含 HTML 报告，指定布局 + 粒度层级（变量/方程/模块）。
@@ -604,6 +653,7 @@ pub fn generate_report_leveled(
     dag: &Dag,
     layout: LayoutKind,
     level: DagLevel,
+    color: ColorMode,
 ) -> String {
     let title = files
         .first()
@@ -620,15 +670,15 @@ pub fn generate_report_leveled(
     let mut body = String::new();
 
     if level == DagLevel::Variable {
-        // Forrester 库存-流量图（动态结构：存量/速率/驱动/物质流）
-        body.push_str("<h2>Forrester 库存-流量图<span class=\"sub\">动态结构：存量·速率·驱动·物质流</span></h2>");
-        body.push_str(&forrester_legend());
-        body.push_str(&format!("<div class=\"dag\">{}</div>", forrester_svg(files, dag, layout)));
-
-        // 依赖关系图（按子模块分色的拓扑 DAG；节点名=变量label→方程中文名→代号）
-        body.push_str("<h2>依赖关系图 (DAG)<span class=\"sub\">按子模块分色 · 节点名取方程中文名</span></h2>");
-        body.push_str(&module_legend(dag));
-        body.push_str(&format!("<div class=\"dag\">{}</div>", dag_svg(files, dag, layout)));
+        // Forrester 库存-流量图：形状=类别、虚实线=积分/延迟；颜色=类别 或 子系统（可切换）。
+        // 旧「依赖关系图(DAG)·按子模块分色」已并入此图的「按子系统」模式，不再单独画。
+        let (sub, legend) = match color {
+            ColorMode::Module => ("动态结构 · 形状=类别 · 颜色=子系统", forrester_module_legend(files)),
+            ColorMode::Class => ("动态结构：存量·速率·驱动·物质流", forrester_legend()),
+        };
+        body.push_str(&format!("<h2>Forrester 库存-流量图<span class=\"sub\">{sub}</span></h2>"));
+        body.push_str(&legend);
+        body.push_str(&format!("<div class=\"dag\">{}</div>", forrester_svg(files, dag, layout, color)));
     } else {
         // 方程级 / 模块级：折叠后的依赖图（Forrester 为变量级专属，此处不画）；按子模块分色
         let (h, sub) = if level == DagLevel::Module {

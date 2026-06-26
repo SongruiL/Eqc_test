@@ -20,6 +20,10 @@ pub const SCHEMA_VERSION: u32 = 1;
 pub struct ModelJson {
     pub schema_version: u32,
     pub modules: Vec<ModuleJson>,
+    /// 是否有任一模块声明了 `meta.modules` 子系统划分（前端「按子系统」配色据此启用/禁用，
+    /// 2D 报告与 3D 拓扑共用同一判断）。additive；老前端不读照常。
+    #[serde(default)]
+    pub has_modules: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -119,8 +123,9 @@ pub struct EqJson {
 
 /// 把一组方程文件导出为契约 JSON 结构。
 pub fn to_model_json(files: &[EquationFile]) -> ModelJson {
+    let has_modules = files.iter().any(|f| !f.meta.modules.is_empty());
     let modules = files.iter().map(module_json).collect();
-    ModelJson { schema_version: SCHEMA_VERSION, modules }
+    ModelJson { schema_version: SCHEMA_VERSION, modules, has_modules }
 }
 
 fn module_json(f: &EquationFile) -> ModuleJson {
