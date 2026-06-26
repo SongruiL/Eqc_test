@@ -24,7 +24,7 @@
   const gCur = $derived(gChapters[store.growth.chapter])
   const gLast = $derived(store.growth.chapter >= gChapters.length - 1)
   async function startGrowthDemo() {
-    store.structureView = '3d' // Phase 1：3D 先行（Phase 2 接 2D 同步后此行可去）
+    // Phase 2：2D/3D 都支持 → 在当前视图开演（切视图会同步）。
     await startGrowth()
   }
   // 自动播放：playing 时每 2.6s 推进一章（到末章 growthTick 自停 → 本 effect 清掉定时器）。
@@ -97,6 +97,41 @@
     d.querySelector('.eq[data-output="' + q + '"]')?.classList.toggle('hl', on)
   }
   function syncAllHl() { for (const v of store.selectedVars) setHl(v, true) }
+
+  // —— 生长演示 · 2D 同步（GA-6b Phase 2）：伸进 iframe 按同一 plan 逐章把 [data-var]/边显形 ——
+  function growthRevealedLocal(): Set<string> {
+    const s = new Set<string>()
+    const chs = store.growth.plan?.chapters ?? []
+    for (let i = 0; i <= store.growth.chapter && i < chs.length; i++) chs[i].nodes.forEach((n) => s.add(n))
+    return s
+  }
+  function applyGrowth2d() {
+    const d = rdoc(); if (!d) return
+    const active = store.growth.active && store.structureView === '2d'
+    const nodes = d.querySelectorAll('[data-var]')
+    const edges = d.querySelectorAll('.fedge, .edge')
+    if (!active) { // 复原：清掉内联 opacity/transition，回到报告默认
+      nodes.forEach((n) => { const e = n as HTMLElement; e.style.opacity = ''; e.style.transition = '' })
+      edges.forEach((p) => { const e = p as HTMLElement; e.style.opacity = ''; e.style.transition = '' })
+      return
+    }
+    const reveal = growthRevealedLocal()
+    const shownIds = new Set<string>()
+    nodes.forEach((node) => {
+      const el = node as HTMLElement
+      const on = reveal.has(el.getAttribute('data-var') || '')
+      el.style.transition = 'opacity 0.5s ease'
+      el.style.opacity = on ? '1' : '0'
+      if (on) { const id = el.getAttribute('data-id'); if (id) shownIds.add(id) }
+    })
+    // 边：两端节点都已显形才出现（data-from/to = 全 id，对 data-id）
+    edges.forEach((edge) => {
+      const el = edge as HTMLElement
+      const on = shownIds.has(el.getAttribute('data-from') || '') && shownIds.has(el.getAttribute('data-to') || '')
+      el.style.transition = 'opacity 0.5s ease'
+      el.style.opacity = on ? '1' : '0'
+    })
+  }
   function selectVar(name: string) {
     const has = store.selectedVars.includes(name)
     store.selectedVars = has ? store.selectedVars.filter((n) => n !== name) : [...store.selectedVars, name]
@@ -202,7 +237,12 @@
     d.addEventListener('mouseleave', end)
   }
 
-  function onLoad() { hideTip(); applyZoom(); wire(); syncAllHl() }
+  function onLoad() { hideTip(); applyZoom(); wire(); syncAllHl(); applyGrowth2d() }
+  // 生长演示 / 切 2D / 章节推进 → 2D 同步显形（与 3D 共用 store.growth）。
+  $effect(() => {
+    void store.growth.active; void store.growth.chapter; void store.growth.plan; void store.structureView
+    applyGrowth2d()
+  })
 </script>
 
 <div class="ws">
@@ -234,7 +274,7 @@
         <button onclick={() => growthStep(1)} disabled={gLast}>›</button>
         <button onclick={stopGrowth}>✕ 退出</button>
       </span>
-      <span class="zlab">{store.growth.chapter + 1}/{gChapters.length}</span>
+      <span class="zlab gchap">{store.growth.chapter + 1}/{gChapters.length}</span>
     {/if}
     {#if store.structureView === '2d'}
       <span class="seg" title="结构图粒度">{#each levels as l}<button class:active={level === l.id} onclick={() => (level = l.id)}>{l.label}</button>{/each}</span>
