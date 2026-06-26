@@ -559,18 +559,21 @@ fn forrester_svg(files: &[EquationFile], dag: &Dag, kind: LayoutKind, color: Col
 }
 
 /// Forrester 图例。
-fn forrester_legend() -> String {
-    "<div class=\"legend forr-legend\">\
-     <span class=\"l state\">▭ 存量 S</span>\
-     <span class=\"l rate\">⬡ 速率 V</span>\
-     <span class=\"l driving\">⬭ 驱动 R</span>\
-     <span class=\"l auxiliary\">▢ 辅助 A</span>\
-     <span class=\"l parameter\">▢ 参数 D</span>\
-     <span class=\"l semistate\">▭ 半状态 M</span>\
-     <span class=\"l boundary\">▱ 边界 B</span>\
-     <span class=\"l mat\">— 物质流</span>\
-     <span class=\"l inf\">┈ 信息流</span></div>"
-        .to_string()
+/// `skip_param=true`（方程级骨架）时隐去「参数」项——骨架已隐去参数叶子，图例不该再列。
+fn forrester_legend(skip_param: bool) -> String {
+    let param = if skip_param { "" } else { "<span class=\"l parameter\">▢ 参数 D</span>" };
+    format!(
+        "<div class=\"legend forr-legend\">\
+         <span class=\"l state\">▭ 存量 S</span>\
+         <span class=\"l rate\">⬡ 速率 V</span>\
+         <span class=\"l driving\">⬭ 驱动 R</span>\
+         <span class=\"l auxiliary\">▢ 辅助 A</span>\
+         {param}\
+         <span class=\"l semistate\">▭ 半状态 M</span>\
+         <span class=\"l boundary\">▱ 边界 B</span>\
+         <span class=\"l mat\">— 物质流</span>\
+         <span class=\"l inf\">┈ 信息流</span></div>"
+    )
 }
 
 // ============================================
@@ -665,9 +668,9 @@ pub fn generate_report_leveled(
         // 力导向/分层布局同样适用——forrester_svg 按 layout 排位、形状不变；旧「依赖关系图(DAG)」已并入。
         let skeleton = level == DagLevel::Equation;
         let (sub, legend) = match (skeleton, color) {
-            (false, ColorMode::Class) => ("动态结构：存量·速率·驱动·物质流", forrester_legend()),
+            (false, ColorMode::Class) => ("动态结构：存量·速率·驱动·物质流", forrester_legend(false)),
             (false, ColorMode::Module) => ("动态结构 · 形状=类别 · 颜色=子系统", forrester_module_legend(files)),
-            (true, ColorMode::Class) => ("计算骨架（隐去参数叶子）：算什么 → 喂给谁", forrester_legend()),
+            (true, ColorMode::Class) => ("计算骨架（隐去参数叶子）：算什么 → 喂给谁", forrester_legend(true)),
             (true, ColorMode::Module) => ("计算骨架（隐去参数叶子） · 形状=类别 · 颜色=子系统", forrester_module_legend(files)),
         };
         let h = if skeleton { "方程级结构图" } else { "Forrester 库存-流量图" };
