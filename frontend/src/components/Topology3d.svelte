@@ -130,9 +130,9 @@
       const r = 0.018 + n.size * 0.055     // 叶子可见的最小半径 + 介数放大
       mesh.scale.setScalar(r)
       mesh.position.set(n.x, n.y, n.z)
-      // 选中描边：白色 BackSide 球放大 → 仅露轮廓=光环（区别于"亮节点"），默认隐藏。
+      // 选中描边：白色 BackSide 球略放大 → 仅露轮廓=光环（区别于"亮节点"），默认隐藏。
       const halo = new THREE.Mesh(geo, haloMat)
-      halo.scale.setScalar(1.5)
+      halo.scale.setScalar(1.25)
       halo.visible = false
       mesh.add(halo)
       mesh.userData = { id: n.id, ln, r, module: n.module, halo }
@@ -200,7 +200,7 @@
       const ud = mesh.userData as { ln: string; r: number; halo: THREE.Mesh }
       const on = set.has(ud.ln)
       ud.halo.visible = on               // 描边光环：选中显形（区别于"亮节点"）
-      mesh.scale.setScalar(on ? ud.r * 1.25 : ud.r)  // 轻微放大做冗余线索
+      mesh.scale.setScalar(on ? ud.r * 1.15 : ud.r)  // 轻微放大做冗余线索
     }
     render()
   }

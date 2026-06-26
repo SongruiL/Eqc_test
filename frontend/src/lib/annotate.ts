@@ -13,7 +13,8 @@ export const CLS_CN: Record<string, string> = {
  *  此处是 3D 专用副本，与 2D 报告在这两类上有意轻微不同（2D 有文字标签不靠颜色区分）。 */
 export const CLASS_COLOR_3D: Record<string, string> = {
   state: '#3b82f6', semi_state: '#60a5fa', semistate: '#60a5fa', rate: '#f97316',
-  driving: '#22c55e', auxiliary: '#cbd5e1', parameter: '#94a3b8',
+  // 辅助=冷浅灰、参数=暖中灰（明度+色相都拉开，避免两灰难分；GA-6 可读性）。
+  driving: '#22c55e', auxiliary: '#dbe4ee', parameter: '#a89b86',
   control: '#a855f7', boundary: '#0ea5e9',
 }
 
@@ -35,10 +36,12 @@ export const CLASS_LEGEND: Record<string, string> = {
 }
 
 /** 「按子系统」分类调色板：鲜亮、相互可分、避开灰（灰留给「其他」）；深底 #0f172a 上都醒目。
- *  子系统是模型相关、数量不定（草莓 9、温室 5），故按出现顺序循环取色，不写死映射。 */
+ *  子系统是模型相关、数量不定（草莓 9、温室 5、耦合温室×番茄 14），故按出现顺序循环取色、
+ *  不写死映射；16 色覆盖到耦合视图也不绕回重色。 */
 export const MODULE_PALETTE = [
   '#4f9dff', '#ff8c42', '#3ddc97', '#c77dff', '#ff5d8f', '#ffd23f',
   '#2ec4b6', '#ff6b6b', '#a3e635', '#bdb2ff', '#f0a6ca', '#7dd3fc',
+  '#e879f9', '#b08968', '#6366f1', '#5eead4',
 ]
 /** 非作者子系统（参数/驱动/未分组）并成一行「其他」用的中性灰。 */
 export const MODULE_OTHER_COLOR = '#64748b'
