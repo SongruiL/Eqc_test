@@ -342,6 +342,11 @@ pub fn to_layout3d_json(l: &crate::graph::Layout3d) -> Layout3dJson {
     }
 }
 
+/// 3D 布局 JSON（compact，`/api/layout3d` 用；前端 3D 拓扑视图消费）。
+pub fn layout3d_json_string(l: &crate::graph::Layout3d) -> String {
+    serde_json::to_string(&to_layout3d_json(l)).unwrap_or_else(|_| "{}".to_string())
+}
+
 /// 把网络指标报告导出为契约结构。
 pub fn to_metrics_json(r: &crate::graph::MetricsReport) -> MetricsJson {
     MetricsJson {

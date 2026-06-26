@@ -39,6 +39,8 @@ const goto = (mode: 'expert' | 'park', ws: string) => () => {
 // ── 静态命令（导航 + 视图切换）。面板 + AI 共用。──
 export const COMMANDS: Command[] = [
   { id: 'go.structure', label: '结构', group: '专家', run: goto('expert', 'structure'), keywords: 'structure dag forrester 图 结构', access: 'read', description: '打开「结构」工作区：模型的 Forrester 库存-流量图 / DAG 依赖图。' },
+  { id: 'view_topology_3d', label: '3D 拓扑视图', group: '专家', run: () => { setMode('expert'); setWorkspace('structure'); store.structureView = '3d'; return '已切到结构工作区的 3D 拓扑视图' }, keywords: 'topology 3d 三维 拓扑 结构 立体 graph', access: 'read', description: '打开结构工作区并切到 3D 拓扑视图：three.js 渲染依赖图的 3D 力导向布局（节点大小∝介数中心性、颜色=Forrester 类别；可轨道旋转/缩放/平移、悬停看注释、点选与 2D/仿真视图联动）。' },
+  { id: 'view_structure_2d', label: '2D 结构报告', group: '专家', run: () => { setMode('expert'); setWorkspace('structure'); store.structureView = '2d'; return '已切到结构工作区的 2D 报告视图' }, keywords: 'structure 2d 报告 forrester dag 图', access: 'read', description: '打开结构工作区并切到 2D 结构报告视图（Forrester 库存-流量图 / DAG 依赖图）。' },
   { id: 'go.simulate', label: '仿真', group: '专家', run: goto('expert', 'simulate'), keywords: 'simulate chart 轨迹 仿真', access: 'read', description: '打开「仿真」工作区：整季轨迹折线图 + 情景滑块。' },
   { id: 'go.optimize', label: '优化', group: '专家', run: goto('expert', 'optimize'), keywords: 'optimize de 决策', access: 'read', description: '打开「优化」工作区：决策优化（DE 求最优旋钮）。' },
   { id: 'go.calibrate', label: '标定', group: '专家', run: goto('expert', 'calibrate'), keywords: 'calibrate 标定', access: 'read', description: '打开「标定」工作区：用实测数据反推模型参数。' },

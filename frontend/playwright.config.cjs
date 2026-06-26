@@ -16,6 +16,7 @@ module.exports = defineConfig({
     channel: 'msedge',
     headless: true,
     actionTimeout: 15_000,
-    launchOptions: { args: ['--no-proxy-server'] },
+    // --no-proxy-server 绕机器破代理；--enable-unsafe-swiftshader 让 headless 软件 WebGL 可用（GA-6 3D 视图冒烟）。
+    launchOptions: { args: ['--no-proxy-server', '--enable-unsafe-swiftshader'] },
   },
 })

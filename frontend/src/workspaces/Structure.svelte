@@ -4,7 +4,9 @@
   import { onMount, onDestroy } from 'svelte'
   import { store } from '../lib/store.svelte'
   import { reportUrl, fetchModel } from '../lib/api'
-  import type { VarJson, ParamJson, EqJson, ModelJson } from '../lib/contract'
+  import type { ModelJson } from '../lib/contract'
+  import { tipHtml } from '../lib/annotate'
+  import Topology3d from '../components/Topology3d.svelte'
 
   let layout = $state('forrester')
   let level = $state('variable')
@@ -57,59 +59,11 @@
   function setZoom(z: number) { zoom = Math.max(0.2, Math.min(6, +z.toFixed(3))) }
   $effect(() => { void zoom; applyZoom() })
 
-  // —— 节点 hover 注释（取自 /api/model 契约）+ 点选高亮（与仿真变量选择联动）——
-  const CLS_CN: Record<string, string> = {
-    state: '存量', rate: '速率', driving: '驱动', auxiliary: '辅助', parameter: '参数', control: '控制', semi_state: '半状态', boundary: '边界',
-  }
-  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  // 遍历**所有**模块（耦合视图=温室+作物多模块；单模型=1 模块）。返回首个匹配。
-  function findVar(name: string): { kind: 'var'; v: VarJson } | { kind: 'param'; p: ParamJson } | null {
-    for (const m of contract?.modules ?? []) {
-      const v = m.variables.find((x) => x.name === name); if (v) return { kind: 'var', v }
-      const p = m.parameters.find((x) => x.name === name); if (p) return { kind: 'param', p }
-    }
-    return null
-  }
-  function findEq(name: string): EqJson | undefined {
-    for (const m of contract?.modules ?? []) {
-      const e = m.equations.find((x) => x.output === name); if (e) return e
-    }
-    return undefined
-  }
-  function dispName(name: string) {
-    const r = findVar(name); if (!r) return name
-    return (r.kind === 'var' ? r.v.display_name : r.p.display_name || r.p.name_cn) || name
-  }
-  function tipHtml(name: string) {
-    const info = findVar(name), eq = findEq(name), disp = dispName(name)
-    let h = '<div class="t-name">' + esc(disp) + '</div>'
-    if (disp !== name) h += '<div class="t-id">代号 ' + esc(name) + '</div>'
-    if (info?.kind === 'var') {
-      const v = info.v, cls = CLS_CN[v.class] || v.class
-      h += '<div class="t-sub">' + esc(cls) + (v.unit ? ' · 单位 ' + esc(v.unit) : '') + '</div>'
-      if (v.description) h += '<div class="t-desc"><b>物理意义</b>：' + esc(v.description) + '</div>'
-    } else if (info?.kind === 'param') {
-      const p = info.p
-      h += '<div class="t-sub">参数' + (p.unit ? ' · 单位 ' + esc(p.unit) : '') + '</div>'
-      h += '<div class="t-desc">默认值 = ' + p.default + '</div>'
-    }
-    if (eq) {
-      h += '<div class="t-eq">' + eq.mathml + '</div>'
-      if (eq.reference) h += '<div class="t-cite">📖 ' + esc(eq.reference) + '</div>'
-    } else if (info?.kind === 'var') {
-      const c = info.v.class
-      let why = '（外部输入）'
-      if (c === 'state') why = '（状态量：值由其速率逐步积分得到，无显式方程）'
-      else if (c === 'semi_state') why = '（延迟寄存器：取来源变量的上一步值）'
-      else if (c === 'driving') why = '（驱动量：来自外部输入/天气数据）'
-      else if (c === 'control') why = '（控制量：可由用户/环控设定）'
-      h += '<div class="t-cite t-none">' + why + '</div>'
-    }
-    return h
-  }
+  // —— 节点 hover 注释 + 点选高亮（与仿真变量选择联动）——
+  // 注释内容（tipHtml/findVar/CLS_CN…）抽到 lib/annotate.ts，与 3D 拓扑视图共用单一真相源。
   function showTip(name: string, x: number, y: number) {
     if (!tip) return
-    tip.innerHTML = tipHtml(name)
+    tip.innerHTML = tipHtml(contract, name)
     tip.style.display = 'block'
     const tw = tip.offsetWidth, th = tip.offsetHeight
     let px = x + 14, py = y + 14
@@ -238,17 +192,31 @@
 <div class="ws">
   <div class="ws-head">
     <b>模型结构</b>
-    <span class="seg" title="结构图粒度">{#each levels as l}<button class:active={level === l.id} onclick={() => (level = l.id)}>{l.label}</button>{/each}</span>
-    <span class="seg" title="结构图布局">{#each layouts as l}<button class:active={layout === l.id} onclick={() => (layout = l.id)}>{l.label}</button>{/each}</span>
-    <span class="seg" title="缩放（拖背景=平移、拖节点=移动）">
-      <button onclick={() => setZoom(zoom / 1.25)}>−</button>
-      <button onclick={() => setZoom(1)}>适应</button>
-      <button onclick={() => setZoom(zoom * 1.25)}>+</button>
+    <span class="seg" title="视图：2D 报告 / 3D 拓扑">
+      <button class:active={store.structureView === '2d'} onclick={() => (store.structureView = '2d')}>2D 报告</button>
+      <button class:active={store.structureView === '3d'} onclick={() => (store.structureView = '3d')}>3D 拓扑</button>
     </span>
-    <span class="zlab">{Math.round(zoom * 100)}%</span>
-    <span class="tip-note">悬停看注释 · 点选高亮 · 拖背景平移 · 拖节点移动</span>
+    {#if store.structureView === '2d'}
+      <span class="seg" title="结构图粒度">{#each levels as l}<button class:active={level === l.id} onclick={() => (level = l.id)}>{l.label}</button>{/each}</span>
+      <span class="seg" title="结构图布局">{#each layouts as l}<button class:active={layout === l.id} onclick={() => (layout = l.id)}>{l.label}</button>{/each}</span>
+      <span class="seg" title="缩放（拖背景=平移、拖节点=移动）">
+        <button onclick={() => setZoom(zoom / 1.25)}>−</button>
+        <button onclick={() => setZoom(1)}>适应</button>
+        <button onclick={() => setZoom(zoom * 1.25)}>+</button>
+      </span>
+      <span class="zlab">{Math.round(zoom * 100)}%</span>
+      <span class="tip-note">悬停看注释 · 点选高亮 · 拖背景平移 · 拖节点移动</span>
+    {:else}
+      <span class="tip-note">轨道：拖=旋转 · 滚轮=缩放 · 右键拖=平移 · 悬停看注释 · 点选高亮（与 2D/仿真联动）</span>
+    {/if}
   </div>
-  <div class="frame"><iframe bind:this={iframeEl} title="结构图" {src} onload={onLoad}></iframe></div>
+  <div class="frame">
+    {#if store.structureView === '2d'}
+      <iframe bind:this={iframeEl} title="结构图" {src} onload={onLoad}></iframe>
+    {:else}
+      <Topology3d {contract} />
+    {/if}
+  </div>
 </div>
 
 <style>

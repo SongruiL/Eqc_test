@@ -236,3 +236,22 @@ export interface ModelJson {
   schema_version: number
   modules: ModuleJson[]
 }
+
+// —— 3D 拓扑布局（/api/layout3d；GA-5 力导向坐标，GA-6 前端渲染）契约 ——
+export interface Node3dJson {
+  /** 图节点 id，格式 `MODULE.name`（去前缀=本地名，与 data-var / selectedVars 同键）。 */
+  id: string
+  x: number
+  y: number
+  z: number
+  /** ∝ 介数中心性，归一 0–1（前端定球半径）。 */
+  size: number
+  community: number
+  depth: number
+}
+export interface Layout3dJson {
+  nodes: Node3dJson[]
+  edges: [string, string][]
+  /** 坐标范围 [-bound, bound]。 */
+  bound: number
+}

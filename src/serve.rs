@@ -9,6 +9,7 @@
 //! - `/`               → Studio 页面（打包进二进制的静态 HTML，零构建步骤）
 //! - `/api/model`      → 模型 JSON 契约（[`crate::export`]）
 //! - `/api/report`     → 自包含 HTML 报告（Forrester 图 + 二维公式）
+//! - `/api/layout3d`   → 3D 拓扑力导向坐标 JSON（GA-5/GA-6；前端 3D 视图消费）
 //! - `/api/simulate`   → 逐日仿真轨迹 JSON（需 `--drivers`）
 //! - `/api/chart.svg?vars=Y,TDM` → 轨迹折线图 SVG（需 `--drivers`）
 //! - `/api/optimize?spec=problem.yaml` → 跑优化，返回最优旋钮+收敛轨迹 JSON（与 `eqc optimize` 同结构）
@@ -756,6 +757,16 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
         "/api/report" => match load_model_files(m).and_then(|f| render_report(&f, parse_layout(query), parse_dag_level(query))) {
             Ok(h) => ("200 OK", "text/html; charset=utf-8", h),
             Err(e) => ("200 OK", "text/html; charset=utf-8", error_html(&e)),
+        },
+        // 3D 拓扑布局（GA-6）：每请求新鲜算 GA-5 力导向坐标（节点 size/community/depth + 边 + bound）。
+        // 前端 Structure 工作区的 3D 视图消费；坐标 Rust 算、前端只渲染（守单一真相源）。
+        "/api/layout3d" => match load_model_files(m) {
+            Ok(files) => (
+                "200 OK",
+                "application/json; charset=utf-8",
+                crate::export::layout3d_json_string(&crate::graph::layout3d(&files)),
+            ),
+            Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
         },
         "/api/simulate" => {
             let (pv, iv, dv) = (
