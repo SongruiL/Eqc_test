@@ -669,24 +669,24 @@ pub fn generate_report_leveled(
     // 结构图放在窄栏(.wrap)之外 → 占满整屏宽（「专注」全屏时不被 1100px 限住）；公式留在窄栏里好读。
     let mut body = String::new();
 
-    if level == DagLevel::Variable {
-        // Forrester 库存-流量图：形状=类别、虚实线=积分/延迟；颜色=类别 或 子系统（可切换）。
-        // 旧「依赖关系图(DAG)·按子模块分色」已并入此图的「按子系统」模式，不再单独画。
-        let (sub, legend) = match color {
-            ColorMode::Module => ("动态结构 · 形状=类别 · 颜色=子系统", forrester_module_legend(files)),
-            ColorMode::Class => ("动态结构：存量·速率·驱动·物质流", forrester_legend()),
+    if level == DagLevel::Variable || level == DagLevel::Equation {
+        // 变量级 = 完整 Forrester（含参数叶子）；方程级 = 计算骨架（隐去参数叶子，调用方已折叠）。
+        // 两者**同款渲染**：Forrester 形状=类别、虚实线=积分/延迟、中文名；颜色=类别或子系统（可切换）。
+        // 力导向/分层布局同样适用——forrester_svg 按 layout 排位、形状不变；旧「依赖关系图(DAG)」已并入。
+        let skeleton = level == DagLevel::Equation;
+        let (sub, legend) = match (skeleton, color) {
+            (false, ColorMode::Class) => ("动态结构：存量·速率·驱动·物质流", forrester_legend()),
+            (false, ColorMode::Module) => ("动态结构 · 形状=类别 · 颜色=子系统", forrester_module_legend(files)),
+            (true, ColorMode::Class) => ("计算骨架（隐去参数叶子）：算什么 → 喂给谁", forrester_legend()),
+            (true, ColorMode::Module) => ("计算骨架（隐去参数叶子） · 形状=类别 · 颜色=子系统", forrester_module_legend(files)),
         };
-        body.push_str(&format!("<h2>Forrester 库存-流量图<span class=\"sub\">{sub}</span></h2>"));
+        let h = if skeleton { "方程级结构图" } else { "Forrester 库存-流量图" };
+        body.push_str(&format!("<h2>{h}<span class=\"sub\">{sub}</span></h2>"));
         body.push_str(&legend);
         body.push_str(&format!("<div class=\"dag\">{}</div>", forrester_svg(files, dag, layout, color)));
     } else {
-        // 方程级 / 模块级：折叠后的依赖图（Forrester 为变量级专属，此处不画）；按子模块分色
-        let (h, sub) = if level == DagLevel::Module {
-            ("模块级结构图", "子模块 + 跨模块数据流 —— 一眼看整体运算逻辑")
-        } else {
-            ("方程级结构图", "方程节点（隐去参数叶子，节点名取方程中文名）—— 计算骨架")
-        };
-        body.push_str(&format!("<h2>{h}<span class=\"sub\">{sub}</span></h2>"));
+        // 模块级：折叠子模块超级节点 + 跨模块边（与变量/方程级是不同抽象，仍用 dag_svg）。
+        body.push_str("<h2>模块级结构图<span class=\"sub\">子模块 + 跨模块数据流 —— 一眼看整体运算逻辑</span></h2>");
         body.push_str(&module_legend(dag));
         body.push_str(&format!("<div class=\"dag\">{}</div>", dag_svg(files, dag, layout)));
     }

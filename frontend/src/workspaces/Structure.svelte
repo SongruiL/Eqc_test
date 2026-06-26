@@ -33,7 +33,7 @@
   onDestroy(() => tip?.remove())
 
   const levels = [
-    { id: 'variable', label: '变量' }, { id: 'module', label: '模块' },
+    { id: 'variable', label: '变量' }, { id: 'equation', label: '方程' }, { id: 'module', label: '模块' },
   ]
   const layouts = [
     { id: 'forrester', label: 'Forrester' }, { id: 'force', label: '力导向' }, { id: 'layered', label: '分层' },
@@ -211,7 +211,7 @@
     </span>
     {#if store.structureView === '2d'}
       <span class="seg" title="结构图粒度">{#each levels as l}<button class:active={level === l.id} onclick={() => (level = l.id)}>{l.label}</button>{/each}</span>
-      {#if level === 'variable'}{@render colorToggle()}{/if}
+      {#if level === 'variable' || level === 'equation'}{@render colorToggle()}{/if}
       <span class="seg" title="结构图布局">{#each layouts as l}<button class:active={layout === l.id} onclick={() => (layout = l.id)}>{l.label}</button>{/each}</span>
       <span class="seg" title="缩放（拖背景=平移、拖节点=移动）">
         <button onclick={() => setZoom(zoom / 1.25)}>−</button>

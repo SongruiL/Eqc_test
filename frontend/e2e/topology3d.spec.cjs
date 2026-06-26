@@ -84,3 +84,21 @@ test('结构工作区 · 2D Forrester 按子系统配色切换（形状=类别·
   await page.getByRole('button', { name: '按类别', exact: true }).click()
   await expect(page.locator('.frame iframe')).toHaveAttribute('src', /color=class/, { timeout: 10_000 })
 })
+
+// 方程级（计算骨架）复活冒烟：方程级用 Forrester 形状（与变量级同款，藏参数叶子），
+// 支持力导向/分层布局 + 配色切换。验证 level/layout 经 iframe src 生效、配色开关在方程级也在。
+test('结构工作区 · 2D 方程级骨架复活（Forrester 形状 · 三布局 · 可配色）', async ({ page }) => {
+  await page.goto('/v2')
+  await expect(page.locator('.status.ok')).toBeVisible({ timeout: 20_000 })
+  await page.locator('nav').getByRole('button', { name: '结构' }).click()
+  // 切方程级 → level=equation
+  await page.getByRole('button', { name: '方程', exact: true }).click()
+  await expect(page.locator('.frame iframe')).toHaveAttribute('src', /level=equation/, { timeout: 10_000 })
+  // 方程级也有配色切换（说明走的是 Forrester 渲染、非旧纯色 DAG）
+  await expect(page.getByRole('button', { name: '按子系统', exact: true })).toBeVisible()
+  // 力导向 / 分层布局都能切
+  await page.getByRole('button', { name: '力导向', exact: true }).click()
+  await expect(page.locator('.frame iframe')).toHaveAttribute('src', /layout=force/, { timeout: 10_000 })
+  await page.getByRole('button', { name: '分层', exact: true }).click()
+  await expect(page.locator('.frame iframe')).toHaveAttribute('src', /layout=layered/, { timeout: 10_000 })
+})
