@@ -248,6 +248,9 @@ export interface Node3dJson {
   size: number
   community: number
   depth: number
+  /** 作者声明的子系统名（meta.modules 键，如「光合」「氮」）；参数/驱动/未分组或未声明 → 省略。
+   *  GA-6「按子系统」配色 + 图例用（additive）。 */
+  module?: string
 }
 export interface Layout3dJson {
   nodes: Node3dJson[]

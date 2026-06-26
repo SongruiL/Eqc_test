@@ -207,6 +207,15 @@
       <span class="zlab">{Math.round(zoom * 100)}%</span>
       <span class="tip-note">悬停看注释 · 点选高亮 · 拖背景平移 · 拖节点移动</span>
     {:else}
+      <span class="seg" title="3D 配色模式">
+        <button class:active={store.topoColorMode === 'class'} onclick={() => (store.topoColorMode = 'class')}>按类别</button>
+        <button
+          class:active={store.topoColorMode === 'module'}
+          disabled={!store.topoHasModules}
+          title={store.topoHasModules ? '按作者声明的子系统（meta.modules）上色' : '本模型未声明子系统'}
+          onclick={() => store.topoHasModules && (store.topoColorMode = 'module')}
+        >按子系统</button>
+      </span>
       <span class="tip-note">轨道：拖=旋转 · 滚轮=缩放 · 右键拖=平移 · 悬停看注释 · 点选高亮（与 2D/仿真联动）</span>
     {/if}
   </div>
@@ -226,6 +235,7 @@
   .seg button { border: 0; background: #fff; color: var(--sub); font-size: 12px; padding: 3px 11px; cursor: pointer; }
   .seg button + button { border-left: 1px solid var(--line); }
   .seg button.active { background: var(--accent); color: #fff; }
+  .seg button:disabled { opacity: 0.45; cursor: not-allowed; }
   .zlab { font-size: 12px; color: var(--sub); }
   .tip-note { font-size: 11px; color: var(--sub); margin-left: auto; }
   .frame { flex: 1; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }

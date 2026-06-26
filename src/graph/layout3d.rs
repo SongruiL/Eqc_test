@@ -11,7 +11,7 @@
 //!
 //! 坐标归一化到居中立方体 `[-1,1]³`，保证有限、无 NaN。2D 仍是默认分析视图，3D 做补充（GA-6 渲染）。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::schema::EquationFile;
 
@@ -31,6 +31,9 @@ pub struct Node3d {
     pub community: usize,
     /// 计算深度（= z 轴锚定来源）。
     pub depth: usize,
+    /// 作者声明的**子系统名**（`meta.modules` 的键，如「光合」「氮」）；参数/驱动/未分组节点
+    /// 或模型未声明任何子系统 → `None`。供 GA-6 前端「按子系统」配色 + 图例。
+    pub module: Option<String>,
 }
 
 /// 3D 力导向布局结果。
@@ -58,6 +61,8 @@ pub fn layout3d(files: &[EquationFile]) -> Layout3d {
     let bet: Vec<f64> = (0..n).map(|i| met.get(g.nodes[i].as_str()).map_or(0.0, |t| t.0)).collect();
     let comm: Vec<usize> = (0..n).map(|i| met.get(g.nodes[i].as_str()).map_or(0, |t| t.1)).collect();
     let depth: Vec<usize> = (0..n).map(|i| met.get(g.nodes[i].as_str()).map_or(0, |t| t.2)).collect();
+    // 每节点的作者声明子系统名（按子系统配色用，与 GA-3 module_partition 同一权威）。
+    let module_of = node_modules(files, &g);
 
     let edges: Vec<(String, String)> = {
         let mut e = Vec::new();
@@ -86,6 +91,7 @@ pub fn layout3d(files: &[EquationFile]) -> Layout3d {
                 size: size[0],
                 community: comm[0],
                 depth: depth[0],
+                module: module_of[0].clone(),
             }],
             edges,
             bound,
@@ -95,7 +101,7 @@ pub fn layout3d(files: &[EquationFile]) -> Layout3d {
     let (px, py, pz) = force_directed_3d(&g, n, &comm, &depth);
 
     // 归一化到 [-1,1]³：以质心居中、按最大半幅统一缩放（保形、无 NaN）。
-    let nodes = normalize(&g, &px, &py, &pz, &size, &comm, &depth, bound);
+    let nodes = normalize(&g, &px, &py, &pz, &size, &comm, &depth, &module_of, bound);
     Layout3d { nodes, edges, bound }
 }
 
@@ -249,6 +255,7 @@ fn normalize(
     size: &[f64],
     comm: &[usize],
     depth: &[usize],
+    module_of: &[Option<String>],
     bound: f64,
 ) -> Vec<Node3d> {
     let n = g.len();
@@ -268,6 +275,36 @@ fn normalize(
             size: size[i],
             community: comm[i],
             depth: depth[i],
+            module: module_of[i].clone(),
+        })
+        .collect()
+}
+
+/// 每个图节点的**作者声明子系统名**（`meta.modules` 的键）；非声明子系统（参数/驱动/未分组）
+/// 或模型未声明任何子系统 → `None`。供 GA-6 前端「按子系统」配色 + 图例。
+///
+/// 复用 `dag::build_dag` 设好的子模块字段（与 GA-3 [`super::metrics`] 的 `module_partition`
+/// 同一权威）：只保留作者在 `meta.modules` 里**显式命名**的子系统，自动桶（驱动量/参数/其他、
+/// 含耦合 `mid·` 前缀）一律回 `None`，让前端把它们并成一行「其他」。
+fn node_modules(files: &[EquationFile], g: &DiGraph) -> Vec<Option<String>> {
+    let declared: HashSet<&str> =
+        files.iter().flat_map(|f| f.meta.modules.keys()).map(|s| s.as_str()).collect();
+    if declared.is_empty() {
+        return vec![None; g.len()]; // 未声明任何子系统 → 全 None（前端禁用/回退按类别）。
+    }
+    let dag = match crate::dag::build_dag(files) {
+        Ok(d) => d,
+        Err(_) => return vec![None; g.len()],
+    };
+    let node_mod: HashMap<&str, &str> =
+        dag.nodes.iter().map(|n| (n.id.as_str(), n.module.as_str())).collect();
+    g.nodes
+        .iter()
+        .map(|id| {
+            node_mod
+                .get(id.as_str())
+                .filter(|m| declared.contains(**m))
+                .map(|m| m.to_string())
         })
         .collect()
 }
@@ -326,5 +363,23 @@ mod tests {
         let l = layout3d(&[chain()]);
         let maxsize = l.nodes.iter().map(|n| n.size).fold(0.0_f64, f64::max);
         assert!(maxsize > 0.0, "应有非零 size（介数枢纽）");
+    }
+
+    #[test]
+    fn no_modules_declared_all_none() {
+        // 未声明任何 meta.modules → 全 None（前端据此禁用「按子系统」/回退按类别，GA-6）。
+        let l = layout3d(&[chain()]);
+        assert!(l.nodes.iter().all(|n| n.module.is_none()), "无子系统声明时 module 应全 None");
+    }
+
+    #[test]
+    fn module_only_for_declared_subsystems() {
+        // 只有作者在 meta.modules 里显式命名的子系统才进 module；自动桶（参数/驱动/其他）回 None。
+        let mut f = chain();
+        f.meta.modules.insert("甲".to_string(), vec!["e1".to_string()]); // 只把 e1 划入「甲」
+        let l = layout3d(&[f]);
+        let module_of = |id: &str| l.nodes.iter().find(|n| n.id == id).unwrap().module.clone();
+        assert_eq!(module_of("T.y"), Some("甲".to_string()), "e1 的输出 y 应属命名子系统「甲」");
+        assert_eq!(module_of("T.z"), None, "未划入子系统的 z 应为 None（自动桶不进 module）");
     }
 }

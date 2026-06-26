@@ -8,11 +8,53 @@ export const CLS_CN: Record<string, string> = {
   parameter: '参数', control: '控制', semi_state: '半状态', boundary: '边界',
 }
 
-/** Forrester 分类 → 3D 节点球颜色（复用 2D Forrester 报告的类配色，见 src/report/mod.rs §forr）。 */
+/** Forrester 分类 → 3D 节点球颜色。源自 2D Forrester 报告类配色（src/report/mod.rs §forr），
+ *  但 GA-6 为 3D 可读性把**辅助/参数两种近似灰拉开明度**（辅助更亮、参数中灰，都在深底可见）：
+ *  此处是 3D 专用副本，与 2D 报告在这两类上有意轻微不同（2D 有文字标签不靠颜色区分）。 */
 export const CLASS_COLOR_3D: Record<string, string> = {
   state: '#3b82f6', semi_state: '#60a5fa', semistate: '#60a5fa', rate: '#f97316',
-  driving: '#22c55e', auxiliary: '#94a3b8', parameter: '#9ca3af',
+  driving: '#22c55e', auxiliary: '#cbd5e1', parameter: '#94a3b8',
   control: '#a855f7', boundary: '#0ea5e9',
+}
+
+/** 图例排序：Forrester 阅读顺序（存量→速率→派生→外部→配置）。 */
+export const CLASS_ORDER = [
+  'state', 'rate', 'auxiliary', 'driving', 'control', 'semi_state', 'parameter', 'boundary',
+] as const
+
+/** Forrester 分类 → 一句话含义（非专家能懂）。3D 图例「按类别」用；单一真相源。 */
+export const CLASS_LEGEND: Record<string, string> = {
+  state: '会随时间累积的量（如生物量、水量），像水箱里的水',
+  rate: '存量每天增减的速度，像水龙头的流量',
+  auxiliary: '由别的量当场算出的中间量（不累积）',
+  driving: '来自外部的输入（天气等），模型只接收不计算',
+  parameter: '固定常数（设定/标定值），不随时间变',
+  semi_state: '某个量"上一时刻"的值（延迟）',
+  control: '人为可调控的量（如灌溉、CO₂ 设定）',
+  boundary: '边界条件',
+}
+
+/** 「按子系统」分类调色板：鲜亮、相互可分、避开灰（灰留给「其他」）；深底 #0f172a 上都醒目。
+ *  子系统是模型相关、数量不定（草莓 9、温室 5），故按出现顺序循环取色，不写死映射。 */
+export const MODULE_PALETTE = [
+  '#4f9dff', '#ff8c42', '#3ddc97', '#c77dff', '#ff5d8f', '#ffd23f',
+  '#2ec4b6', '#ff6b6b', '#a3e635', '#bdb2ff', '#f0a6ca', '#7dd3fc',
+]
+/** 非作者子系统（参数/驱动/未分组）并成一行「其他」用的中性灰。 */
+export const MODULE_OTHER_COLOR = '#64748b'
+export const MODULE_OTHER_LABEL = '其他'
+
+/** 由「当前模型实际出现的子系统名」（按节点顺序，含重复）构造 名→颜色 映射（首次出现定色）。 */
+export function moduleColorMap(modulesInOrder: (string | undefined)[]): Map<string, string> {
+  const m = new Map<string, string>()
+  let i = 0
+  for (const name of modulesInOrder) {
+    if (name && !m.has(name)) {
+      m.set(name, MODULE_PALETTE[i % MODULE_PALETTE.length])
+      i++
+    }
+  }
+  return m
 }
 
 export const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')

@@ -8,7 +8,11 @@
   import { store } from '../lib/store.svelte'
   import { fetchLayout3d } from '../lib/api'
   import type { ModelJson, Layout3dJson } from '../lib/contract'
-  import { tipHtml, nodeColor3d, localName, makeTip, showTipAt, hideTip } from '../lib/annotate'
+  import {
+    tipHtml, nodeColor3d, localName, makeTip, showTipAt, hideTip,
+    classOf, CLS_CN, CLASS_COLOR_3D, CLASS_LEGEND, CLASS_ORDER,
+    moduleColorMap, MODULE_OTHER_COLOR, MODULE_OTHER_LABEL,
+  } from '../lib/annotate'
 
   type Props = { contract: ModelJson | null }
   let { contract }: Props = $props()
@@ -17,6 +21,12 @@
   let tip: HTMLDivElement | undefined
   let status = $state<'loading' | 'ok' | 'empty' | 'error'>('loading')
   let errMsg = $state('')
+  // 图例 / 配色（GA-6）：当前模型实际出现的类别 / 子系统（只列出现的项）。
+  let presentClasses = $state<string[]>([])
+  let presentModules = $state<string[]>([])
+  let hasOther = $state(false)          // 有「其他」（参数/驱动/未分组）节点
+  let legendOpen = $state(true)         // 图例卡折叠态
+  let modColor = new Map<string, string>() // 子系统名 → 颜色（首现定色，节点+图例共用）
 
   // three 对象（普通变量，非响应式）
   let renderer: THREE.WebGLRenderer | null = null
@@ -31,7 +41,7 @@
   let curModel = ''
 
   const BG = 0x0f172a       // 视口深色：让节点/边/深度更可读（仅画布内，不动全局浅色主题）
-  const SEL = 0xffffff      // 选中自发光提示色
+  const HALO = 0xffffff     // 选中描边色（白描边圈，区别于"亮节点"）
 
   function render() { if (renderer && scene && camera) renderer.render(scene, camera) }
 
@@ -45,9 +55,10 @@
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setSize(w, h)
     host.appendChild(renderer.domElement)
-    // 光照：环境光 + 一盏方向光（给球体明暗 = 3D 深度线索）
-    scene.add(new THREE.AmbientLight(0xffffff, 0.75))
-    const dir = new THREE.DirectionalLight(0xffffff, 0.7)
+    // 光照（半立体方案，GA-6）：球材质自发光=自身色（底色永不洗白），灯只补很弱的明暗当立体线索。
+    // 故环境光 + 方向光都调暗——颜色一眼对应类别，不被光照冲淡；景深/尺寸补立体感。
+    scene.add(new THREE.AmbientLight(0xffffff, 0.3))
+    const dir = new THREE.DirectionalLight(0xffffff, 0.25)
     dir.position.set(1, 1, 1)
     scene.add(dir)
     controls = new OrbitControls(camera, renderer.domElement)
@@ -102,21 +113,35 @@
     const sc = scene
     const g = new THREE.Group()
     const bound = data.bound || 1
-    const geo = new THREE.SphereGeometry(1, 20, 16)   // 单位球，逐节点缩放（共享几何）
+    const geo = new THREE.SphereGeometry(1, 20, 16)   // 单位球，逐节点缩放（本次加载内共享）
+    const haloMat = new THREE.MeshBasicMaterial({ color: HALO, side: THREE.BackSide, transparent: true, opacity: 0.85 })
+    // 子系统配色：按节点顺序首现定色（节点 + 图例共用同一映射）；空映射=本模型未声明子系统。
+    modColor = moduleColorMap(data.nodes.map((n) => n.module))
+    presentModules = [...modColor.keys()]
+    hasOther = data.nodes.some((n) => !n.module)
+    store.topoHasModules = presentModules.length > 0
+    if (!store.topoHasModules) store.topoColorMode = 'class' // 无子系统 → 复位，切换控件与显示一致
     const pos = new Map<string, THREE.Vector3>()
     for (const n of data.nodes) {
       const ln = localName(n.id)
-      const col = new THREE.Color(nodeColor3d(contract, ln))
-      const mat = new THREE.MeshStandardMaterial({ color: col, roughness: 0.55, metalness: 0 })
+      // 半立体材质：emissive=自身色（loadGraph 末统一上色），高 roughness 去高光、避免洗白。
+      const mat = new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0, emissiveIntensity: 0.55 })
       const mesh = new THREE.Mesh(geo, mat)
       const r = 0.018 + n.size * 0.055     // 叶子可见的最小半径 + 介数放大
       mesh.scale.setScalar(r)
       mesh.position.set(n.x, n.y, n.z)
-      mesh.userData = { id: n.id, ln, r }
+      // 选中描边：白色 BackSide 球放大 → 仅露轮廓=光环（区别于"亮节点"），默认隐藏。
+      const halo = new THREE.Mesh(geo, haloMat)
+      halo.scale.setScalar(1.5)
+      halo.visible = false
+      mesh.add(halo)
+      mesh.userData = { id: n.id, ln, r, module: n.module, halo }
       g.add(mesh)
       nodeMeshes.push(mesh)
       pos.set(n.id, mesh.position)
     }
+    recomputeClasses()   // 当前出现的 Forrester 类别（依赖 contract，晚到时由 $effect 重算）
+    recolorByMode()      // 按当前配色模式上色（含 emissive 自发光）
     // 影响边（有向，本 v1 不画箭头，只画连线）
     if (data.edges.length) {
       const verts: number[] = []
@@ -141,11 +166,30 @@
     render()
   }
 
-  /** 按 contract 重新着色（contract 晚于布局到达时补色，不重建几何）。 */
-  function recolor(c: ModelJson | null) {
+  /** 当前模型实际出现的 Forrester 类别（按 CLASS_ORDER 排序，只列出现的；依赖 contract）。 */
+  function recomputeClasses() {
+    const seen = new Set<string>()
+    for (const mesh of nodeMeshes) seen.add(classOf(contract, (mesh.userData as { ln: string }).ln))
+    presentClasses = CLASS_ORDER.filter((c) => seen.has(c))
+  }
+
+  /** 一个节点在当前配色模式下的颜色。按子系统：命名子系统取调色板、其余=「其他」灰；
+   *  本模型未声明子系统（modColor 空）则优雅回退按类别。 */
+  function colorForMesh(ud: { ln: string; module?: string }): string {
+    if (store.topoColorMode === 'module' && modColor.size) {
+      return ud.module ? modColor.get(ud.module)! : MODULE_OTHER_COLOR
+    }
+    return nodeColor3d(contract, ud.ln)
+  }
+
+  /** 按当前配色模式给所有节点上色（color + emissive 同色=半立体底色，永不洗白）。 */
+  function recolorByMode() {
     for (const mesh of nodeMeshes) {
-      const ud = mesh.userData as { ln: string }
-      ;(mesh.material as THREE.MeshStandardMaterial).color.set(nodeColor3d(c, ud.ln))
+      const ud = mesh.userData as { ln: string; module?: string }
+      const col = colorForMesh(ud)
+      const mat = mesh.material as THREE.MeshStandardMaterial
+      mat.color.set(col)
+      mat.emissive.set(col)
     }
     render()
   }
@@ -153,12 +197,10 @@
   function applySelection(sel: string[]) {
     const set = new Set(sel)
     for (const mesh of nodeMeshes) {
-      const ud = mesh.userData as { ln: string; r: number }
+      const ud = mesh.userData as { ln: string; r: number; halo: THREE.Mesh }
       const on = set.has(ud.ln)
-      const mat = mesh.material as THREE.MeshStandardMaterial
-      mat.emissive.set(on ? SEL : 0x000000)
-      mat.emissiveIntensity = on ? 0.4 : 0
-      mesh.scale.setScalar(on ? ud.r * 1.4 : ud.r)
+      ud.halo.visible = on               // 描边光环：选中显形（区别于"亮节点"）
+      mesh.scale.setScalar(on ? ud.r * 1.25 : ud.r)  // 轻微放大做冗余线索
     }
     render()
   }
@@ -222,15 +264,40 @@
     const m = store.model
     if (m !== curModel) { curModel = m; loadGraph(m) }
   })
-  // contract 晚到 → 补色。
+  // contract 晚到 → 补色 + 重算出现的类别（按类别图例依赖 contract）。
   $effect(() => {
-    const c = contract
-    if (nodeMeshes.length) recolor(c)
+    void contract
+    if (nodeMeshes.length) { recomputeClasses(); recolorByMode() }
+  })
+  // 配色模式切换（按类别 ↔ 按子系统）→ 重新上色。
+  $effect(() => {
+    void store.topoColorMode
+    if (nodeMeshes.length) recolorByMode()
   })
   // 选中变化（2D/3D/仿真共享 store.selectedVars）→ 更新高亮。
   $effect(() => {
     const sel = store.selectedVars
     if (nodeMeshes.length) applySelection(sel)
+  })
+
+  // —— 图例数据（只列当前模型出现的项；按类别带一句话含义、按子系统列子系统名）——
+  type LegendItem = { color: string; name: string; meaning?: string }
+  const legend = $derived.by<{ title: string; items: LegendItem[]; note?: string }>(() => {
+    if (store.topoColorMode === 'module') {
+      if (!presentModules.length)
+        return { title: '子系统', items: [], note: '本模型未声明子系统，已按类别上色' }
+      const items: LegendItem[] = presentModules.map((m) => ({ color: modColor.get(m)!, name: m }))
+      if (hasOther) items.push({ color: MODULE_OTHER_COLOR, name: MODULE_OTHER_LABEL, meaning: '参数 / 驱动 / 未分组' })
+      return { title: '子系统', items }
+    }
+    return {
+      title: '类别',
+      items: presentClasses.map((c) => ({
+        color: CLASS_COLOR_3D[c] ?? '#9ca3af',
+        name: CLS_CN[c] ?? c,
+        meaning: CLASS_LEGEND[c],
+      })),
+    }
   })
 </script>
 
@@ -238,6 +305,27 @@
   {#if status === 'loading'}<div class="overlay">加载 3D 拓扑…</div>{/if}
   {#if status === 'error'}<div class="overlay err">3D 拓扑加载失败：{errMsg}</div>{/if}
   {#if status === 'empty'}<div class="overlay">该模型无可视节点</div>{/if}
+  {#if status === 'ok'}
+    <!-- 常驻图例（角落小卡片，可折叠）：只列当前模型实际出现的项 -->
+    <div class="legend" class:closed={!legendOpen}>
+      <button class="leg-head" onclick={() => (legendOpen = !legendOpen)} title="折叠/展开图例">
+        <span class="leg-title">图例 · 按{legend.title}</span>
+        <span class="leg-caret">{legendOpen ? '▾' : '▸'}</span>
+      </button>
+      {#if legendOpen}
+        <div class="leg-body">
+          {#if legend.note}<div class="leg-note">{legend.note}</div>{/if}
+          {#each legend.items as it (it.name)}
+            <div class="leg-row">
+              <span class="leg-dot" style="background:{it.color}"></span>
+              <span class="leg-name">{it.name}</span>
+              {#if it.meaning}<span class="leg-mean">{it.meaning}</span>{/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -249,4 +337,29 @@
     padding: 8px 14px; border-radius: 8px; pointer-events: none;
   }
   .overlay.err { color: #fca5a5; max-width: 80%; text-align: center; }
+
+  /* 常驻图例：左下角小卡片，半透明深色，可折叠 */
+  .legend {
+    position: absolute; left: 12px; bottom: 12px; z-index: 5;
+    background: rgba(15, 23, 42, 0.82); border: 1px solid #334155; border-radius: 8px;
+    color: #e2e8f0; font-size: 12px; max-width: 280px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35); backdrop-filter: blur(2px); overflow: hidden;
+  }
+  .leg-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%;
+    background: transparent; border: 0; color: #f1f5f9; cursor: pointer;
+    padding: 7px 10px; font-size: 12px;
+  }
+  .legend.closed .leg-head { padding: 6px 10px; }
+  .leg-title { font-weight: 600; }
+  .leg-caret { color: #94a3b8; font-size: 11px; }
+  .leg-body { padding: 2px 10px 9px; display: flex; flex-direction: column; gap: 5px; }
+  .leg-note { color: #fcd34d; font-size: 11px; line-height: 1.4; padding-bottom: 2px; }
+  .leg-row { display: flex; align-items: baseline; gap: 7px; line-height: 1.35; }
+  .leg-dot {
+    flex: 0 0 auto; width: 11px; height: 11px; border-radius: 50%;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18); transform: translateY(1px);
+  }
+  .leg-name { color: #f8fafc; font-weight: 600; white-space: nowrap; }
+  .leg-mean { color: #94a3b8; font-size: 11px; }
 </style>

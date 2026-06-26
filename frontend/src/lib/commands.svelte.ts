@@ -265,6 +265,24 @@ export const AGENT_COMMANDS: Command[] = [
     },
   },
   {
+    id: 'set_topology_color_by',
+    label: '设置 3D 拓扑配色',
+    group: 'AI',
+    access: 'read',
+    params: { mode: { type: 'string', enum: ['class', 'module'], description: "'class'=按 Forrester 类别（默认）；'module'=按作者声明的子系统" } },
+    required: ['mode'],
+    description: '切换 3D 拓扑视图的配色模式并切到该视图：class=按 Forrester 动力学类别上色（存量/速率/驱动…）；module=按作者声明的子系统（光合/氮/水…）上色，一眼看出模型分几大块。模型未声明子系统(meta.modules)时按子系统会自动回退按类别。',
+    run: (args) => {
+      const mode = String(args?.mode ?? '')
+      if (mode !== 'class' && mode !== 'module') return "mode 需为 'class' 或 'module'"
+      setMode('expert'); setWorkspace('structure'); store.structureView = '3d'
+      store.topoColorMode = mode as 'class' | 'module' // 若本模型未声明子系统，Topology3d 加载时自动回退按类别
+      return mode === 'module'
+        ? '已切到 3D 拓扑并设为按子系统配色（若本模型未声明子系统则自动按类别）'
+        : '已切到 3D 拓扑并设为按类别配色'
+    },
+  },
+  {
     id: 'switch_model',
     label: '切换模型',
     group: 'AI',

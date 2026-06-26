@@ -310,6 +310,10 @@ pub struct Node3dJson {
     pub size: f64,
     pub community: usize,
     pub depth: usize,
+    /// 作者声明的子系统名（`meta.modules` 键）；参数/驱动/未分组或未声明 → 省略。
+    /// 前端「按子系统」配色 + 图例用（additive，老前端不读照常）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub module: Option<String>,
 }
 
 /// 3D 力导向布局的 JSON 契约（GA-5）。坐标 Rust 算、前端只渲染。
@@ -335,6 +339,7 @@ pub fn to_layout3d_json(l: &crate::graph::Layout3d) -> Layout3dJson {
                 size: n.size,
                 community: n.community,
                 depth: n.depth,
+                module: n.module.clone(),
             })
             .collect(),
         edges: l.edges.iter().map(|(a, b)| [a.clone(), b.clone()]).collect(),

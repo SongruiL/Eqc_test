@@ -13,6 +13,8 @@ export const store = $state({
   mode: 'expert' as 'expert' | 'park',
   workspace: 'simulate' as string,
   structureView: '2d' as '2d' | '3d', // 结构工作区：2D 报告 ↔ 3D 拓扑（GA-6；命令 view_topology_3d 可设）
+  topoColorMode: 'class' as 'class' | 'module', // 3D 拓扑配色：按 Forrester 类别 / 按作者子系统（GA-6；命令 set_topology_color_by）
+  topoHasModules: false, // 当前模型是否声明了子系统（meta.modules）；Topology3d 加载时置，Structure 据此禁用「按子系统」
   modelJson: null as ModelJson | null,
   connected: false,
   // 仿真视图状态（提到全局：跨工作区共享——优化「叠加最优旋钮」要写它、仿真工作区读它）。
