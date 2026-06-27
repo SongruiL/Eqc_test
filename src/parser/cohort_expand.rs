@@ -115,6 +115,10 @@ pub fn expand_cohorts(mut root: Value) -> Result<Value, CohortError> {
         *eqs = expand_equations(eqs, &families, &all_members)?;
     }
 
+    // cohort lower 到结构（FSPM 地基）：注入 `structure:` 段（StructureInfo）。
+    // 上面的标量展开逐位不变；这里只 additive 加结构（引擎不读，下游 NodeResolver/图/契约读）。
+    map.insert(Value::from("structure"), build_structure(&families));
+
     Ok(root)
 }
 
@@ -230,6 +234,8 @@ fn expand_decl_map(
                 if let Some(l) = get_str(&clone, "label") {
                     clone.insert(Value::from("label"), Value::from(format!("{l}[{i}]")));
                 }
+                // FSPM 身份标签（仅变量；Parameter 无 instance 字段，故只在此分支注入）。
+                clone.insert(Value::from("instance"), instance_tag(&fam_name, i));
             }
             out.insert(Value::from(suffix(&name, i)), Value::Mapping(clone));
         }
@@ -274,6 +280,8 @@ fn expand_equations(
                         let rewritten = rewrite_expr(expr, &env, families, all_members)?;
                         clone.insert(Value::from("expression"), rewritten);
                     }
+                    // FSPM 身份标签（cohort 方程每实例一份）。
+                    clone.insert(Value::from("instance"), instance_tag(&fam_name, i));
                     out.push(Value::Mapping(clone));
                 }
             }
@@ -392,6 +400,52 @@ fn fold_binary(op: &str, args: Vec<Value>) -> Value {
     acc
 }
 
+// —— FSPM 身份保留（地基）：cohort lower 到结构。展开仍产逐位不变的标量，另注入 ——
+// `instance:` 身份标签（引擎不读、下游读）+ root `structure:` 段（StructureInfo）。
+// cohort = 结构的 1D 特例：一个家族 = 一个实体、size 个实例、链式拓扑（succession）。
+
+/// 构造 `instance:` 字段的 YAML（`{entity, id}`，对应 schema InstanceTag）。
+fn instance_tag(entity: &str, i: usize) -> Value {
+    let mut m = Mapping::new();
+    m.insert(Value::from("entity"), Value::from(entity));
+    m.insert(Value::from("id"), Value::from(i.to_string()));
+    Value::Mapping(m)
+}
+
+/// 由 cohort 家族构造 `structure:` 段的 YAML（对应 schema StructureInfo）。
+/// 每家族 → 一个 chain 实体 + size 个实例 + (size-1) 条 succession 边。家族名排序保证确定性。
+fn build_structure(families: &HashMap<String, Family>) -> Value {
+    let mut names: Vec<&String> = families.keys().collect();
+    names.sort();
+    let (mut entities, mut instances, mut topology) = (Vec::new(), Vec::new(), Vec::new());
+    for name in names {
+        let fam = &families[name];
+        let mut e = Mapping::new();
+        e.insert(Value::from("name"), Value::from(name.as_str()));
+        e.insert(Value::from("count"), Value::from(fam.size as u64));
+        e.insert(Value::from("topology"), Value::from("chain"));
+        entities.push(Value::Mapping(e));
+        for i in 1..=fam.size {
+            let mut inst = Mapping::new();
+            inst.insert(Value::from("id"), Value::from(i.to_string()));
+            inst.insert(Value::from("entity"), Value::from(name.as_str()));
+            instances.push(Value::Mapping(inst));
+            if i < fam.size {
+                let mut edge = Mapping::new();
+                edge.insert(Value::from("from"), Value::from(i.to_string()));
+                edge.insert(Value::from("to"), Value::from((i + 1).to_string()));
+                edge.insert(Value::from("kind"), Value::from("succession"));
+                topology.push(Value::Mapping(edge));
+            }
+        }
+    }
+    let mut s = Mapping::new();
+    s.insert(Value::from("entities"), Value::Sequence(entities));
+    s.insert(Value::from("instances"), Value::Sequence(instances));
+    s.insert(Value::from("topology"), Value::Sequence(topology));
+    Value::Mapping(s)
+}
+
 // —— 小工具 ——
 
 fn suffix(name: &str, i: usize) -> String {
@@ -479,6 +533,46 @@ parameters:
         let ps = out.get("parameters").unwrap().as_mapping().unwrap();
         assert_eq!(ps.get("anthesis__1").unwrap().as_mapping().unwrap().get("default").unwrap().as_f64(), Some(55.0));
         assert_eq!(ps.get("anthesis__3").unwrap().as_mapping().unwrap().get("default").unwrap().as_f64(), Some(130.0));
+    }
+
+    #[test]
+    fn test_cohort_lowers_to_structure_with_identity() {
+        // FSPM 地基（1b）：cohort 应 lower 成 structure（StructureInfo）+ 变量/方程带 instance 身份标签；
+        // 标量展开本身逐位不变（由其余 cohort 测试 + 现有模型仿真覆盖）。
+        let src = yaml(
+            r#"
+cohorts:
+  fruit: { size: 3, index: q }
+variables:
+  TF:     { cohort: fruit, class: state, init: 0.0, rate: rateTF }
+  rateTF: { cohort: fruit, class: rate }
+equations:
+  - { id: E, output: rateTF, cohort: fruit, expression: { ref: T } }
+"#,
+        );
+        let out = expand_cohorts(src).unwrap();
+        // 1) root 有 structure 段：1 个 chain 实体、3 实例、2 条 succession 边
+        let st = out.get("structure").unwrap().as_mapping().unwrap();
+        let ents = st.get("entities").unwrap().as_sequence().unwrap();
+        assert_eq!(ents.len(), 1);
+        let e0 = ents[0].as_mapping().unwrap();
+        assert_eq!(get_str(e0, "name").as_deref(), Some("fruit"));
+        assert_eq!(e0.get("count").unwrap().as_u64(), Some(3));
+        assert_eq!(get_str(e0, "topology").as_deref(), Some("chain"));
+        assert_eq!(st.get("instances").unwrap().as_sequence().unwrap().len(), 3);
+        let topo = st.get("topology").unwrap().as_sequence().unwrap();
+        assert_eq!(topo.len(), 2);
+        assert_eq!(get_str(topo[0].as_mapping().unwrap(), "kind").as_deref(), Some("succession"));
+        // 2) 变量带 instance 身份标签 {entity:fruit, id:"2"}
+        let vars = out.get("variables").unwrap().as_mapping().unwrap();
+        let inst = vars.get("TF__2").unwrap().as_mapping().unwrap().get("instance").unwrap().as_mapping().unwrap();
+        assert_eq!(get_str(inst, "entity").as_deref(), Some("fruit"));
+        assert_eq!(get_str(inst, "id").as_deref(), Some("2"));
+        // 3) 方程也带 instance 身份标签
+        let eqs = out.get("equations").unwrap().as_sequence().unwrap();
+        let eqinst = eqs[0].as_mapping().unwrap().get("instance").unwrap().as_mapping().unwrap();
+        assert_eq!(get_str(eqinst, "entity").as_deref(), Some("fruit"));
+        assert_eq!(get_str(eqinst, "id").as_deref(), Some("1"));
     }
 
     #[test]
