@@ -162,10 +162,11 @@ structure:
 
 ## 8. 施工分步（0–3 地基；4–6 后续层）
 
-- **第 0 步 ✅（本文档）**：spec 收口 + 番茄切片定。**待批准 → 进第 1 步。**
-- **第 1 步**：schema `structure:` + `StructureInfo`/`InstanceTag` 字段 + 加载期身份保留实例化 + cohort lower。**验证**：现有 cohort 模型仿真逐位不变（铁锚）；番茄切片能解析+实例化+仿真；两 feature 配置 cargo test 绿。
-- **第 2 步**：NodeResolver 实例维度 + dag/builder 收编 + bipartite/digraph 带实例身份。**验证**：番茄 12 metamer 被识别为一实体的实例、可折叠；现有图分析不变。
-- **第 3 步**：契约 structure 字段 + 一个视图消费（3D 拓扑/2D 报告按实体折叠/按实例上色）。**验证**：番茄结构带器官折叠渲染；非结构模型零回归；svelte-check 0 + Playwright 冒烟。
+- **第 0 步 ✅**：spec 收口 + 番茄切片定（本文档）。
+- **第 1 步 ✅（commit `2fd6ba5`/`ba507f7`/`b6206ee`）**：schema `structure:` + `StructureInfo`/`InstanceTag` 字段（1a）+ cohort lower 身份保留（1b，草莓 cohort 仿真逐位不变）+ 加载期 structure 实例化（1c，`structure_expand.rs`，count/chain/per + ref `of: self/prev/next/parent`）。番茄切片解析+实例化+仿真通；292 lib 绿×2 配置。
+- **第 2 步 ✅（commit `6ae67f5`）**：NodeResolver 加 `identity`（节点→InstanceTag）+ `organ_groups` 折叠 + `eqc structure` 显「器官结构」。番茄 metamer(4)/fruit(8) + 草莓 v1 leaf(12)/fruit(3) 都被识别。（dag/builder 收编 deferred。）
+- **第 3 步 ✅（commit `d35a5e8`）= 验收点**：契约 `ModelJson.structure` + `VarJson.instance`（additive）+ 3D 拓扑图例从契约派生显「🌿 器官结构」（声明一次→视图派生）。本地 demo `tomato_fspm_demo/`。svelte-check 0 + Playwright + 截图确认。
+- **★地基（风险1+2）完整闭环。** 余 deferred：3D 按器官上色/折叠完整交互、2D 报告折叠、dag/builder 收编、`borne_on`/tree/clonal。
 - **第 4–6 步（后续，各自 spec）**：拓扑聚合算子（风险3）→ 器官流/多源 rate（风险4）→ 真实几何/3D 动画（风险5，含引擎选型讨论）。
 - **作物推广（贯穿）**：分枝（蓝莓/苹果）= 实现 `tree` kind；克隆（草莓）= 实现 `clonal` kind；MTG 多尺度 + L2 动态生长 = 远期。
 
