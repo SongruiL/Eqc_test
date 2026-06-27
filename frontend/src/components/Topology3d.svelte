@@ -485,6 +485,15 @@
       </button>
       {#if legendOpen}
         <div class="leg-body">
+          {#if contract?.structure?.entities?.length}
+            <!-- FSPM 器官结构（从契约 structure 派生；声明一次→视图自动显示，零模型专属代码）-->
+            <div class="leg-organ">
+              <span class="leg-organ-t">🌿 器官结构</span>
+              {#each contract.structure.entities as e (e.name)}
+                <div class="leg-row"><span class="leg-name">{e.name}</span><span class="leg-mean">×{e.count} · {e.topology}</span></div>
+              {/each}
+            </div>
+          {/if}
           {#if legend.note}<div class="leg-note">{legend.note}</div>{/if}
           {#each legend.items as it (it.name)}
             <div class="leg-row">
@@ -525,6 +534,8 @@
   .leg-title { font-weight: 600; }
   .leg-caret { color: #94a3b8; font-size: 11px; }
   .leg-body { padding: 2px 10px 9px; display: flex; flex-direction: column; gap: 5px; }
+  .leg-organ { display: flex; flex-direction: column; gap: 4px; padding-bottom: 6px; margin-bottom: 4px; border-bottom: 1px solid #334155; }
+  .leg-organ-t { color: #4ade80; font-weight: 700; font-size: 11px; }
   .leg-note { color: #fcd34d; font-size: 11px; line-height: 1.4; padding-bottom: 2px; }
   .leg-row { display: flex; align-items: baseline; gap: 7px; line-height: 1.35; }
   .leg-dot {

@@ -28,6 +28,10 @@ pub struct ModelJson {
     /// 不再自带类配色常量；与 2D 报告同源。additive。
     #[serde(default)]
     pub class_colors: indexmap::IndexMap<String, String>,
+    /// FSPM 器官结构（实体/实例/拓扑；地基风险2/3，单一真相源 `crate::schema::StructureInfo`）。
+    /// 前端据此「按器官折叠/上色」；纯 Functional 模型为 None、省略。additive。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub structure: Option<crate::schema::StructureInfo>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -103,6 +107,9 @@ pub struct VarJson {
     pub rate: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prev: Option<String>,
+    /// FSPM 器官实例身份（`{entity, id}`；结构/cohort 实例化变量才有）。前端「按器官上色/折叠」用。additive。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance: Option<crate::schema::InstanceTag>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -133,7 +140,19 @@ pub fn to_model_json(files: &[EquationFile]) -> ModelJson {
         .iter()
         .map(|c| (c.to_string(), crate::palette::class_color(c).vivid.to_string()))
         .collect();
-    ModelJson { schema_version: SCHEMA_VERSION, modules, has_modules, class_colors }
+    // FSPM 结构：合并各文件的 structure（结构模型通常单文件；耦合多文件按序拼接）。无结构 → None。
+    let structure = {
+        let mut agg = crate::schema::StructureInfo::default();
+        for f in files {
+            if let Some(s) = &f.structure {
+                agg.entities.extend(s.entities.iter().cloned());
+                agg.instances.extend(s.instances.iter().cloned());
+                agg.topology.extend(s.topology.iter().cloned());
+            }
+        }
+        (!agg.entities.is_empty()).then_some(agg)
+    };
+    ModelJson { schema_version: SCHEMA_VERSION, modules, has_modules, class_colors, structure }
 }
 
 fn module_json(f: &EquationFile) -> ModuleJson {
@@ -176,6 +195,7 @@ fn module_json(f: &EquationFile) -> ModuleJson {
                 init: v.init,
                 rate: v.rate.clone(),
                 prev: v.prev.clone(),
+                instance: v.instance.clone(),
             }
         })
         .collect();

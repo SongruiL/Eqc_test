@@ -43,6 +43,19 @@ export interface VarJson {
   rate?: string
   /** 延迟寄存器（semi_state）的上一步来源变量名；非延迟量省略。镜像后端 VarJson.prev。 */
   prev?: string
+  /** FSPM 器官实例身份（结构/cohort 实例化变量才有）；前端「按器官上色/折叠」用。镜像后端 VarJson.instance。 */
+  instance?: InstanceJson
+}
+
+// —— FSPM 器官结构（/api/model 的 structure 字段；地基风险2/3）——
+export interface InstanceJson {
+  entity: string
+  id: string
+}
+export interface StructureJson {
+  entities: { name: string; count: number; topology: string }[]
+  instances: { id: string; entity: string; parent?: string }[]
+  topology: { from: string; to: string; kind: string }[]
 }
 
 export interface GpTargetJson {
@@ -272,6 +285,8 @@ export interface ModelJson {
   has_modules?: boolean
   /** Forrester 8 类 → 3D 鲜调颜色（Rust palette 单一真相源，与 2D 报告同源）；3D 据此上色。 */
   class_colors?: Record<string, string>
+  /** FSPM 器官结构（实体/实例/拓扑）；结构/cohort 模型才有，前端「按器官折叠/上色」用。 */
+  structure?: StructureJson
 }
 
 // —— 3D 拓扑布局（/api/layout3d；GA-5 力导向坐标，GA-6 前端渲染）契约 ——
