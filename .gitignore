@@ -12,6 +12,8 @@ Cargo.lock
 /generated/
 *.pyc
 __pycache__/
+# eqc simulate/build 在 CWD 产的临时输出（误跑进仓库根时别入库）
+/sim_output.csv
 
 # 系统文件
 .DS_Store
