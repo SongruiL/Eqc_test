@@ -21,7 +21,10 @@ pub fn parse_file(path: &Path) -> CompileResult<EquationFile> {
     // 之后再反序列化成 EquationFile。无 `cohorts:` 段的模型原样通过，行为不变。
     let raw: serde_yaml::Value =
         serde_yaml::from_str(&content).map_err(|e| CompileError::yaml_parse(path, e.to_string()))?;
-    let expanded = super::expand_cohorts(raw)
+    // FSPM `structure:` 段实例化 + cohort 展开（都是加载期、互不干扰；无对应段时各自原样通过）。
+    let expanded = super::expand_structure(raw)
+        .map_err(|e| CompileError::yaml_parse(path, format!("structure 实例化失败: {e}")))?;
+    let expanded = super::expand_cohorts(expanded)
         .map_err(|e| CompileError::yaml_parse(path, format!("cohort 展开失败: {e}")))?;
 
     let mut file: EquationFile =
@@ -39,7 +42,9 @@ pub fn parse_str(content: &str) -> CompileResult<EquationFile> {
     let p = Path::new("<编辑>");
     let raw: serde_yaml::Value =
         serde_yaml::from_str(content).map_err(|e| CompileError::yaml_parse(p, e.to_string()))?;
-    let expanded = super::expand_cohorts(raw)
+    let expanded = super::expand_structure(raw)
+        .map_err(|e| CompileError::yaml_parse(p, format!("structure 实例化失败: {e}")))?;
+    let expanded = super::expand_cohorts(expanded)
         .map_err(|e| CompileError::yaml_parse(p, format!("cohort 展开失败: {e}")))?;
     let mut file: EquationFile =
         serde_yaml::from_value(expanded).map_err(|e| CompileError::yaml_parse(p, e.to_string()))?;
