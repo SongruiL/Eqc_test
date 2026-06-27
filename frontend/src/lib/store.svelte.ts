@@ -31,6 +31,9 @@ export const store = $state({
     chapter: 0, // 当前已揭示到第几章（显示 chapters[0..=chapter]）
     playing: false, // 自动推进中
   },
+  // GP「看它长出什么」彩蛋（GA-6b Phase 3）：命令 preview_gp_growth 自增此信号 →
+  // 进化工作区当前选中候选自动展开 3D 生长预览（⌘K / AI 可触发）。
+  gpGrowSignal: 0,
 })
 
 function ls(key: string): string | null {

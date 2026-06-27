@@ -1579,6 +1579,7 @@ fn run_evolve_job(job: &EvolveJob, progress: &mut dyn FnMut(usize, f64)) -> Stri
             let traj = candidate_trajectory(file, target, output, &e.cand, sim_input);
             let stub = gp::provenance_stub(&report, target, output, grammar);
             let yaml_fragment = candidate_yaml_fragment(target, eqname, output, &e.cand);
+            let structure_diff = gp_structure_diff(file, target, &e.cand);
             serde_json::json!({
                 "complexity": e.complexity,
                 "error": e.error,
@@ -1591,6 +1592,7 @@ fn run_evolve_job(job: &EvolveJob, progress: &mut dyn FnMut(usize, f64)) -> Stri
                 "trajectory": traj,
                 "provenance_stub": stub,
                 "yaml_fragment": yaml_fragment,
+                "structure_diff": structure_diff,
             })
         })
         .collect();
@@ -1836,6 +1838,7 @@ fn run_evolve_joint_job(job: &JointJob, progress: &mut dyn FnMut(usize, f64)) ->
                     );
                     let stub = gp::provenance_stub(&report, &slot.target_id, output, &slot.grammar);
                     let yaml_fragment = candidate_yaml_fragment(&slot.target_id, &job.eqnames[k], output, cand);
+                    let structure_diff = gp_structure_diff(file, &slot.target_id, cand);
                     serde_json::json!({
                         "target": slot.target_id, "output": output,
                         "formula": gp::render_formula(cand),
@@ -1846,6 +1849,7 @@ fn run_evolve_joint_job(job: &JointJob, progress: &mut dyn FnMut(usize, f64)) ->
                         "error": error, "complexity": cplx,
                         "trajectory": traj,
                         "provenance_stub": stub, "yaml_fragment": yaml_fragment,
+                        "structure_diff": structure_diff,
                     })
                 })
                 .collect();
@@ -2037,6 +2041,21 @@ fn candidate_expr(cand: &crate::gp::Candidate) -> crate::ast::Expr {
         e = e.substitute(&crate::gp::Candidate::const_name(i), &crate::ast::Expr::constant(*v));
     }
     e
+}
+
+/// GP「看它长出什么」彩蛋（GA-6b Phase 3）：候选 patch 进目标方程（常数**代回字面值**，
+/// 不引入 `__c` 参数节点）→ 与原模型做结构 diff。受约束 GP 只用靶点 inputs（已有变量）→
+/// **不长新节点**：diff 的核心是 `added_edges`（GP 新依赖的输入，= 长出的"新枝"）+
+/// `changed_equations`（目标方程形式变了，前端给它打脉冲）。本地名对齐（before/after 同 meta.id）。
+/// 随 evolve 结果每候选带上，前端零延迟内联播 3D 生长动画。失败 → Null。
+fn gp_structure_diff(file: &EquationFile, target: &str, cand: &crate::gp::Candidate) -> serde_json::Value {
+    let mut after = file.clone();
+    match after.equations.iter_mut().find(|e| e.id == target) {
+        Some(eq) => eq.expression = candidate_expr(cand),
+        None => return serde_json::Value::Null,
+    }
+    let diff = crate::graph::diff_models(std::slice::from_ref(file), std::slice::from_ref(&after));
+    serde_json::to_value(crate::export::to_graph_diff_json(&diff)).unwrap_or(serde_json::Value::Null)
 }
 
 /// 把一个 GP 候选 patch 进目标方程 → 仿真 → 抽 `output` 轨迹（{DAT, value}）。失败 → Null。

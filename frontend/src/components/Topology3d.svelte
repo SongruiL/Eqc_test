@@ -14,8 +14,17 @@
     moduleColorMap, MODULE_OTHER_COLOR, MODULE_OTHER_LABEL,
   } from '../lib/annotate'
 
-  type Props = { contract: ModelJson | null }
-  let { contract }: Props = $props()
+  // GP「看它长出什么」彩蛋（GA-6b Phase 3）：把候选相对现有模型的结构 diff 当 3D 生长动画播。
+  // 受约束 GP 不长新节点 → 主要是 added 边（绿"新枝"从源点伸到目标）+ changed 方程节点脉冲。
+  // 渲染的是 before（现有）模型的 layout（所有节点都在，含被新边接上的输入），新边叠加其上。
+  export type GpDiffView = {
+    addedEdges: [string, string][]   // 本地名对：要"长出"的新边（绿）
+    pulseOutputs: string[]           // 本地名：形式变了的方程输出（节点脉冲）
+    phase: number                    // 0=现有结构（新边藏）/ 1=长出（新边伸出 + 脉冲）
+    nonce: number                    // 变化即触发重播（父组件每次"再播"自增）
+  }
+  type Props = { contract: ModelJson | null; gpDiff?: GpDiffView | null }
+  let { contract, gpDiff = null }: Props = $props()
 
   let host: HTMLDivElement
   let tip: HTMLDivElement | undefined
@@ -45,6 +54,11 @@
   let edgeMesh: THREE.LineSegments | null = null   // 边对象引用（重建几何）
   let growthCh = new Map<string, number>()         // 本地名 → 章节序（store.growth.plan）
   let growthRAF = 0                                // 补间 requestAnimationFrame 句柄
+  // GP 彩蛋：本地名→位置（新边端点查位）+ 绿新边对象 + 生长/脉冲补间句柄。
+  let localPos = new Map<string, THREE.Vector3>()
+  let gpEdgeMesh: THREE.LineSegments | null = null
+  let gpRAF = 0
+  const GP_EDGE = 0x22c55e   // 新枝绿（= driving 类绿，"新长出"语义）
 
   const BG = 0x0f172a       // 视口深色：让节点/边/深度更可读（仅画布内，不动全局浅色主题）
   const HALO = 0xffffff     // 选中描边色（白描边圈，区别于"亮节点"）
@@ -100,7 +114,10 @@
     edgeMesh = null
     edgeList = []
     nodePos.clear()
+    localPos.clear()
+    gpEdgeMesh = null
     if (growthRAF) { cancelAnimationFrame(growthRAF); growthRAF = 0 }
+    if (gpRAF) { cancelAnimationFrame(gpRAF); gpRAF = 0 }
   }
 
   async function loadGraph(model: string) {
@@ -154,6 +171,7 @@
       g.add(mesh)
       nodeMeshes.push(mesh)
       nodePos.set(n.id, mesh.position)
+      localPos.set(ln, mesh.position)   // GP 新边按本地名查端点位置
     }
     recomputeClasses()   // 当前出现的 Forrester 类别（依赖 contract，晚到时由 $effect 重算）
     recolorByMode()      // 按当前配色模式上色（含 emissive 自发光）
@@ -173,6 +191,7 @@
     status = data.nodes.length ? 'ok' : 'empty'
     buildGrowthMap()
     if (store.growth.active) applyGrowth(true) // 演示进行中切模型/重载 → 直接套用当前章节
+    if (gpDiff) { ensureGpEdgeMesh(); runGpAnim() } // GP 彩蛋：重载后套用当前 diff 动画
     applySelection(store.selectedVars)
     render()
   }
@@ -238,6 +257,65 @@
       growthRAF = moving ? requestAnimationFrame(step) : 0
     }
     growthRAF = requestAnimationFrame(step)
+  }
+
+  // —— GP「看它长出什么」彩蛋（GA-6b Phase 3）：在现有结构上叠加 diff 动画 —— //
+  /** 懒建 GP 绿新边对象（独立 LineSegments，叠在现有图上；初始空+透明）。 */
+  function ensureGpEdgeMesh() {
+    if (gpEdgeMesh || !group || !gpDiff) return
+    const eg = new THREE.BufferGeometry()
+    eg.setAttribute('position', new THREE.Float32BufferAttribute([], 3))
+    gpEdgeMesh = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: GP_EDGE, transparent: true, opacity: 0 }))
+    group.add(gpEdgeMesh)
+  }
+  /** added 边的端点位置对（按本地名查；端点缺失则跳过=优雅降级）。 */
+  function gpEdgePairs(): { a: THREE.Vector3; b: THREE.Vector3 }[] {
+    const out: { a: THREE.Vector3; b: THREE.Vector3 }[] = []
+    for (const [la, lb] of gpDiff?.addedEdges ?? []) {
+      const a = localPos.get(la), b = localPos.get(lb)
+      if (a && b) out.push({ a, b })
+    }
+    return out
+  }
+  /** 重建绿边几何：每条从源点伸到 lerp(源,目标,t)（t=生长进度，0=一点、1=整条）。 */
+  function setGpEdges(t: number) {
+    if (!gpEdgeMesh) return
+    const v: number[] = []
+    for (const { a, b } of gpEdgePairs())
+      v.push(a.x, a.y, a.z, a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t)
+    gpEdgeMesh.geometry.setAttribute('position', new THREE.Float32BufferAttribute(v, 3))
+    gpEdgeMesh.geometry.computeBoundingSphere()
+  }
+  /** 形式变了的方程输出节点（要脉冲的球）。 */
+  function pulseMeshes(): THREE.Mesh[] {
+    const set = new Set(gpDiff?.pulseOutputs ?? [])
+    return nodeMeshes.filter((m) => set.has((m.userData as { ln: string }).ln))
+  }
+  const GP_BASE_EMIS = 0.55
+  /** GP 生长动画：phase 1 时绿边伸出(0→1) + 脉冲节点 emissive 衰减起伏，约 1.7s；phase 0 复位。 */
+  function runGpAnim() {
+    if (gpRAF) { cancelAnimationFrame(gpRAF); gpRAF = 0 }
+    const pulses = pulseMeshes()
+    const setEmis = (val: number) => { for (const m of pulses) (m.material as THREE.MeshStandardMaterial).emissiveIntensity = val }
+    if (gpDiff?.phase !== 1) { // 复位到"现有结构"：新边收回、节点回基线
+      setGpEdges(0)
+      if (gpEdgeMesh) (gpEdgeMesh.material as THREE.LineBasicMaterial).opacity = 0
+      setEmis(GP_BASE_EMIS); render(); return
+    }
+    const DUR = 1700
+    let start = -1
+    const step = (ts: number) => {
+      if (start < 0) start = ts
+      const p = Math.min(1, (ts - start) / DUR)
+      setGpEdges(p) // 绿边伸出
+      if (gpEdgeMesh) (gpEdgeMesh.material as THREE.LineBasicMaterial).opacity = 0.35 + 0.55 * p
+      const osc = Math.abs(Math.sin(p * Math.PI * 3)) * (1 - p) // 3 个衰减脉冲，收尾回基线
+      setEmis(GP_BASE_EMIS + 0.85 * osc)
+      render()
+      gpRAF = p < 1 ? requestAnimationFrame(step) : 0
+      if (p >= 1) setEmis(GP_BASE_EMIS)
+    }
+    gpRAF = requestAnimationFrame(step)
   }
 
   /** 当前模型实际出现的 Forrester 类别（按 CLASS_ORDER 排序，只列出现的；依赖 contract）。 */
@@ -356,12 +434,20 @@
     if (nodeMeshes.length) applySelection(sel)
   })
   // 生长演示（GA-6b）：active/章节/plan 变 → 重建章节映射 + 套用揭示（补间"长出"）。
+  // GP 彩蛋模式（gpDiff 非空）下不跑子系统生长——节点已全显，由 GP 动画掌管叠加层。
   $effect(() => {
     const g = store.growth
     void g.active; void g.chapter; void g.plan
-    if (!nodeMeshes.length) return
+    if (!nodeMeshes.length || gpDiff) return
     buildGrowthMap()
     applyGrowth()
+  })
+  // GP「看它长出什么」（GA-6b Phase 3）：phase/nonce/addedEdges 变 → 套用 diff 动画（绿边伸出+脉冲）。
+  $effect(() => {
+    void gpDiff?.phase; void gpDiff?.nonce; void gpDiff?.addedEdges
+    if (!nodeMeshes.length || !gpDiff) return
+    ensureGpEdgeMesh()
+    runGpAnim()
   })
 
   // —— 图例数据（只列当前模型出现的项；按类别带一句话含义、按子系统列子系统名）——
@@ -389,8 +475,8 @@
   {#if status === 'loading'}<div class="overlay">加载 3D 拓扑…</div>{/if}
   {#if status === 'error'}<div class="overlay err">3D 拓扑加载失败：{errMsg}</div>{/if}
   {#if status === 'empty'}<div class="overlay">该模型无可视节点</div>{/if}
-  {#if status === 'ok'}
-    <!-- 常驻图例（角落小卡片，可折叠）：只列当前模型实际出现的项 -->
+  {#if status === 'ok' && !gpDiff}
+    <!-- 常驻图例（角落小卡片，可折叠）：只列当前模型实际出现的项。GP 生长预览里隐藏（让位旁白字幕）。 -->
     <div class="legend" class:closed={!legendOpen}>
       <button class="leg-head" onclick={() => (legendOpen = !legendOpen)} title="折叠/展开图例">
         <span class="leg-title">图例 · 按{legend.title}</span>

@@ -4,15 +4,28 @@
   import type { GpCandidate, GpBaseline, GpTraj } from '../../lib/contract'
   import { fitChartSvg } from '../../lib/fitChart'
   import AdoptPanel from './AdoptPanel.svelte'
+  import GrowthPreview from './GrowthPreview.svelte'
 
   let {
     cand,
     baseline,
     observed,
     name,
-  }: { cand: GpCandidate; baseline?: GpBaseline; observed?: GpTraj | null; name: string } = $props()
+    autoOpenSignal = 0,
+  }: { cand: GpCandidate; baseline?: GpBaseline; observed?: GpTraj | null; name: string; autoOpenSignal?: number } = $props()
 
   let showAdopt = $state(false)
+  let showGrow = $state(false)
+  // 彩蛋按钮仅在后端带了结构 diff 时出现（GA-6b Phase 3）。
+  const hasDiff = $derived(!!cand.structure_diff)
+  // 命令 preview_gp_growth 自增 store.gpGrowSignal → Gp.svelte 透传给选中候选 → 自动展开预览。
+  // 边沿触发：首跑只记基线（不自动开），之后信号变化才展开。
+  let seenSignal = $state(-1)
+  $effect(() => {
+    const s = autoOpenSignal
+    if (seenSignal < 0) { seenSignal = s; return }
+    if (s !== seenSignal) { seenSignal = s; if (hasDiff) showGrow = true }
+  })
   const b = $derived(baseline ?? {})
   const cls = $derived(cand.rediscovery ? 'redisc' : cand.mechanistic_form ? 'newform' : 'custom')
   const badge = $derived(
@@ -49,8 +62,16 @@
   {#if b.formula}<div class="cmp">现有形式公式：<br /><code>{b.formula}</code></div>{/if}
   {#if cand.provenance_suggestion}<div class="hint">溯源建议：{cand.provenance_suggestion}</div>{/if}
 
-  <button class="btn" onclick={() => (showAdopt = !showAdopt)}>采纳此候选 ▾</button>
+  <div class="acts">
+    <button class="btn" onclick={() => (showAdopt = !showAdopt)}>采纳此候选 ▾</button>
+    {#if hasDiff}
+      <button class="btn grow" onclick={() => (showGrow = !showGrow)} title="在 3D 结构里看采纳此候选会长出什么（结构 diff 动画）">
+        🌱 看它长出什么 {showGrow ? '▴' : '▾'}
+      </button>
+    {/if}
+  </div>
   {#if showAdopt}<AdoptPanel stub={cand.provenance_stub} yaml={cand.yaml_fragment} {name} />{/if}
+  {#if showGrow && cand.structure_diff}<GrowthPreview {cand} {baseline} onclose={() => (showGrow = false)} />{/if}
 </div>
 
 <style>
@@ -69,6 +90,9 @@
   .cmp { font-size: 12px; color: var(--sub); margin-top: 10px; }
   .cmp code { color: var(--ink); }
   .hint { color: var(--sub); font-size: 12px; margin-top: 8px; }
-  .btn { border: 1px solid var(--line); background: #fff; color: var(--sub); font-size: 12px; padding: 3px 11px; border-radius: 7px; cursor: pointer; margin-top: 10px; }
+  .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .btn { border: 1px solid var(--line); background: #fff; color: var(--sub); font-size: 12px; padding: 3px 11px; border-radius: 7px; cursor: pointer; }
   .btn:hover { background: #eef2ff; }
+  .btn.grow { color: #16a34a; border-color: #bbf7d0; font-weight: 600; }
+  .btn.grow:hover { background: #f0fdf4; }
 </style>

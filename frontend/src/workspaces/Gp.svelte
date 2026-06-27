@@ -175,7 +175,7 @@
                 </div>
               {/each}
             {:else}
-              <CandidateBlock cand={entry as GpCandidate} baseline={result.baseline} observed={result.observed as GpTraj} name={result.target ?? 'gp'} />
+              <CandidateBlock cand={entry as GpCandidate} baseline={result.baseline} observed={result.observed as GpTraj} name={result.target ?? 'gp'} autoOpenSignal={store.gpGrowSignal} />
             {/if}
           {/if}
         </div>

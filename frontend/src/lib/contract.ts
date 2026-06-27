@@ -74,6 +74,33 @@ export interface GpBaseline {
   error?: number | null
   complexity?: number | null
 }
+// —— 版本结构 diff（GA-4 GraphDiffJson；GP「看它长出什么」彩蛋 GA-6b Phase 3 用）——
+export interface DiffNodeJson {
+  id: string
+  /** 角色：parameter / Forrester 类（state/rate/…）/ external。 */
+  kind: string
+}
+export interface EqChangeJson {
+  output: string
+  from_id: string
+  to_id: string
+}
+/** before→after 结构 diff（按本地名）。受约束 GP 只动一条方程 → 主要看 added_edges（长出的新依赖）
+ *  + changed_equations（形式变了的方程，前端给它打脉冲）。added_nodes 一般为空（GP 不引入新变量）。 */
+export interface GraphDiffJson {
+  schema_version: number
+  added_nodes: DiffNodeJson[]
+  removed_nodes: DiffNodeJson[]
+  kept_nodes: number
+  added_edges: [string, string][]
+  removed_edges: [string, string][]
+  kept_edges: number
+  added_equations?: string[]
+  removed_equations?: string[]
+  changed_equations?: EqChangeJson[]
+  distance: number
+  edge_similarity: number
+}
 /** 一个候选（单靶 ParetoEntry 或联合的一个 slot 都满足）。 */
 export interface GpCandidate {
   target?: string
@@ -89,6 +116,8 @@ export interface GpCandidate {
   provenance_stub?: string
   yaml_fragment?: string
   consts?: number[]
+  /** 采纳此候选相对现有模型的结构 diff（GP「看它长出什么」3D 生长动画用）。 */
+  structure_diff?: GraphDiffJson
 }
 /** 前沿一点：单靶=候选本身（扁平字段）；联合=含 slots。 */
 export interface GpFrontEntry extends Partial<GpCandidate> {
