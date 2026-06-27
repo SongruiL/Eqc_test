@@ -343,7 +343,7 @@ mod tests {
             parameters,
             variables: Default::default(),
             equations: vec![],
-        }
+         structure: None }
     }
 
     #[test]

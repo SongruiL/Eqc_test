@@ -801,7 +801,7 @@ mod tests {
             init: None,
             rate: None,
             prev: None,
-        };
+         instance: None };
         variables.insert("y".to_string(), var(VariableType::Output, "kPa"));
         variables.insert("x".to_string(), var(VariableType::Input, "degC"));
 
@@ -829,8 +829,8 @@ mod tests {
                 expression: Expr::mul(Expr::var("x"), Expr::Const(2.0)),
                 formula_display: None,
                 reference: None, gp_target: None,
-            }],
-        };
+             instance: None }],
+         structure: None };
         let files = vec![file];
         let dag = crate::dag::build_dag(&files).unwrap();
         let html = generate_report(&files, &dag);
@@ -869,7 +869,7 @@ mod tests {
             init,
             rate: rate.map(|s| s.to_string()),
             prev: None,
-        };
+         instance: None };
         let mut variables = indexmap::IndexMap::new();
         variables.insert("T".into(), mk(Some(VarClass::Driving), VariableType::Input, None, None));
         variables.insert("R".into(), mk(Some(VarClass::Rate), VariableType::Intermediate, None, None));
@@ -879,8 +879,8 @@ mod tests {
             meta: Metadata { id: "M".into(), model: "M".into(), name_cn: "动态".into(), name_en: None, version: "1.0".into(), description: None, reference: None, source_files: vec![], dt: 1.0, dt_seconds: None, calibration: None, modules: Default::default() },
             parameters: Default::default(),
             variables,
-            equations: vec![Equation { id: "E".into(), name: "速率".into(), output: "R".into(), expression: Expr::mul(Expr::var("T"), Expr::Const(2.0)), formula_display: None, reference: None, gp_target: None }],
-        };
+            equations: vec![Equation { id: "E".into(), name: "速率".into(), output: "R".into(), expression: Expr::mul(Expr::var("T"), Expr::Const(2.0)), formula_display: None, reference: None, gp_target: None , instance: None }],
+         structure: None };
         let files = vec![file];
         let dag = crate::dag::build_dag(&files).unwrap();
         let html = generate_report(&files, &dag);

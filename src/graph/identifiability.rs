@@ -184,7 +184,7 @@ mod tests {
                 init: None,
                 rate: None,
                 prev: None,
-            },
+             instance: None },
         );
     }
 
@@ -229,7 +229,7 @@ mod tests {
                 init: Some(0.0),
                 rate: Some("rate".into()),
                 prev: None,
-            },
+             instance: None },
         );
         mark(&mut f, "y", true, VariableType::Output);
         let r = analyze_identifiability(&[f]);

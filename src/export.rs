@@ -689,7 +689,7 @@ mod tests {
             init: Some(19.9),
             rate: Some(rate.into()),
             prev: None,
-        }
+         instance: None }
     }
 
     #[test]
@@ -720,8 +720,8 @@ mod tests {
                 expression: crate::ast::Expr::mul(crate::ast::Expr::var("I"), crate::ast::Expr::var("LUE")),
                 formula_display: None,
                 reference: None, gp_target: None,
-            }],
-        };
+             instance: None }],
+         structure: None };
         let files = vec![file];
         let m = to_model_json(&files);
         assert_eq!(m.schema_version, SCHEMA_VERSION);
@@ -768,7 +768,7 @@ mod tests {
                 monotone,
                 frozen: false,
             }),
-        };
+         instance: None };
         let plain = Equation {
             id: "BB5-LAI".into(),
             name: "叶面积".into(),
@@ -777,7 +777,7 @@ mod tests {
             formula_display: None,
             reference: None,
             gp_target: None,
-        };
+         instance: None };
         let mut variables = IndexMap::new();
         variables.insert("dormancy_released".to_string(), dyn_var("r1"));
         let file = EquationFile {
@@ -790,7 +790,7 @@ mod tests {
             parameters: Default::default(),
             variables,
             equations: vec![tagged, plain],
-        };
+         structure: None };
         let files = vec![file];
         let m = to_model_json(&files);
         // 标记方程：契约里带 gp_target

@@ -533,7 +533,7 @@ mod tests {
                     init: None,
                     rate: None,
                     prev: None,
-                },
+                 instance: None },
             );
         }
         let gt = |g: &str| Some(GpTarget {
@@ -552,10 +552,10 @@ mod tests {
             parameters: IndexMap::new(),
             variables,
             equations: vec![
-                Equation { id: "A".into(), name: "A".into(), output: "yA".into(), expression: Expr::var("chill"), formula_display: None, reference: None, gp_target: gt("monotone_gate") },
-                Equation { id: "B".into(), name: "B".into(), output: "yB".into(), expression: Expr::var("lai"), formula_display: None, reference: None, gp_target: gt("saturating_sink") },
+                Equation { id: "A".into(), name: "A".into(), output: "yA".into(), expression: Expr::var("chill"), formula_display: None, reference: None, gp_target: gt("monotone_gate") , instance: None },
+                Equation { id: "B".into(), name: "B".into(), output: "yB".into(), expression: Expr::var("lai"), formula_display: None, reference: None, gp_target: gt("saturating_sink") , instance: None },
             ],
-        }
+         structure: None }
     }
 
     /// ★ Pareto-joint：联合前沿非支配、含低误差、复杂度升序。

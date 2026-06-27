@@ -59,6 +59,13 @@ pub struct Equation {
     /// GP 进化靶点标记（受约束 GP；缺省 = 机理基座、冻结）。
     #[serde(default)]
     pub gp_target: Option<GpTarget>,
+
+    /// FSPM 器官实例身份（地基，见 `docs/spec-fspm-foundation.md`）。
+    ///
+    /// 由 `structure:`/`cohorts:` 加载期实例化时填（对实体每实例展开一份）；**引擎不读、下游读**。
+    /// `None` = 整株共享 / 非结构方程。additive：缺省时序列化跳过，现有模型逐字节不变。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance: Option<crate::schema::InstanceTag>,
 }
 
 impl Equation {

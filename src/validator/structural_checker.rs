@@ -94,7 +94,7 @@ mod tests {
                     init: None,
                     rate: None,
                     prev: None,
-                },
+                 instance: None },
             );
             f
         };

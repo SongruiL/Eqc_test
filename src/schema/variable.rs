@@ -201,6 +201,13 @@ pub struct Variable {
     /// 其中 `RFG_prev` 声明 `prev: RFG`）。同样不在 `equations:` 里写表达式。
     #[serde(default)]
     pub prev: Option<String>,
+
+    /// FSPM 器官实例身份（地基，见 `docs/spec-fspm-foundation.md`）。
+    ///
+    /// 由 `structure:`/`cohorts:` 加载期实例化时填；**引擎不读、下游读**（NodeResolver/图/契约）。
+    /// `None` = 整株共享 / 非结构量。additive：缺省时序列化跳过，现有模型逐字节不变。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance: Option<super::InstanceTag>,
 }
 
 impl Variable {
@@ -287,7 +294,7 @@ mod tests {
             init: None,
             rate: None,
             prev: None,
-        }
+         instance: None }
     }
 
     #[test]

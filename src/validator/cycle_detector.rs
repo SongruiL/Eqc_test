@@ -100,7 +100,7 @@ mod tests {
                     expression: expr,
                     formula_display: None,
                     reference: None, gp_target: None,
-                }
+                 instance: None }
             })
             .collect();
 
@@ -122,7 +122,7 @@ mod tests {
             parameters: Default::default(),
             variables: Default::default(),
             equations: eqs,
-        }
+         structure: None }
     }
 
     #[test]

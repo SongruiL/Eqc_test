@@ -844,7 +844,7 @@ mod tests {
                 init: None,
                 rate: None,
                 prev: None,
-            }
+             instance: None }
         }
         fn eq(id: &str, output: &str, expr: &str) -> Equation {
             Equation {
@@ -854,7 +854,7 @@ mod tests {
                 expression: parse_to_expr(expr).unwrap(),
                 formula_display: None,
                 reference: None, gp_target: None,
-            }
+             instance: None }
         }
 
         let mut variables = indexmap::IndexMap::new();
@@ -889,7 +889,7 @@ mod tests {
                 // 错误2：超越函数参数带量纲（exp(温度)）
                 eq("BAD_EXP", "Bad", "(exp Tmax)"),
             ],
-        };
+         structure: None };
 
         let diags = check_equation_file(&file);
         // OK 方程不应有诊断
@@ -960,7 +960,7 @@ mod tests {
                 init: None,
                 rate: None,
                 prev: None,
-            }
+             instance: None }
         }
         fn invar(unit: &str, src: &str) -> Variable {
             Variable {
@@ -977,7 +977,7 @@ mod tests {
                 init: None,
                 rate: None,
                 prev: None,
-            }
+             instance: None }
         }
         fn meta(id: &str) -> Metadata {
             Metadata {
@@ -1004,7 +1004,7 @@ mod tests {
             parameters: Default::default(),
             variables: a_vars,
             equations: vec![],
-        };
+         structure: None };
 
         // 模块 B 输入 t（需要秒，来自 A.dur）与 bad（错误地声明为米）
         let mut b_vars = indexmap::IndexMap::new();
@@ -1015,7 +1015,7 @@ mod tests {
             parameters: Default::default(),
             variables: b_vars,
             equations: vec![],
-        };
+         structure: None };
 
         let diags = check_coupling(&[file_a, file_b]);
         // A.dur(小时) -> B.t(秒)：需换算 ×3600

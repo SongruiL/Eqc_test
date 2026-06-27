@@ -198,7 +198,7 @@ mod tests {
             init,
             rate: rate.map(|s| s.to_string()),
             prev: None,
-        }
+         instance: None }
     }
 
     #[test]
@@ -219,8 +219,8 @@ mod tests {
                 expression: Expr::mul(Expr::var("T"), Expr::Const(2.0)),
                 formula_display: None,
                 reference: None, gp_target: None,
-            }],
-        };
+             instance: None }],
+         structure: None };
         let code = generate_python_simulator(&file).expect("动态模型应生成仿真器");
         assert!(code.contains("def simulate("));
         assert!(code.contains("def _rec(")); // 展平记录 helper（标量/向量通吃）
@@ -249,8 +249,8 @@ mod tests {
                 expression: Expr::var("a"),
                 formula_display: None,
                 reference: None, gp_target: None,
-            }],
-        };
+             instance: None }],
+         structure: None };
         assert!(generate_python_simulator(&file).is_none());
     }
 }

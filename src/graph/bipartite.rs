@@ -224,7 +224,7 @@ pub(crate) mod tests {
                     formula_display: None,
                     reference: None,
                     gp_target: None,
-                }
+                 instance: None }
             })
             .collect();
         EquationFile {
@@ -245,7 +245,7 @@ pub(crate) mod tests {
             parameters: Default::default(),
             variables: Default::default(),
             equations: eqs,
-        }
+         structure: None }
     }
 
     #[test]

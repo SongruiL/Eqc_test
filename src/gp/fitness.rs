@@ -135,7 +135,7 @@ mod tests {
                 init: None,
                 rate: None,
                 prev: None,
-            },
+             instance: None },
         );
         variables.insert(
             "y".to_string(),
@@ -153,7 +153,7 @@ mod tests {
                 init: None,
                 rate: None,
                 prev: None,
-            },
+             instance: None },
         );
         let mut mono = IndexMap::new();
         mono.insert("d".to_string(), "increasing".to_string());
@@ -189,8 +189,8 @@ mod tests {
                     monotone: mono,
                     frozen: false,
                 }),
-            }],
-        }
+             instance: None }],
+         structure: None }
     }
 
     /// context_from_target 正确读出语法 + 上下文。

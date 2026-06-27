@@ -215,7 +215,7 @@ mod tests {
                 init: None,
                 rate: None,
                 prev: None,
-            },
+             instance: None },
         );
 
         let file = EquationFile {
@@ -229,8 +229,8 @@ mod tests {
                 expression: Expr::add(Expr::param("p1"), Expr::var("x")),
                 formula_display: None,
                 reference: None, gp_target: None,
-            }],
-        };
+             instance: None }],
+         structure: None };
 
         let errors = check_references(&file);
         assert!(errors.is_empty(), "不应有错误: {:?}", errors);
@@ -249,8 +249,8 @@ mod tests {
                 expression: Expr::param("p1"), // 引用未定义的参数
                 formula_display: None,
                 reference: None, gp_target: None,
-            }],
-        };
+             instance: None }],
+         structure: None };
 
         let errors = check_references(&file);
         assert_eq!(errors.len(), 1);
@@ -276,8 +276,8 @@ mod tests {
                 expression: Expr::var("x"), // 引用未定义的变量
                 formula_display: None,
                 reference: None, gp_target: None,
-            }],
-        };
+             instance: None }],
+         structure: None };
 
         let errors = check_references(&file);
         assert_eq!(errors.len(), 1);
@@ -305,7 +305,7 @@ mod tests {
                     expression: Expr::constant(1.0),
                     formula_display: None,
                     reference: None, gp_target: None,
-                },
+                 instance: None },
                 Equation {
                     id: "E2".to_string(),
                     name: "方程2".to_string(),
@@ -313,9 +313,9 @@ mod tests {
                     expression: Expr::var("a"), // 引用 E1 的输出
                     formula_display: None,
                     reference: None, gp_target: None,
-                },
+                 instance: None },
             ],
-        };
+         structure: None };
 
         let errors = check_references(&file);
         assert!(errors.is_empty(), "引用其他方程输出应该有效: {:?}", errors);
@@ -341,7 +341,7 @@ mod tests {
                 init: Some(0.0),
                 rate: Some("DDM".to_string()),
                 prev: None,
-            },
+             instance: None },
         );
         let file = EquationFile {
             meta: create_test_metadata(),
@@ -355,8 +355,8 @@ mod tests {
                 expression: Expr::mul(Expr::var("DAT"), Expr::constant(2.0)),
                 formula_display: None,
                 reference: None, gp_target: None,
-            }],
-        };
+             instance: None }],
+         structure: None };
         let errors = check_references(&file);
         assert!(errors.is_empty(), "状态量无方程 + 引用 DAT 应通过: {errors:?}");
     }
@@ -375,7 +375,7 @@ mod tests {
                     expression: Expr::constant(1.0),
                     formula_display: None,
                     reference: None, gp_target: None,
-                },
+                 instance: None },
                 Equation {
                     id: "E1".to_string(), // 重复 ID
                     name: "方程2".to_string(),
@@ -383,9 +383,9 @@ mod tests {
                     expression: Expr::constant(2.0),
                     formula_display: None,
                     reference: None, gp_target: None,
-                },
+                 instance: None },
             ],
-        };
+         structure: None };
 
         let errors = check_references(&file);
         assert!(errors.iter().any(|e| matches!(

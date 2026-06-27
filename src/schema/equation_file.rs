@@ -22,6 +22,13 @@ pub struct EquationFile {
     /// 方程定义
     #[serde(default)]
     pub equations: Vec<Equation>,
+
+    /// FSPM 结构（器官实例 + 拓扑的单一真相源，地基见 `docs/spec-fspm-foundation.md`）。
+    ///
+    /// 由 `structure:` 段（或 `cohorts:` lower）加载期实例化时填；**引擎不读、下游读**。
+    /// `None` = 纯 Functional 模型。additive：缺省时序列化跳过，现有模型逐字节不变。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structure: Option<super::StructureInfo>,
 }
 
 /// 文件元数据
@@ -246,8 +253,8 @@ mod tests {
                 expression: expr,
                 formula_display: None,
                 reference: None, gp_target: None,
-            }],
-        };
+             instance: None }],
+         structure: None };
 
         file.reclassify_parameters();
         let pref = file.equations[0].expression.get_parameter_refs();
@@ -275,7 +282,7 @@ mod tests {
             init: None,
             rate: None,
             prev: None,
-        };
+         instance: None };
         let mut variables = IndexMap::new();
         variables.insert("Y".to_string(), var(Some("鲜重产量"))); // ① 有 label
         variables.insert("DM".to_string(), var(None)); // ② 无 label，是方程输出
@@ -319,8 +326,8 @@ mod tests {
                 expression: Expr::var("Y"),
                 formula_display: None,
                 reference: None, gp_target: None,
-            }],
-        };
+             instance: None }],
+         structure: None };
         assert_eq!(file.display_name("Y"), "鲜重产量"); // ① 变量 label 最高优先
         assert_eq!(file.display_name("DM"), "干物质"); // ② 回退到方程中文名（不取 description）
         assert_eq!(file.display_name("Kc"), "作物系数"); // ③ 参数 name_cn
@@ -344,7 +351,7 @@ mod tests {
             init: Some(0.0),
             rate: Some("rate_CBuf".into()),
             prev: None,
-        };
+         instance: None };
         let prev = Variable {
             var_type: VariableType::Intermediate,
             dtype: DataType::Float,
@@ -359,7 +366,7 @@ mod tests {
             init: Some(0.0),
             rate: None,
             prev: Some("C_Buf".into()),
-        };
+         instance: None };
         let mut variables = IndexMap::new();
         variables.insert("C_Buf".to_string(), state);
         variables.insert("C_Buf_prev".to_string(), prev);
@@ -381,7 +388,7 @@ mod tests {
             parameters: Default::default(),
             variables,
             equations: vec![],
-        };
+         structure: None };
         // prev 寄存器派生「源 label（上一步）」
         assert_eq!(file.display_name("C_Buf_prev"), "碳缓冲库（上一步）");
         // 源本身用自己的 label
