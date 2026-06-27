@@ -34,7 +34,7 @@ pub mod metrics;
 
 pub use bipartite::{BipartiteGraph, EqNode, NodeResolver};
 pub use diff::{diff_models, DiffNode, EqChange, GraphDiff};
-pub use digraph::DiGraph;
+pub use digraph::{integration_edges, DiGraph};
 pub use dm::{analyze_graph, analyze_structure, SolveBlock, StructureReport};
 pub use identifiability::{analyze_identifiability, IdentifiabilityReport, ParamReach};
 pub use layout3d::{layout3d, Layout3d, Node3d};

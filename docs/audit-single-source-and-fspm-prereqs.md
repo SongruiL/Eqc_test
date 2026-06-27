@@ -78,3 +78,15 @@
 - **第三档·FSPM 地基（设计先行、不急着写）**：风险1+2（实例身份 schema 段 + NodeResolver 实例维度）作为 FSPM 的第一张 spec；风险3（AST 拓扑聚合算子）；风险4（多源 rate）；风险5（真实几何，独立新模块）。
 
 **未决**：数据就绪演练（真数据格式 → 录入 → 标定 → GP → 看 diff → 采纳的端到端 dry-run）——等气象/作物数据到（~7月）再做，与本架构审计正交。
+
+---
+
+## 5. 处置进度
+
+**第一档低风险清债 ✅ 已完成（2026-06-27）**，两 feature 配置 288 lib 绿 + svelte-check 0 错 + Playwright 6 passed：
+- **F3 ✅** 删僵尸 `store.topoHasModules`：核实它只在 Topology3d 同函数内"写完即读"（禁用「按子系统」实际由 Structure 直接读 `contract.has_modules`），改成局部判定、删 store 字段。
+- **F2 ✅** `contract.ts` 的 `VarJson` 补 `rate?`/`prev?` 两字段，恢复"对着 export 写类型"的承诺。
+- **B1 ✅** 抽 `graph::integration_edges(files)`（单一真相源：rate→state=物质流 / prev→semistate=信息流，命名留调用方）；`DiGraph::from_files` 与 `report::forrester_svg` 都改用它 → 双份积分边收口、规则一改两处自动一致。
+- **O1 ◑ 拆弹（批量删分支另议）**：`expr.rs` 三套 codegen 里 **mod/sign 两个最易漂的算子分支**（to_rust 的 `rem_euclid`/`signum` 与注册表 floored/sgn(0)=0 已不一致）改成 `unreachable!()`，**哑弹拆除**（失败即响、不再生成错代码、保穷尽性）。其余 ~50 个不可达死分支（语义正确、非漂移）**仍归"专门宏重构"**（生成 enum+dispatch 保穷尽性，见 [[eqc-roadmap]] 早记的 codegen-dead-arm 重构）——非低风险项，不在本档。
+
+**第二档（补能力漂移：F1 GP/Couple 命令、Entry 保存、2D level/layout/zoom、B2 旁白下沉、B3 配色收编、F4 knob kind）+ 第三档（FSPM 地基设计）待用户拍板。**

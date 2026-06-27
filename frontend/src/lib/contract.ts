@@ -39,6 +39,10 @@ export interface VarJson {
   /** 红绿灯取整季哪个值："min"/"max"/"final"；缺省由 stress_factor 推断。 */
   stress_reduce?: string
   init?: number
+  /** 积分状态量的速率来源变量名（X[n]=X[n-1]+rate·dt）；非状态量省略。镜像后端 VarJson.rate。 */
+  rate?: string
+  /** 延迟寄存器（semi_state）的上一步来源变量名；非延迟量省略。镜像后端 VarJson.prev。 */
+  prev?: string
 }
 
 export interface GpTargetJson {

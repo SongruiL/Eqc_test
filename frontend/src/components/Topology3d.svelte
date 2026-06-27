@@ -151,8 +151,9 @@
     }
     presentModules = [...modColor.keys()]
     hasOther = data.nodes.some((n) => !n.module)
-    store.topoHasModules = presentModules.length > 0
-    if (!store.topoHasModules) store.topoColorMode = 'class' // 无子系统 → 复位，切换控件与显示一致
+    // 本模型有无子系统：写完即用的局部判定（禁用「按子系统」由 Structure 直接读 contract.has_modules，
+    // 故无需提到 store——见单一真相源审计 F3）。无子系统则复位配色模式，控件与显示一致。
+    if (presentModules.length === 0) store.topoColorMode = 'class'
     nodePos = new Map<string, THREE.Vector3>()
     for (const n of data.nodes) {
       const ln = localName(n.id)

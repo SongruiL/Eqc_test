@@ -18,6 +18,25 @@ use crate::schema::{EquationFile, VariableType};
 
 use super::bipartite::NodeResolver;
 
+/// 模型里"积分/延迟"字段蕴含的有向边——**单一真相源**（避免影响图与 2D Forrester 报告各推一遍而悄悄分叉）。
+/// 哪个变量字段蕴含边、边的方向、是不是物质流，都只定义在这里：`rate源→state`=物质流(`true`)、
+/// `prev源→semistate`=信息流(`false`)，边都**指向该变量**。返回 `(module_id, 源本地名, 目标变量本地名, is_material)`；
+/// 命名（影响图走 [`NodeResolver`] 折叠 / Forrester 走 `MODULE.name`）留给调用方按各自约定拼。
+pub fn integration_edges(files: &[EquationFile]) -> Vec<(&str, &str, &str, bool)> {
+    let mut out = Vec::new();
+    for f in files {
+        for (name, v) in &f.variables {
+            if let Some(r) = &v.rate {
+                out.push((f.meta.id.as_str(), r.as_str(), name.as_str(), true)); // 速率→存量
+            }
+            if let Some(p) = &v.prev {
+                out.push((f.meta.id.as_str(), p.as_str(), name.as_str(), false)); // 延迟源→半状态
+            }
+        }
+    }
+    out
+}
+
 /// 有向影响图（邻接表 + 反向邻接表，节点用下标索引）。
 #[derive(Debug, Clone)]
 pub struct DiGraph {
@@ -60,12 +79,6 @@ impl DiGraph {
             for (vname, var) in &f.variables {
                 let node = resolver.resolve(m, vname);
                 push_name(node.clone(), &mut names, &mut seen_name);
-                if let Some(src) = &var.rate {
-                    raw.push((resolver.resolve(m, src), node.clone())); // rate源 → state
-                }
-                if let Some(src) = &var.prev {
-                    raw.push((resolver.resolve(m, src), node.clone())); // prev源 → semistate
-                }
                 if var.var_type == VariableType::Input {
                     if let Some((sm, sv)) = var.parse_source() {
                         let up = format!("{sm}.{sv}");
@@ -78,6 +91,10 @@ impl DiGraph {
             for pname in f.parameters.keys() {
                 push_name(format!("{m}.{pname}"), &mut names, &mut seen_name);
             }
+        }
+        // 积分/延迟边走单一真相源 `integration_edges`（与 Forrester 报告共用规则）；本图按 NodeResolver 折叠命名。
+        for (m, src, var, _is_material) in integration_edges(files) {
+            raw.push((resolver.resolve(m, src), resolver.resolve(m, var)));
         }
 
         // 2) 建索引。

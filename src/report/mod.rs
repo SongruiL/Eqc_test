@@ -454,21 +454,15 @@ fn forrester_svg(files: &[EquationFile], dag: &Dag, kind: LayoutKind, color: Col
     // 按子系统配色：子系统名 → 浅调（2D，单一真相源 palette）；非命名子系统回中性灰。
     let mcol = crate::palette::module_colors(files);
 
-    // 边：DAG 的数据流边（信息流）+ schema 蕴含的积分边（速率→存量，物质流）+ 延迟边（虚线信息流）
+    // 边：DAG 的数据流边（信息流）+ schema 蕴含的积分边（速率→存量，物质流）+ 延迟边（虚线信息流）。
+    // 积分/延迟边走单一真相源 `graph::integration_edges`（与影响图 DiGraph 共用规则，规则一改两处自动一致）；
+    // 此处按 Forrester 的 `MODULE.name` 命名拼，并保留 is_material 标记。
     let mut edges: Vec<(String, String, bool)> = Vec::new(); // (from, to, is_material)
     for e in &dag.edges {
         edges.push((e.from.clone(), e.to.clone(), false));
     }
-    for f in files {
-        for (name, v) in &f.variables {
-            let to = format!("{}.{}", f.meta.id, name);
-            if let Some(r) = &v.rate {
-                edges.push((format!("{}.{}", f.meta.id, r), to.clone(), true)); // 积分=物质流
-            }
-            if let Some(p) = &v.prev {
-                edges.push((format!("{}.{}", f.meta.id, p), to.clone(), false)); // 延迟=信息流
-            }
-        }
+    for (m, src, var, is_material) in crate::graph::integration_edges(files) {
+        edges.push((format!("{m}.{src}"), format!("{m}.{var}"), is_material));
     }
     edges.retain(|(a, b, _)| idset.contains(a.as_str()) && idset.contains(b.as_str()));
 

@@ -4162,12 +4162,12 @@ impl Expr {
             Expr::Neg(a) => format!("(-{})", a.to_python(params_prefix)),
             Expr::Pow(a, b) => format!("({} ** {})", a.to_python(params_prefix), b.to_python(params_prefix)),
             Expr::Abs(a) => format!("np.abs({})", a.to_python(params_prefix)),
-            Expr::Mod(a, b) => format!("np.mod({}, {})", a.to_python(params_prefix), b.to_python(params_prefix)),
+            Expr::Mod(..) => unreachable!("mod 由算子注册表 fast-path 生成（src/ops，floored 语义）"),
             Expr::Ceil(a) => format!("np.ceil({})", a.to_python(params_prefix)),
             Expr::Floor(a) => format!("np.floor({})", a.to_python(params_prefix)),
             Expr::Round(a) => format!("np.round({})", a.to_python(params_prefix)),
             Expr::Trunc(a) => format!("np.trunc({})", a.to_python(params_prefix)),
-            Expr::Sign(a) => format!("np.sign({})", a.to_python(params_prefix)),
+            Expr::Sign(..) => unreachable!("sign 由算子注册表 fast-path 生成（src/ops，sgn(0)=0）"),
 
             // 超越函数
             Expr::Exp(a) => format!("np.exp({})", a.to_python(params_prefix)),
@@ -4805,12 +4805,12 @@ impl Expr {
             Expr::Neg(a) => format!("(-{})", a.to_rust()),
             Expr::Pow(a, b) => format!("{}.powf({})", a.to_rust(), b.to_rust()),
             Expr::Abs(a) => format!("{}.abs()", a.to_rust()),
-            Expr::Mod(a, b) => format!("{}.rem_euclid({})", a.to_rust(), b.to_rust()),
+            Expr::Mod(..) => unreachable!("mod 由算子注册表 fast-path 生成（src/ops，floored 而非 rem_euclid）"),
             Expr::Ceil(a) => format!("{}.ceil()", a.to_rust()),
             Expr::Floor(a) => format!("{}.floor()", a.to_rust()),
             Expr::Round(a) => format!("{}.round()", a.to_rust()),
             Expr::Trunc(a) => format!("{}.trunc()", a.to_rust()),
-            Expr::Sign(a) => format!("{}.signum()", a.to_rust()),
+            Expr::Sign(..) => unreachable!("sign 由算子注册表 fast-path 生成（src/ops，sgn(0)=0 而非 signum）"),
 
             // 超越函数
             Expr::Exp(a) => format!("{}.exp()", a.to_rust()),
@@ -5449,12 +5449,12 @@ impl Expr {
             Expr::Neg(a) => format!("-{}", a.to_latex()),
             Expr::Pow(a, b) => format!("{}^{{{}}}", a.to_latex(), b.to_latex()),
             Expr::Abs(a) => format!("|{}|", a.to_latex()),
-            Expr::Mod(a, b) => format!("{} \\mod {}", a.to_latex(), b.to_latex()),
+            Expr::Mod(..) => unreachable!("mod 由算子注册表 fast-path 生成（src/ops）"),
             Expr::Ceil(a) => format!("\\lceil {} \\rceil", a.to_latex()),
             Expr::Floor(a) => format!("\\lfloor {} \\rfloor", a.to_latex()),
             Expr::Round(a) => format!("\\text{{round}}({})", a.to_latex()),
             Expr::Trunc(a) => format!("\\text{{trunc}}({})", a.to_latex()),
-            Expr::Sign(a) => format!("\\text{{sgn}}({})", a.to_latex()),
+            Expr::Sign(..) => unreachable!("sign 由算子注册表 fast-path 生成（src/ops）"),
 
             // 超越函数
             Expr::Exp(a) => format!("e^{{{}}}", a.to_latex()),
