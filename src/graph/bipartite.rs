@@ -12,24 +12,30 @@
 //! 节点命名复用 DAG 约定 `MODULE.name`；跨模块 `source:` 输入折叠进上游 output 节点
 //! （即耦合边两端归一成同一个变量节点），使多模块系统作为**一个**结构系统分析。
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
-use crate::schema::{EquationFile, VariableType};
+use crate::schema::{EquationFile, InstanceTag, VariableType};
 
 /// 节点命名的**单一真相源**：把「(模块, 本地名)」规范化成图节点 id `MODULE.name`，
 /// 并把跨模块 `source:` 输入折叠进上游 output 节点（耦合边两端归一）。
 ///
 /// GA-1 二部图与 GA-2 有向影响图共用，保证两张图节点命名一致。
+/// **FSPM 地基风险2**：额外携带 `identity`（节点 id → 器官实例身份），让图层（bipartite/digraph
+/// 及其上的结构分析/3D/契约）**经此一处**获得实例感知 —— 能把同一实体的 N 个实例节点折叠/上色，
+/// 任何消费者不必反解 `__i` 字符串。
 #[derive(Debug, Clone)]
 pub struct NodeResolver {
     /// (模块 id, 本地变量名) → 规范化节点 id。
     canon: HashMap<(String, String), String>,
+    /// 节点 id → 器官实例身份（结构/cohort 实例化的变量才有）。
+    identity: HashMap<String, InstanceTag>,
 }
 
 impl NodeResolver {
-    /// 扫描所有文件的变量声明，建解析表。
+    /// 扫描所有文件的变量声明，建解析表 + 实例身份表。
     pub fn build(files: &[EquationFile]) -> NodeResolver {
         let mut canon: HashMap<(String, String), String> = HashMap::new();
+        let mut identity: HashMap<String, InstanceTag> = HashMap::new();
         for f in files {
             let m = &f.meta.id;
             for (vname, var) in &f.variables {
@@ -41,10 +47,13 @@ impl NodeResolver {
                 } else {
                     format!("{m}.{vname}")
                 };
+                if let Some(tag) = &var.instance {
+                    identity.insert(id.clone(), tag.clone());
+                }
                 canon.insert((m.clone(), vname.clone()), id);
             }
         }
-        NodeResolver { canon }
+        NodeResolver { canon, identity }
     }
 
     /// 在某模块上下文里规范化一个被引用/输出的名字（未声明的名字 → 直接 `模块.名字`）。
@@ -54,6 +63,33 @@ impl NodeResolver {
             .cloned()
             .unwrap_or_else(|| format!("{module}.{name}"))
     }
+
+    /// 节点的器官实例身份（结构/cohort 实例化的变量才有；`None` = 整株共享/非结构量）。
+    pub fn identity(&self, node_id: &str) -> Option<&InstanceTag> {
+        self.identity.get(node_id)
+    }
+}
+
+/// 按器官折叠（FSPM 地基风险2）：`entity → (instance_id → 该实例的全部节点 id)`。
+/// 结构/cohort 模型用（无结构 → 空）；下游（结构分析 CLI、3D 聚团、契约）据此把同一实体的
+/// N 个实例节点归并/上色 —— 经 [`NodeResolver`] 单一真相源，不反解字符串。BTreeMap 保证确定序。
+pub fn organ_groups(files: &[EquationFile]) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
+    let resolver = NodeResolver::build(files);
+    let mut out: BTreeMap<String, BTreeMap<String, Vec<String>>> = BTreeMap::new();
+    for f in files {
+        let m = &f.meta.id;
+        for vname in f.variables.keys() {
+            let id = resolver.resolve(m, vname);
+            if let Some(tag) = resolver.identity(&id) {
+                out.entry(tag.entity.clone())
+                    .or_default()
+                    .entry(tag.id.clone())
+                    .or_default()
+                    .push(id);
+            }
+        }
+    }
+    out
 }
 
 /// 二部图里的一个方程节点。

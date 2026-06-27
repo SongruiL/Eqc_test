@@ -525,4 +525,37 @@ equations:
         assert_eq!(kinds.iter().filter(|k| *k == "succession").count(), 2);
         assert_eq!(kinds.iter().filter(|k| *k == "contains").count(), 6);
     }
+
+    #[test]
+    fn test_organ_groups_after_full_parse() {
+        // 地基风险2：结构模型经完整加载（实例化 + 反序列化）→ 图层 organ_groups 按器官折叠节点。
+        let file = crate::parser::parse_str(
+            r#"
+meta: { id: M, model: M, name_cn: t }
+structure:
+  entities:
+    metamer: { count: 3, topology: chain }
+    fruit:   { per: metamer, count: 2 }
+variables:
+  leaf: { of: metamer, class: state, init: 0, rate: lg }
+  lg:   { of: metamer, class: rate }
+  fm:   { of: fruit, class: state, init: 0, rate: fg }
+  fg:   { of: fruit, class: rate }
+  T:    { type: input }
+equations:
+  - { id: LG, name: 叶, for: metamer, output: lg, expression: { ref: T } }
+  - { id: FG, name: 果, for: fruit,   output: fg, expression: { ref: leaf, of: parent } }
+"#,
+        )
+        .unwrap();
+        let g = crate::graph::organ_groups(std::slice::from_ref(&file));
+        assert_eq!(g.len(), 2);
+        assert_eq!(g["metamer"].len(), 3); // 3 节
+        assert_eq!(g["fruit"].len(), 6); // 2×3 果
+        // metamer#2 的节点含 leaf__2 与 lg__2（同实体两变量归一实例）
+        let m2: Vec<&str> = g["metamer"]["2"].iter().map(|s| s.as_str()).collect();
+        assert!(m2.iter().any(|n| n.ends_with(".leaf__2")) && m2.iter().any(|n| n.ends_with(".lg__2")), "{m2:?}");
+        // T（共享、无 of:）不归入任何实体
+        assert!(!g.values().any(|insts| insts.values().any(|ns| ns.iter().any(|n| n.ends_with(".T")))));
+    }
 }

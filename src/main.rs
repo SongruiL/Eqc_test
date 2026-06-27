@@ -1056,6 +1056,19 @@ fn run_structure(input: &PathBuf, json: bool, identifiability: bool, metrics: bo
         println!("   ℹ️  算法匹配与作者 output 指派不同的方程: {}", m.differs_from_author.join(", "));
     }
 
+    // 器官结构（FSPM 地基风险2）：结构/cohort 模型按实体折叠 —— 图层经 NodeResolver 已实例感知，
+    // 同一实体的 N 个实例节点被识别成一组（非 __i 字符串反解）。
+    let organs = equation_compiler::graph::organ_groups(&files);
+    if !organs.is_empty() {
+        println!("\n   🌿 器官结构（FSPM 实例化）：{} 个实体", organs.len());
+        for (entity, insts) in &organs {
+            let ids: Vec<&str> = insts.keys().map(|s| s.as_str()).take(6).collect();
+            let more = if insts.len() > 6 { " …" } else { "" };
+            let per = insts.values().next().map(|v| v.len()).unwrap_or(0);
+            println!("      {entity}: {} 个实例 [{}{}]，每实例 {} 个节点", insts.len(), ids.join(", "), more, per);
+        }
+    }
+
     // 超定。
     if !report.over_determined.is_empty() {
         println!("   ❌ 超定（多条方程写同一 output）: {}", report.over_determined.join(", "));
