@@ -91,7 +91,30 @@ equations:
 - 仿真输出把向量变量**展平**成 `DF[1]/DF[2]/…`（CSV/图表各画一条分量线；Studio 里勾选 `DF` 即画全部分量）。
 - 完整对照：`../strawberry_model/strawberry_v1_vector.eq.yaml`（向量版 **28 变量**）与标量宏展开版 `strawberry_v1.eq.yaml`（**92 变量**）**产量 Y 逐位一致**。设计见 `docs/spec-vector-matrix.md`。矩阵 eval（matmul/det…）尚未实现（后置）。
 
-### 3.4 决策优化（仿真优化）—— 在前向模型上搜最优决策
+### 3.4 FSPM 器官结构（`structure:`，功能-结构地基）
+
+cohort（§3.2/3.3）的一般化：声明**多种器官实体 + 它们的拓扑**，加载期实例化成带**器官身份**的标量（引擎照跑、不感知；下游图/契约/视图按器官折叠）。器官身份是结构化一等数据 `{entity, id}`，不再是 `__i` 字符串。设计见 `docs/spec-fspm-foundation.md`。
+
+```yaml
+structure:
+  entities:
+    metamer: { count: 4, topology: chain }   # 4 个节间，链式（逐节 succession）
+    fruit:   { per: metamer, count: 2 }        # 每节 2 个果（per 父 → contains 边）
+variables:
+  leaf:  { of: metamer, class: state, init: 1.0, rate: leaf_g }  # 按 metamer 索引：每节一份
+  fmass: { of: fruit, class: state, init: 0.0, rate: fg }         # 按 fruit 索引：每果一份
+  assim: { class: state }                                          # 无 of: = 整株共享
+equations:
+  - { id: FG, name: 果生长, for: fruit, output: fg,                # 对每个 fruit 实例成立
+      expression: { ref: leaf, of: parent } }                      # 取所在节(parent metamer)的叶
+```
+
+- 实体：`count: N`（根实体，实例 `1..N`）或 `per: <父实体> + count: M`（每父 M 个，id `父id.k`）；`topology: chain` 生 succession 边。本期实现 `count/chain/per`；`borne_on`（横生果穗）、tree/clonal 留枚举位、后续。
+- 变量 `of: <实体>`（按器官索引，每实例一份）；无 `of:` = 整株共享。
+- 方程 `for: <实体>`（量词化，每实例一份）；`ref` 的 `of: self`（默认）/`prev`/`next`（链邻居，越界→0）/`parent`（per 父）取对应实例；共享量直接写名。
+- `eqc structure` 显「🌿 器官结构」；3D 拓扑图例从契约派生显实体×实例数。cohort 现作向后兼容糖、加载期 lower 到结构（现有草莓模型仿真逐位不变）。本地 demo：`tomato_fspm_demo/`（番茄 4 节间链+每节 2 果）。
+
+### 3.5 决策优化（仿真优化）—— 在前向模型上搜最优决策
 
 前向模型回答「当前条件下系统会怎样」；优化层回答「想要某种结果（产量最大/利润最高/按时上市…）该怎么做」。做法是**在前向模型上搜索**：试一组决策 → 跑仿真 → 用目标方程打分 → 调整再试（不解析反推方程）。设计见 `docs/spec-optimization.md`。
 
@@ -117,7 +140,7 @@ optimize:
 - **多目标（雏形）**：spec 再写一条 `objective2`，即进多目标模式——**单次 MO-DE**（带 Pareto 支配选择 + 拥挤度截断，~40 点）一次跑出**权衡前沿**（如「产量最大 vs CO₂ 用量最小」）。CLI 打印前沿表；Studio 画散点曲线、点选某点即叠加该点整季轨迹。
 - 草莓 S4 实测：最大化产量 → CO₂/Pd 顶界 Y=10.95 kg/m²；利润变体（CO₂ 有成本）→ 最优 CO₂≈757 ppm（内点）；带约束 `max(LAI) ≤ 10`（涌现量）→ 最优 CO₂≈681/Pd=4、Y=9.36、峰值 LAI 恰好顶到 10（约束起作用、可行）。Pd 最优与 `eqc sweep` 网格逐位一致；各最优点用独立 `eqc simulate` 复现逐位一致。
 
-### 3.5 参数标定（用实测数据反推参数）
+### 3.6 参数标定（用实测数据反推参数）
 
 机理模型的结构（方程）来自文献，但参数常是估计值（如 S4 的 `Kc` 注明「待重标定」）。**标定 = 用田间实测反推出最吻合现实的参数**，让模型量级可信——这是「在未标定模型上优化 = 拿错模型推错决策」的解药，也是通往 GP 的桥。设计见 `docs/spec-calibration.md`。
 
