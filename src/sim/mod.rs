@@ -875,6 +875,61 @@ variables:
         assert_eq!(out.series("CT").unwrap(), &[1.0, 3.0]);
     }
 
+    /// FSPM 风险4 第2步：器官门控激活 + 每果热龄。
+    /// 每果按 θ=(节位−1)·phyllo+(果位−1)·ψ 错峰出现（gate），出现前 age 不累积、ss=0；出现后 age 累积。
+    /// 验证 {rank}（第1步）+ 现成算子即可表达器官流的「激活」维度，引擎零改动。
+    #[test]
+    fn test_fspm_organ_gated_activation() {
+        let yaml = r#"
+meta: { id: FSPMG, model: FspmGate, name_cn: 门控激活测试, dt: 1.0 }
+structure:
+  entities:
+    metamer: { count: 2, topology: chain }
+    fruit:   { per: metamer, count: 2 }
+parameters:
+  phyllo: { name_cn: 节phyllochron, default: 10.0 }
+  psi:    { name_cn: 穗内错峰, default: 2.0 }
+  w_app:  { name_cn: 出现ramp宽, default: 1.0 }
+  Tbase:  { name_cn: 果发育基温, default: 0.0 }
+variables:
+  T:    { type: input, class: driving }
+  rate_Tsum: { class: rate }
+  Tsum: { type: output, class: state, init: 0.0, rate: rate_Tsum }
+  theta: { of: fruit, type: output, class: auxiliary }
+  gate:  { of: fruit, type: output, class: auxiliary }
+  rate_age: { of: fruit, class: rate }
+  age:   { of: fruit, type: output, class: state, init: 0.0, rate: rate_age }
+  ss:    { of: fruit, type: output, class: auxiliary }
+equations:
+  - { id: RTS, name: 积温速率, output: rate_Tsum, expression: { ref: T } }
+  - { id: TH, name: 出现阈值, for: fruit, output: theta,
+      expression: { op: add, args: [
+        { op: mul, args: [ { op: sub, args: [ { rank: parent }, { const: 1 } ] }, { ref: phyllo } ] },
+        { op: mul, args: [ { op: sub, args: [ { rank: self },   { const: 1 } ] }, { ref: psi } ] } ] } }
+  - { id: GT, name: 激活门, for: fruit, output: gate,
+      expression: { op: max, args: [ { const: 0.0 }, { op: min, args: [ { const: 1.0 },
+        { op: div, args: [ { op: sub, args: [ { ref: Tsum }, { ref: theta, of: self } ] }, { ref: w_app } ] } ] } ] } }
+  - { id: AG, name: 热龄速率, for: fruit, output: rate_age,
+      expression: { op: mul, args: [ { op: max, args: [ { const: 0.0 }, { op: sub, args: [ { ref: T }, { ref: Tbase } ] } ] }, { ref: gate, of: self } ] } }
+  - { id: SS, name: 汇强占位, for: fruit, output: ss,
+      expression: { op: mul, args: [ { ref: age, of: self }, { ref: gate, of: self } ] } }
+"#;
+        let (_d, file) = write_model(yaml);
+        let out = simulate(&file, &SimInput::new(4).driver("T", vec![10.0, 10.0, 10.0, 10.0])).unwrap();
+
+        // θ 由 {rank} 端到端折出：1.1=0、2.2=(2−1)·10+(2−1)·2=12
+        assert_eq!(out.series("theta__1_1").unwrap(), &[0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(out.series("theta__2_2").unwrap(), &[12.0, 12.0, 12.0, 12.0]);
+        // Tsum = 10,20,30,40
+        assert_eq!(out.series("Tsum").unwrap(), &[10.0, 20.0, 30.0, 40.0]);
+        // fruit 1.1（θ=0）：首步即出现 → age 从 step0 累积
+        assert_eq!(out.series("age__1_1").unwrap(), &[10.0, 20.0, 30.0, 40.0]);
+        // fruit 2.2（θ=12）：Tsum<12 时 gate=0 → age 不动、ss=0；Tsum≥12（step1）后才累积
+        assert_eq!(out.series("gate__2_2").unwrap(), &[0.0, 1.0, 1.0, 1.0]);
+        assert_eq!(out.series("age__2_2").unwrap(), &[0.0, 10.0, 20.0, 30.0]);
+        assert_eq!(out.series("ss__2_2").unwrap(), &[0.0, 10.0, 20.0, 30.0]);
+    }
+
     /// V2：向量参数 + 向量状态量逐元素积分；输出展平成 name[i]。
     #[test]
     fn test_vector_state_integration() {
