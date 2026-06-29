@@ -402,6 +402,27 @@ fn rewrite_refs(v: &Value, ctx: &RefCtx) -> Result<Value, StructureError> {
         return expand_aggregate(m, kind, ctx);
     }
 
+    // FSPM 风险4：实例序号 { rank: self|parent } → 加载期折成常量（实例 id 末段路径分量）。
+    // self = 本实例在同胞组里的 1-based 序号（chain 链位 / per 内位）；parent = 父实例序号（上溯一层）。
+    // 用于器官「错峰出现」阈值（θ = (节位−1)·phyllochron + (果位−1)·ψ）等。类比 cohort 的 {idx}。
+    if let Some(which) = m.get("rank").and_then(Value::as_str) {
+        let cur = ctx.inst.ok_or_else(|| {
+            StructureError::BadRefOf(format!("rank: {which}（需在 for: 方程或聚合 body 内引用）"))
+        })?;
+        let id = match which {
+            "self" => cur.id.as_str(),
+            "parent" => cur.parent.as_deref().ok_or_else(|| {
+                StructureError::BadRefOf(format!("rank: parent（实例 {} 无父实例）", cur.id))
+            })?,
+            other => return Err(StructureError::BadRefOf(format!("rank: {other}（需 self/parent）"))),
+        };
+        // id 末段路径分量转整数（"3.2"→2、"3"→3；compute_instances 保证各段为整数）
+        let last = id.rsplit('.').next().unwrap_or(id);
+        let rank: f64 =
+            last.parse().map_err(|_| StructureError::BadRefOf(format!("rank: 实例 id 末段 {last} 非整数")))?;
+        return Ok(const_value(rank));
+    }
+
     if let Some(name) = m.get("ref").and_then(Value::as_str) {
         let of = m.get("of").and_then(Value::as_str);
         let var_ent = ctx.var_entity.get(name).map(|s| s.as_str());
@@ -725,6 +746,50 @@ equations:
         let kinds: Vec<String> = topo.iter().filter_map(|e| s(e.as_mapping().unwrap(), "kind")).collect();
         assert_eq!(kinds.iter().filter(|k| *k == "succession").count(), 2);
         assert_eq!(kinds.iter().filter(|k| *k == "contains").count(), 6);
+    }
+
+    #[test]
+    fn test_rank_accessor() {
+        // FSPM 风险4：{rank: self} = 实例序号、{rank: parent} = 父序号，加载期折成常量。
+        let src = yaml(
+            r#"
+structure:
+  entities:
+    metamer: { count: 3, topology: chain }
+    fruit:   { per: metamer, count: 2 }
+variables:
+  theta:  { of: fruit, class: auxiliary }
+  m_rank: { of: metamer, class: auxiliary }
+equations:
+  - { id: TH, for: fruit, output: theta,
+      expression: { op: add, args: [ {rank: parent}, {rank: self} ] } }
+  - { id: MR, for: metamer, output: m_rank, expression: { rank: self } }
+"#,
+        );
+        let out = expand_structure(src).unwrap();
+        let eqs = out.get("equations").unwrap().as_sequence().unwrap();
+        let by_id = |id: &str| {
+            eqs.iter().map(|e| e.as_mapping().unwrap()).find(|m| s(m, "id").as_deref() == Some(id)).unwrap().clone()
+        };
+        let cst = |m: &Mapping| m.get("const").and_then(Value::as_f64);
+        // fruit "2.1"：{rank: parent}=metamer 2、{rank: self}=果位 1
+        let th21 = by_id("TH__2_1");
+        let a = th21.get("expression").unwrap().as_mapping().unwrap().get("args").unwrap().as_sequence().unwrap();
+        assert_eq!(cst(a[0].as_mapping().unwrap()), Some(2.0));
+        assert_eq!(cst(a[1].as_mapping().unwrap()), Some(1.0));
+        // fruit "3.2"：parent=3、self=2
+        let th32 = by_id("TH__3_2");
+        let a2 = th32.get("expression").unwrap().as_mapping().unwrap().get("args").unwrap().as_sequence().unwrap();
+        assert_eq!(cst(a2[0].as_mapping().unwrap()), Some(3.0));
+        assert_eq!(cst(a2[1].as_mapping().unwrap()), Some(2.0));
+        // metamer "3"：整条表达式即 {rank: self} → {const: 3}
+        let mr3 = by_id("MR__3");
+        assert_eq!(cst(mr3.get("expression").unwrap().as_mapping().unwrap()), Some(3.0));
+        // 无父实例报错（metamer 用 {rank: parent}）
+        let bad = yaml(
+            "structure:\n  entities:\n    metamer: { count: 2, topology: chain }\nvariables:\n  z: { of: metamer, class: auxiliary }\nequations:\n  - { id: Z, for: metamer, output: z, expression: { rank: parent } }\n",
+        );
+        assert!(matches!(expand_structure(bad), Err(StructureError::BadRefOf(_))));
     }
 
     #[test]
