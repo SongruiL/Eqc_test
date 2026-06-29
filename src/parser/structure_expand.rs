@@ -876,7 +876,7 @@ equations:
                 .clone()
         };
 
-        // NF__1（metamer 1）：children = fruit 1.1/1.2/1.3 → add 链
+        // NF__1（metamer 1）：children = fruit 1.1/1.2/1.3 → vsum(vector(...))（扁平 n 元）
         let nf1 = find("NF__1");
         assert_eq!(s(&nf1, "output").as_deref(), Some("node_fruit__1"));
         let mut r1 = Vec::new();
@@ -884,10 +884,10 @@ equations:
         r1.sort();
         r1.dedup();
         assert_eq!(r1, vec!["fmass__1_1", "fmass__1_2", "fmass__1_3"]);
-        // 折叠成 add（lower 后无 agg 残留）
+        // 折叠成 vsum over vector（扁平 n 元；lower 后无 agg 残留）
         assert_eq!(
             nf1.get("expression").unwrap().as_mapping().unwrap().get("op").and_then(Value::as_str),
-            Some("add")
+            Some("vsum")
         );
 
         // NF__2（metamer 2）：children = fruit 2.1/2.2/2.3

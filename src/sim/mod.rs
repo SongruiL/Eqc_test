@@ -1075,20 +1075,10 @@ equations:
     /// FSPM 风险4 第3步（交付）：加载真实交付模型 crop-models/tomato/tomato_fspm.eq.yaml，
     /// 跑仿真并核查碳守恒（24 果 + LUE 光源 + 叶/茎集总）。文件缺失（异机/未签出）→ 跳过。
     ///
-    /// ⚠️ FSPM 规模限制（记着）：24 果实例化后，加载/求值的递归 pass 深度增大，超默认 2MB
-    /// 测试线程栈（实测阈值 ~4MB；eqc.exe 主线程 8MB 可正常处理本模型）。深度随器官数线性增长，
-    /// 是 deferred 的引擎硬化点（把深递归 pass 改迭代以支撑上百器官）。此处用 32MB 栈线程跑。
+    /// 注：修法 D（聚合 lower 成扁平 `vsum`/`vprod` over `vector`，深度恒为 1）后，24 果模型在
+    /// 默认测试线程栈即可跑——此前 N 深聚合链需 ~4MB 栈、已解决（见 agg_fold）。
     #[test]
     fn test_fspm_tomato_model_file_conserves() {
-        std::thread::Builder::new()
-            .stack_size(32 * 1024 * 1024)
-            .spawn(run_fspm_tomato_model_file_check)
-            .unwrap()
-            .join()
-            .unwrap();
-    }
-
-    fn run_fspm_tomato_model_file_check() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../crop-models/tomato/tomato_fspm.eq.yaml");
         if !path.exists() {

@@ -32,8 +32,8 @@
 //! - `{ref: X, at: q, offset: k}` → 引用同家族**相邻**成员 `{ref: X__(i+k)}`（k 整数，可负）；
 //!   越界（i+k < 1 或 > size）→ `{const: 0}`。用于"固定箱车列"等需 j-1/j+1 流的阶段模型
 //!   （如番茄果实发育阶段间碳/果数流动：首阶段无前驱、末阶段无后继 → 自动归 0）。
-//! - `{op: sum_over, over: F, body: B}` → 把 B 对 F 的每个下标展开，折成 `add` 链；
-//!   `prod_over` 折成 `mul` 链。空家族 → `sum_over=0`、`prod_over=1`。
+//! - `{op: sum_over, over: F, body: B}` → 把 B 对 F 的每个下标展开，折成扁平 `vsum`/`vprod` over `vector`
+//!   （逐位同旧 add/mul 链、深度恒为 1、不随项数加深栈）。空家族 → `sum_over=0`、`prod_over=1`。
 //! - cohort 变量的 `rate`/`prev` 若指向**同家族**成员，同样加 `__i` 后缀。
 
 use serde_yaml::{Mapping, Value};
@@ -586,16 +586,17 @@ equations:
         assert_eq!(args[0].as_mapping().unwrap().get("const").unwrap().as_f64(), Some(2.0)); // idx q -> const 2
         assert_eq!(get_str(args[1].as_mapping().unwrap(), "ref").as_deref(), Some("TF__2"));
 
-        // E2：sum_over 展开成 add(add(DRFG__1, DRFG__2), DRFG__3)
+        // E2：sum_over 展开成 vsum(vector(DRFG__1, DRFG__2, DRFG__3))（扁平 n 元，逐位同旧 add 链）
         let e2 = eqs[3].as_mapping().unwrap();
         let e2_args = e2.get("expression").unwrap().as_mapping().unwrap().get("args").unwrap().as_sequence().unwrap();
         let sum = e2_args[1].as_mapping().unwrap();
-        assert_eq!(get_str(sum, "op").as_deref(), Some("add"));
-        // 外层 add 的两个参数：内层 add(...) 和 DRFG__3
-        let outer = sum.get("args").unwrap().as_sequence().unwrap();
-        assert_eq!(get_str(outer[1].as_mapping().unwrap(), "ref").as_deref(), Some("DRFG__3"));
-        let inner = outer[0].as_mapping().unwrap();
-        assert_eq!(get_str(inner, "op").as_deref(), Some("add"));
+        assert_eq!(get_str(sum, "op").as_deref(), Some("vsum"));
+        let vec_node = sum.get("args").unwrap().as_sequence().unwrap()[0].as_mapping().unwrap();
+        assert_eq!(get_str(vec_node, "op").as_deref(), Some("vector"));
+        let elems = vec_node.get("args").unwrap().as_sequence().unwrap();
+        assert_eq!(elems.len(), 3);
+        assert_eq!(get_str(elems[0].as_mapping().unwrap(), "ref").as_deref(), Some("DRFG__1"));
+        assert_eq!(get_str(elems[2].as_mapping().unwrap(), "ref").as_deref(), Some("DRFG__3"));
     }
 
     #[test]

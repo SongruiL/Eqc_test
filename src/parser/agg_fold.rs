@@ -4,7 +4,8 @@
 //! `{agg, over, body}`（[`super::structure_expand`]）共用同一套「把若干项折成标量 add/mul 链」
 //! 的逻辑——避免两份实现漂移（FSPM 风险3 收编 · 第3步）。
 //!
-//! 输出与各自原实现**逐位一致**（左折叠二元链、空集→单位元），故 cohort 既有模型仿真不变。
+//! 输出**逐位一致**于旧左折叠二元链（≥2 项折成扁平 `vsum`/`vprod` over `vector`、单项原样、
+//! 空集→单位元；见 [`fold_sum_or_prod`]），故 cohort 既有模型仿真不变；且**深度恒为 1**、不随项数加深栈。
 
 use serde_yaml::{Mapping, Value};
 
@@ -33,13 +34,18 @@ pub fn fold_binary(op: &str, args: Vec<Value>) -> Value {
     acc
 }
 
-/// sum / prod 折叠：非空 → add/mul 链；空集 → 单位元（sum=0 / prod=1）。
+/// sum / prod 折叠：≥2 项 → 扁平 n 元 `vsum`/`vprod` over `vector` 字面量；单项 → 原样；空集 → 单位元。
 /// cohort `sum_over`/`prod_over` 与 structure `sum`/`prod` 聚合共用。
+///
+/// **扁平而非左嵌套链**：N 项是 `vector` 的兄弟、深度恒为 1，故反序列化/求值/遍历**不随项数 N 加深栈**
+/// （FSPM 多器官 Σ 不再栈溢出）。**逐位等于旧 `add`/`mul` 左嵌套链**：`Reduce(Sum)`=`iter().sum()`
+/// 从 0.0 左到右累加（`0+t1` 精确）、`Reduce(Prod)`=`iter().product()` 从 1.0（`1*t1` 精确）
+/// → cohort 既有模型仿真**逐位不变**。
 pub fn fold_sum_or_prod(is_sum: bool, terms: Vec<Value>) -> Value {
-    if terms.is_empty() {
-        const_value(if is_sum { 0.0 } else { 1.0 })
-    } else {
-        fold_binary(if is_sum { "add" } else { "mul" }, terms)
+    match terms.len() {
+        0 => const_value(if is_sum { 0.0 } else { 1.0 }),
+        1 => terms.into_iter().next().expect("len==1"),
+        _ => op_args(if is_sum { "vsum" } else { "vprod" }, vec![op_args("vector", terms)]),
     }
 }
 
