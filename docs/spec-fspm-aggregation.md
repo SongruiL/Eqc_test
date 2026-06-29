@@ -96,7 +96,9 @@ pub enum TopoSelector { Children, All, Subtree, Borne, Siblings }   // 本轮实
 3. **cohort 收编 ✅（A·单一折叠源）**：抽 `agg_fold.rs` 单一折叠源，cohort `sum_over/prod_over` + structure `sum/prod` 共用，删两份重复。297 lib 绿 + 草莓 S8 `Y=7.5584411`（既知值，逐位不变）。
 4. **契约可见性（聚合 lower 后靠契约带出语义）**：
    - **4a ✅（后端+契约）**：`StructureInfo` 加 additive `aggregations`（`{output,kind,over,entity?}`）；`structure_expand` 采集出处、`export` 带出 `ModelJson.structure.aggregations`、`contract.ts` 镜像。`eqc export` 实测含 nf_rate sum/children、pf_rate sum/all/fruit。仅 structure 路径（cohort sum_over 出处作 follow）。
-   - **4b（前端）**：器官结构视图据 `aggregations` 标「Σ over children / mean over all」注记。
+   - **4b ✅（前端）**：`Topology3d.svelte` 3D 拓扑图例据契约 `aggregations` 加「Σ 聚合关系」段（每行 输出 + Σ/均 · 各子器官/全 实体）。svelte-check 0 + npm build + cargo embed 重建 + 真 Studio 截图确认 + Playwright `fspm_structure` 加断言。
+
+> **★风险3 全部完成**：算子(1) + 加载期 lower(2) + cohort 收编(3·单一折叠源) + 契约/前端可见性(4a/4b)。下一步 = **风险4 器官流**（生长 + Σ流入 − Σ流出 沿拓扑，用本算子）。
 
 ## 7. 立场与边界
 

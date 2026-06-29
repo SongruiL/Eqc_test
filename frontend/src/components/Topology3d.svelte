@@ -492,6 +492,16 @@
               {#each contract.structure.entities as e (e.name)}
                 <div class="leg-row"><span class="leg-name">{e.name}</span><span class="leg-mean">×{e.count} · {e.topology}</span></div>
               {/each}
+              {#if contract.structure.aggregations?.length}
+                <!-- FSPM 风险3·聚合可见性：聚合已 lower 成标量，靠契约 aggregations 把语义带出来显示 -->
+                <span class="leg-organ-t leg-agg-t">Σ 聚合关系</span>
+                {#each contract.structure.aggregations as a (a.output + '·' + a.over)}
+                  <div class="leg-row">
+                    <span class="leg-name">{a.output}</span>
+                    <span class="leg-mean">{a.kind === 'mean' ? '均' : a.kind === 'sum' ? 'Σ' : a.kind === 'prod' ? '∏' : a.kind} · {a.over === 'children' ? '各子器官' : '全 ' + (a.entity ?? '')}</span>
+                  </div>
+                {/each}
+              {/if}
             </div>
           {/if}
           {#if legend.note}<div class="leg-note">{legend.note}</div>{/if}
@@ -536,6 +546,7 @@
   .leg-body { padding: 2px 10px 9px; display: flex; flex-direction: column; gap: 5px; }
   .leg-organ { display: flex; flex-direction: column; gap: 4px; padding-bottom: 6px; margin-bottom: 4px; border-bottom: 1px solid #334155; }
   .leg-organ-t { color: #4ade80; font-weight: 700; font-size: 11px; }
+  .leg-agg-t { color: #fbbf24; margin-top: 6px; }
   .leg-note { color: #fcd34d; font-size: 11px; line-height: 1.4; padding-bottom: 2px; }
   .leg-row { display: flex; align-items: baseline; gap: 7px; line-height: 1.35; }
   .leg-dot {

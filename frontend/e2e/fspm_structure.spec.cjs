@@ -22,6 +22,9 @@ test('结构工作区 · 3D 拓扑显器官结构（FSPM 契约派生）', async
   // metamer / fruit 两实体行
   await expect(page.locator('.topo3d .leg-organ')).toContainText('metamer')
   await expect(page.locator('.topo3d .leg-organ')).toContainText('fruit')
+  // FSPM 风险3·聚合可见性：Σ 聚合关系段（从契约 structure.aggregations 派生）
+  await expect(page.locator('.topo3d .leg-organ')).toContainText('Σ 聚合关系')
+  await expect(page.locator('.topo3d .leg-organ')).toContainText('node_fruit')
 
   await page.waitForTimeout(600)
   await page.screenshot({ path: 'e2e/__screots/fspm_structure.png', fullPage: false })
