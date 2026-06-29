@@ -1,4 +1,5 @@
 //! 集成测试
+#![cfg(feature = "cli")] // 用 cli-only API（Compiler/generators）；默认配置（无 cli）跳过整个测试
 
 use equation_compiler::{Compiler, GeneratorKind};
 use std::fs;

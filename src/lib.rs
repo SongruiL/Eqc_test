@@ -14,6 +14,7 @@ pub mod ast;
 pub mod error;
 pub mod eval;
 pub mod ops;
+pub mod schema; // 数据结构（Equation/Variable/…），仅依赖 ast；核心 sexpr::workflow 也用其 VarClass，故属核心
 pub mod sexpr;
 pub mod units;
 
@@ -40,8 +41,6 @@ pub mod parser;
 pub mod report;
 #[cfg(feature = "cli")]
 pub mod scenario;
-#[cfg(feature = "cli")]
-pub mod schema;
 #[cfg(feature = "cli")]
 pub mod serve;
 #[cfg(feature = "cli")]
