@@ -1072,6 +1072,51 @@ equations:
         assert!(ct[n - 1] > ct[0], "总碳应随时间增长");
     }
 
+    /// FSPM 风险4 第3步（交付）：加载真实交付模型 crop-models/tomato/tomato_fspm.eq.yaml，
+    /// 跑仿真并核查碳守恒（24 果 + LUE 光源 + 叶/茎集总）。文件缺失（异机/未签出）→ 跳过。
+    ///
+    /// ⚠️ FSPM 规模限制（记着）：24 果实例化后，加载/求值的递归 pass 深度增大，超默认 2MB
+    /// 测试线程栈（实测阈值 ~4MB；eqc.exe 主线程 8MB 可正常处理本模型）。深度随器官数线性增长，
+    /// 是 deferred 的引擎硬化点（把深递归 pass 改迭代以支撑上百器官）。此处用 32MB 栈线程跑。
+    #[test]
+    fn test_fspm_tomato_model_file_conserves() {
+        std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(run_fspm_tomato_model_file_check)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    fn run_fspm_tomato_model_file_check() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../crop-models/tomato/tomato_fspm.eq.yaml");
+        if !path.exists() {
+            eprintln!("跳过 test_fspm_tomato_model_file_conserves：未找到 {path:?}");
+            return;
+        }
+        let file = parse_file(&path).unwrap();
+        let n = 12usize;
+        let out = simulate(
+            &file,
+            &SimInput::new(n).driver("T", vec![22.0; n]).driver("PAR", vec![400.0; n]),
+        )
+        .unwrap();
+        // 守恒：d(全株总碳) = 总同化 − 总呼吸（i≥1，免 init 求和）
+        let ct = out.series("C_total").unwrap();
+        let ag = out.series("A_gross").unwrap();
+        let rt = out.series("resp_total").unwrap();
+        for i in 1..n {
+            let bal = (ct[i] - ct[i - 1]) - (ag[i] - rt[i]); // dt=1
+            assert!(bal.abs() < 1e-6, "step {i} 守恒失衡 = {bal}");
+        }
+        // 果实累积、节位库强=Σ子果（24 果实例化 + 聚合端到端）
+        assert!(out.series("C_fruit_tot").unwrap()[n - 1] > 0.0, "应有在株果碳");
+        let ns1 = out.series("node_sink__1").unwrap()[n - 1];
+        let s11 = out.series("ss__1_1").unwrap()[n - 1];
+        assert!(ns1 >= s11 - 1e-9, "节位1库强应≥其单果汇强");
+    }
+
     /// V2：向量参数 + 向量状态量逐元素积分；输出展平成 name[i]。
     #[test]
     fn test_vector_state_integration() {
