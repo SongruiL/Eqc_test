@@ -930,6 +930,148 @@ equations:
         assert_eq!(out.series("ss__2_2").unwrap(), &[0.0, 10.0, 20.0, 30.0]);
     }
 
+    /// FSPM 风险4 第3步：器官级源-库碳经济（共同池 + 相对汇强 + 每果 Yin beta 潜在生长 + 守恒）。
+    /// 4 果（2 节×2）+ 集总营养体；每果汇强 ss=cw(age)·ASR，按 ss/ssp 分配共享池，
+    /// 缓冲库排出 = Σ各器官分配（同一聚合）→ 守恒由构造保证。验证：
+    ///   ① 质量平衡 d(ΣC)=A_gross−总呼吸 逐步成立；② share∈[0,1]；③ 错峰出现；④ 节位库强=Σ子果。
+    #[test]
+    fn test_fspm_organ_carbon_economy() {
+        let yaml = r#"
+meta: { id: TFE, model: TomatoFspmEcon, name_cn: 番茄器官碳经济mini, dt: 1.0 }
+structure:
+  entities:
+    metamer: { count: 2, topology: chain }
+    fruit:   { per: metamer, count: 2 }
+parameters:
+  Tbase:   { name_cn: 发育基温, default: 10.0 }
+  phyllo:  { name_cn: 节phyllochron, default: 30.0 }
+  psi:     { name_cn: 穗内错峰, default: 8.0 }
+  w_app:   { name_cn: 出现ramp, default: 1.0 }
+  Tbase_f: { name_cn: 果发育基温, default: 8.0 }
+  wmax:    { name_cn: 单果潜在结构干重, default: 1060.0 }
+  tm:      { name_cn: beta_tm, default: 149.0 }
+  te:      { name_cn: beta_te, default: 481.0 }
+  ASR:     { name_cn: 同化物需求, default: 1.2 }
+  rg_veg:  { name_cn: 营养体汇强集总, default: 2.0 }
+  cm_veg:  { name_cn: 营养体维持系数, default: 0.0005 }
+  cm_fr:   { name_cn: 果维持系数, default: 0.0003 }
+  cg_veg:  { name_cn: 营养体生长呼吸, default: 0.30 }
+  cg_fr:   { name_cn: 果生长呼吸, default: 0.27 }
+  TINY:    { name_cn: 护栏, default: 0.000001 }
+variables:
+  T:       { type: input, class: driving }
+  A_gross: { type: input, class: driving }
+  rate_Tsum: { class: rate }
+  Tsum:    { type: output, class: state, init: 0.0, rate: rate_Tsum }
+  theta:   { of: fruit, class: auxiliary }
+  gate:    { of: fruit, class: auxiliary }
+  rate_age: { of: fruit, class: rate }
+  age:     { of: fruit, type: output, class: state, init: 0.0, rate: rate_age }
+  cw:      { of: fruit, type: output, class: auxiliary }
+  ss:      { of: fruit, type: output, class: auxiliary }
+  Rm_fr:   { of: fruit, class: auxiliary }
+  A:       { of: fruit, type: output, class: auxiliary }
+  rate_C:  { of: fruit, class: rate }
+  C:       { of: fruit, type: output, class: state, init: 0.0, rate: rate_C }
+  C_prev:  { of: fruit, class: semi_state, init: 0.0, prev: C }
+  ss_fruit_tot: { type: output, class: auxiliary }
+  Rm_fruit_tot: { class: auxiliary }
+  A_fruit_tot:  { class: auxiliary }
+  C_fruit_tot:  { type: output, class: auxiliary }
+  ssp:     { type: output, class: auxiliary }
+  Rm:      { class: auxiliary }
+  Anet:    { type: output, class: auxiliary }
+  Ap:      { class: auxiliary }
+  share:   { type: output, class: auxiliary }
+  total_alloc: { class: auxiliary }
+  rate_Cbuf: { class: rate }
+  Cbuf:    { type: output, class: state, init: 0.0, rate: rate_Cbuf }
+  Cbuf_prev: { class: semi_state, init: 0.0, prev: Cbuf }
+  A_veg:   { type: output, class: auxiliary }
+  Rm_veg:  { class: auxiliary }
+  rate_C_veg: { class: rate }
+  C_veg:   { type: output, class: state, init: 0.0, rate: rate_C_veg }
+  C_veg_prev: { class: semi_state, init: 0.0, prev: C_veg }
+  C_total: { type: output, class: auxiliary }
+  resp_total: { type: output, class: auxiliary }
+  node_sink: { of: metamer, type: output, class: auxiliary }
+equations:
+  - { id: RTS, name: 积温速率, output: rate_Tsum, expression: { op: max, args: [ {const: 0}, { op: sub, args: [ {ref: T}, {ref: Tbase} ] } ] } }
+  - { id: TH, name: 出现阈值, for: fruit, output: theta,
+      expression: { op: add, args: [
+        { op: mul, args: [ { op: sub, args: [ {rank: parent}, {const: 1} ] }, {ref: phyllo} ] },
+        { op: mul, args: [ { op: sub, args: [ {rank: self},   {const: 1} ] }, {ref: psi} ] } ] } }
+  - { id: GT, name: 激活门, for: fruit, output: gate,
+      expression: { op: max, args: [ {const: 0}, { op: min, args: [ {const: 1},
+        { op: div, args: [ { op: sub, args: [ {ref: Tsum}, {ref: theta, of: self} ] }, {ref: w_app} ] } ] } ] } }
+  - { id: AG, name: 热龄速率, for: fruit, output: rate_age,
+      expression: { op: mul, args: [ { op: max, args: [ {const: 0}, { op: sub, args: [ {ref: T}, {ref: Tbase_f} ] } ] }, {ref: gate, of: self} ] } }
+  - { id: CW, name: 单果潜在生长率, for: fruit, output: cw,
+      reference: "Yin2003 beta 导数 cw=wmax(2te-tm)(te-t)/(te(te-tm)^2)(t/te)^(tm/(te-tm))",
+      expression: { op: max, args: [ {const: 0}, { op: mul, args: [
+        { op: mul, args: [
+          { op: mul, args: [ {ref: wmax}, { op: sub, args: [ { op: mul, args: [ {const: 2}, {ref: te} ] }, {ref: tm} ] } ] },
+          { op: div, args: [ { op: sub, args: [ {ref: te}, {ref: age, of: self} ] },
+            { op: mul, args: [ {ref: te}, { op: pow, args: [ { op: sub, args: [ {ref: te}, {ref: tm} ] }, {const: 2} ] } ] } ] } ] },
+        { op: pow, args: [ { op: div, args: [ {ref: age, of: self}, {ref: te} ] },
+          { op: div, args: [ {ref: tm}, { op: sub, args: [ {ref: te}, {ref: tm} ] } ] } ] } ] } ] } }
+  - { id: SS, name: 单果汇强, for: fruit, output: ss, expression: { op: mul, args: [ {ref: cw, of: self}, {ref: ASR} ] } }
+  - { id: SSFT, name: 全果汇强和, output: ss_fruit_tot, expression: { agg: sum, over: all, of: fruit, body: { ref: ss } } }
+  - { id: NSK, name: 节位库强, for: metamer, output: node_sink, expression: { agg: sum, over: children, body: { ref: ss } } }
+  - { id: SSP, name: 整株汇强, output: ssp, expression: { op: add, args: [ {ref: rg_veg}, {ref: ss_fruit_tot} ] } }
+  - { id: RMF, name: 单果维持呼吸, for: fruit, output: Rm_fr, expression: { op: mul, args: [ {ref: cm_fr}, {ref: C_prev, of: self} ] } }
+  - { id: RMFT, name: 全果维持和, output: Rm_fruit_tot, expression: { agg: sum, over: all, of: fruit, body: { ref: Rm_fr } } }
+  - { id: RMV, name: 营养体维持, output: Rm_veg, expression: { op: mul, args: [ {ref: cm_veg}, {ref: C_veg_prev} ] } }
+  - { id: RM, name: 总维持呼吸, output: Rm, expression: { op: add, args: [ {ref: Rm_veg}, {ref: Rm_fruit_tot} ] } }
+  - { id: ANET, name: 净同化, output: Anet, expression: { op: sub, args: [ {ref: A_gross}, {ref: Rm} ] } }
+  - { id: AP, name: 可用池, output: Ap, expression: { op: add, args: [ {ref: Anet}, {ref: Cbuf_prev} ] } }
+  - { id: SHR, name: 分配份额, output: share, expression: { op: max, args: [ {const: 0}, { op: min, args: [ {const: 1},
+      { op: div, args: [ {ref: Ap}, { op: max, args: [ {ref: ssp}, {ref: TINY} ] } ] } ] } ] } }
+  - { id: AFR, name: 单果分配, for: fruit, output: A, expression: { op: mul, args: [ {ref: ss, of: self}, {ref: share} ] } }
+  - { id: AVG, name: 营养体分配, output: A_veg, expression: { op: mul, args: [ {ref: rg_veg}, {ref: share} ] } }
+  - { id: AFT, name: 全果分配和, output: A_fruit_tot, expression: { agg: sum, over: all, of: fruit, body: { ref: A } } }
+  - { id: TAL, name: 总分配, output: total_alloc, expression: { op: add, args: [ {ref: A_veg}, {ref: A_fruit_tot} ] } }
+  - { id: RCB, name: 缓冲库速率, output: rate_Cbuf, expression: { op: sub, args: [ {ref: Anet}, {ref: total_alloc} ] } }
+  - { id: RCF, name: 单果碳速率, for: fruit, output: rate_C, expression: { op: mul, args: [ {ref: A, of: self}, { op: sub, args: [ {const: 1}, {ref: cg_fr} ] } ] } }
+  - { id: RCV, name: 营养体碳速率, output: rate_C_veg, expression: { op: mul, args: [ {ref: A_veg}, { op: sub, args: [ {const: 1}, {ref: cg_veg} ] } ] } }
+  - { id: CFT, name: 在株果碳和, output: C_fruit_tot, expression: { agg: sum, over: all, of: fruit, body: { ref: C } } }
+  - { id: CTOT, name: 总碳, output: C_total, expression: { op: add, args: [ { op: add, args: [ {ref: Cbuf}, {ref: C_veg} ] }, {ref: C_fruit_tot} ] } }
+  - { id: RSP, name: 总呼吸, output: resp_total, expression: { op: add, args: [ {ref: Rm},
+      { op: add, args: [ { op: mul, args: [ {ref: cg_veg}, {ref: A_veg} ] }, { op: mul, args: [ {ref: cg_fr}, {ref: A_fruit_tot} ] } ] } ] } }
+"#;
+        let (_d, file) = write_model(yaml);
+        let n = 8usize;
+        let out = simulate(
+            &file,
+            &SimInput::new(n).driver("T", vec![25.0; n]).driver("A_gross", vec![5.0; n]),
+        )
+        .unwrap();
+
+        // ① 质量守恒：d(ΣC) = A_gross − 总呼吸，逐步成立（C_total[-1]=Σinit=0）
+        let ct = out.series("C_total").unwrap();
+        let rt = out.series("resp_total").unwrap();
+        for i in 0..n {
+            let prev = if i == 0 { 0.0 } else { ct[i - 1] };
+            let bal = (ct[i] - prev) - (5.0 - rt[i]); // A_gross=5, dt=1
+            assert!(bal.abs() < 1e-9, "step {i} 守恒失衡 = {bal}");
+        }
+        // ② share ∈ [0,1]
+        for &x in out.series("share").unwrap() {
+            assert!((0.0..=1.0).contains(&x), "share 越界 {x}");
+        }
+        // ③ 错峰出现：果1.1（θ=0）首步即长，果2.2（θ=38）前两步未出现
+        assert!(out.series("age__1_1").unwrap()[0] > 0.0);
+        assert_eq!(out.series("age__2_2").unwrap()[0], 0.0);
+        assert!(out.series("age__2_2").unwrap()[n - 1] > 0.0, "果2.2 应在后期出现");
+        // ④ 节位库强 = Σ子果汇强（over: children）
+        let nsk1 = out.series("node_sink__1").unwrap()[n - 1];
+        let f11 = out.series("ss__1_1").unwrap()[n - 1];
+        let f12 = out.series("ss__1_2").unwrap()[n - 1];
+        assert!((nsk1 - (f11 + f12)).abs() < 1e-9, "节位1库强应=子果之和");
+        // ⑤ 碳确实在累积
+        assert!(ct[n - 1] > ct[0], "总碳应随时间增长");
+    }
+
     /// V2：向量参数 + 向量状态量逐元素积分；输出展平成 name[i]。
     #[test]
     fn test_vector_state_integration() {
