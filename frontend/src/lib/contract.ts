@@ -56,6 +56,8 @@ export interface StructureJson {
   entities: { name: string; count: number; topology: string }[]
   instances: { id: string; entity: string; parent?: string }[]
   topology: { from: string; to: string; kind: string }[]
+  // FSPM 风险3·聚合可见性：某输出变量沿拓扑邻域聚合而来（聚合已 lower 成标量，此处保留语义）。
+  aggregations?: { output: string; kind: string; over: string; entity?: string }[]
 }
 
 export interface GpTargetJson {

@@ -94,7 +94,9 @@ pub enum TopoSelector { Children, All, Subtree, Borne, Siblings }   // 本轮实
 1. **AST 算子 ✅**：`Expr::Aggregate{kind:ReduceKind, over:TopoSelector{Children/All/…}, of, body}` + 手写 Deserialize `{agg:…}` + 6 处穷尽 match 补全（collect_refs/depth/substitute/to_latex(Σ)/to_python·to_rust(unreachable)）+ 单测 `test_aggregate_yaml`。**lib 293 绿（--features cli）**。（不进 ops 注册表——随 Sum/Reduce。）
 2. **加载期 lower**：`structure_expand` 加 children/all 集合解析 + `Aggregate`→add/mul 链展开；`mean` 空集（count=0）加载期报错。端到端番茄 fixture（穗→Σ果、全株 Σ叶）validate + simulate 验证。
 3. **cohort 收编 ✅（A·单一折叠源）**：抽 `agg_fold.rs` 单一折叠源，cohort `sum_over/prod_over` + structure `sum/prod` 共用，删两份重复。297 lib 绿 + 草莓 S8 `Y=7.5584411`（既知值，逐位不变）。
-4. **契约 additive（可选本轮 / 或并入风险4）**：`Aggregate` 在声明层导出供分析显"聚合关系"。
+4. **契约可见性（聚合 lower 后靠契约带出语义）**：
+   - **4a ✅（后端+契约）**：`StructureInfo` 加 additive `aggregations`（`{output,kind,over,entity?}`）；`structure_expand` 采集出处、`export` 带出 `ModelJson.structure.aggregations`、`contract.ts` 镜像。`eqc export` 实测含 nf_rate sum/children、pf_rate sum/all/fruit。仅 structure 路径（cohort sum_over 出处作 follow）。
+   - **4b（前端）**：器官结构视图据 `aggregations` 标「Σ over children / mean over all」注记。
 
 ## 7. 立场与边界
 

@@ -87,6 +87,40 @@ fn id_safe(id: &str) -> String {
     id.replace('.', "_")
 }
 
+/// 聚合出处（FSPM 风险3·可见性）：某方程输出沿拓扑邻域聚合而来。emit 进 `structure.aggregations`。
+/// 聚合在加载期已 lower 成标量 add 链；此处保留语义供分析/前端显示「Σ over children / mean over all」。
+struct AggProv {
+    output: String,
+    kind: String,
+    over: String,
+    entity: Option<String>,
+}
+
+/// 扫描表达式 `Value`，采集其中所有 `{agg: K, over: S, of?: E}` 节点（递归，含 body 内嵌套）。
+fn collect_aggs(expr: &Value, output: &str, out: &mut Vec<AggProv>) {
+    match expr {
+        Value::Mapping(m) => {
+            if let Some(kind) = m.get("agg").and_then(Value::as_str) {
+                out.push(AggProv {
+                    output: output.to_string(),
+                    kind: kind.to_string(),
+                    over: m.get("over").and_then(Value::as_str).unwrap_or("").to_string(),
+                    entity: m.get("of").and_then(Value::as_str).map(|s| s.to_string()),
+                });
+            }
+            for (_, v) in m {
+                collect_aggs(v, output, out);
+            }
+        }
+        Value::Sequence(s) => {
+            for e in s {
+                collect_aggs(e, output, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// 对整份 `.eq.yaml` 的 `Value` 做结构实例化。无 `structure:` 段时原样返回。
 pub fn expand_structure(mut root: Value) -> Result<Value, StructureError> {
     let map = root.as_mapping_mut().ok_or(StructureError::NotMapping)?;
@@ -106,13 +140,14 @@ pub fn expand_structure(mut root: Value) -> Result<Value, StructureError> {
         let new_vars = expand_vars(vars, &insts, &var_entity)?;
         map.insert(Value::from("variables"), Value::Mapping(new_vars));
     }
-    // 5) 实例化方程。
+    // 5) 实例化方程（同时采集聚合出处，供契约/前端「聚合可见性」）。
+    let mut aggs: Vec<AggProv> = Vec::new();
     if let Some(Value::Sequence(eqs)) = map.get("equations") {
-        let new_eqs = expand_eqs(eqs, &entities, &insts, &var_entity)?;
+        let new_eqs = expand_eqs(eqs, &entities, &insts, &var_entity, &mut aggs)?;
         map.insert(Value::from("equations"), Value::Sequence(new_eqs));
     }
-    // 6) 用实例化后的 StructureInfo 替换声明。
-    map.insert(Value::from("structure"), build_structure_info(&entities, &insts));
+    // 6) 用实例化后的 StructureInfo（含聚合出处）替换声明。
+    map.insert(Value::from("structure"), build_structure_info(&entities, &insts, &aggs));
 
     Ok(root)
 }
@@ -271,6 +306,7 @@ fn expand_eqs(
     entities: &[EntityDef],
     insts: &HashMap<String, Vec<Inst>>,
     var_entity: &HashMap<String, String>,
+    aggs: &mut Vec<AggProv>,
 ) -> Result<Vec<Value>, StructureError> {
     let entities_chain: HashMap<String, bool> =
         entities.iter().map(|e| (e.name.clone(), e.topology.as_deref() == Some("chain"))).collect();
@@ -280,6 +316,12 @@ fn expand_eqs(
             out.push(eq.clone());
             continue;
         };
+        // 采集聚合出处（用原始 output 基名 + 表达式；每方程一次，不随实例重复）。
+        if let (Some(output), Some(expr)) =
+            (emap.get("output").and_then(Value::as_str), emap.get("expression"))
+        {
+            collect_aggs(expr, output, aggs);
+        }
         match emap.get("for").and_then(Value::as_str).map(|s| s.to_string()) {
             // 整株共享方程（无 for:）：仍要 lower 表达式里的聚合（over: all）；普通共享 ref 原样。
             None => {
@@ -514,7 +556,7 @@ fn fold_aggregate(kind: &str, over: &str, entity: &str, terms: Vec<Value>) -> Re
 }
 
 /// 构造 StructureInfo 的 YAML（entities + instances + topology）。
-fn build_structure_info(entities: &[EntityDef], insts: &HashMap<String, Vec<Inst>>) -> Value {
+fn build_structure_info(entities: &[EntityDef], insts: &HashMap<String, Vec<Inst>>, aggs: &[AggProv]) -> Value {
     let (mut e_seq, mut i_seq, mut t_seq) = (Vec::new(), Vec::new(), Vec::new());
     for d in entities {
         let list = &insts[&d.name];
@@ -545,6 +587,21 @@ fn build_structure_info(entities: &[EntityDef], insts: &HashMap<String, Vec<Inst
     s.insert(Value::from("entities"), Value::Sequence(e_seq));
     s.insert(Value::from("instances"), Value::Sequence(i_seq));
     s.insert(Value::from("topology"), Value::Sequence(t_seq));
+    // 聚合出处（风险3·可见性）：非空才写，旧结构模型 structure 块逐字节不变。
+    if !aggs.is_empty() {
+        let mut a_seq = Vec::with_capacity(aggs.len());
+        for a in aggs {
+            let mut m = Mapping::new();
+            m.insert(Value::from("output"), Value::from(a.output.as_str()));
+            m.insert(Value::from("kind"), Value::from(a.kind.as_str()));
+            m.insert(Value::from("over"), Value::from(a.over.as_str()));
+            if let Some(e) = &a.entity {
+                m.insert(Value::from("entity"), Value::from(e.as_str()));
+            }
+            a_seq.push(Value::Mapping(m));
+        }
+        s.insert(Value::from("aggregations"), Value::Sequence(a_seq));
+    }
     Value::Mapping(s)
 }
 
@@ -785,6 +842,22 @@ equations:
         rp.dedup();
         assert_eq!(rp.len(), 6, "{rp:?}");
         assert!(rp.contains(&"fmass__1_1".to_string()) && rp.contains(&"fmass__2_3".to_string()));
+
+        // 4a：聚合出处写进 structure.aggregations（供契约/前端「聚合可见性」）
+        let st = out.get("structure").unwrap().as_mapping().unwrap();
+        let aggsm = st.get("aggregations").unwrap().as_sequence().unwrap();
+        assert!(aggsm.iter().any(|a| {
+            let m = a.as_mapping().unwrap();
+            s(m, "output").as_deref() == Some("node_fruit")
+                && s(m, "over").as_deref() == Some("children")
+                && s(m, "kind").as_deref() == Some("sum")
+        }), "缺 node_fruit children 聚合出处");
+        assert!(aggsm.iter().any(|a| {
+            let m = a.as_mapping().unwrap();
+            s(m, "output").as_deref() == Some("plant_fruit")
+                && s(m, "over").as_deref() == Some("all")
+                && s(m, "entity").as_deref() == Some("fruit")
+        }), "缺 plant_fruit all 聚合出处");
     }
 
     #[test]

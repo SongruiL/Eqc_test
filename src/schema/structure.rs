@@ -52,6 +52,22 @@ pub struct TopoEdge {
     pub kind: String,
 }
 
+/// 一条聚合关系（FSPM 风险3·可见性）：某变量沿拓扑邻域聚合而来。
+/// 聚合在加载期已 lower 成标量 add 链 → 引擎照跑；此处**保留语义出处**，
+/// 供分析/前端显示「Σ over children / mean over all」（AST 节点 lower 掉了，靠这条带出来）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AggregationInfo {
+    /// 被聚合算出的变量（基名，未带实例后缀；如 `node_fruit`）。
+    pub output: String,
+    /// 聚合种类：`sum` / `mean` / `prod` / `min` / `max`。
+    pub kind: String,
+    /// 邻域选择器：`children`（直接子）/ `all`（实体全集）。
+    pub over: String,
+    /// 被聚合的目标实体（如 `fruit`）；`children` 未显式 `of:` 时为 `None`（由拓扑可推）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity: Option<String>,
+}
+
 /// 模型结构（声明 + 实例化结果，**单一真相源**）。`EquationFile.structure = None` = 纯 Functional 模型。
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct StructureInfo {
@@ -64,4 +80,7 @@ pub struct StructureInfo {
     /// 拓扑边。
     #[serde(default)]
     pub topology: Vec<TopoEdge>,
+    /// 聚合关系（FSPM 风险3·可见性；空=无聚合，旧结构模型契约逐字节不变）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aggregations: Vec<AggregationInfo>,
 }

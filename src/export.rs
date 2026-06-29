@@ -148,6 +148,7 @@ pub fn to_model_json(files: &[EquationFile]) -> ModelJson {
                 agg.entities.extend(s.entities.iter().cloned());
                 agg.instances.extend(s.instances.iter().cloned());
                 agg.topology.extend(s.topology.iter().cloned());
+                agg.aggregations.extend(s.aggregations.iter().cloned());
             }
         }
         (!agg.entities.is_empty()).then_some(agg)
