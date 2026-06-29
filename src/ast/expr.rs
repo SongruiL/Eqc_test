@@ -33,6 +33,37 @@ impl ReduceKind {
     }
 }
 
+/// 拓扑聚合的邻域选择器（[`Expr::Aggregate`]，FSPM 风险3）：沿结构拓扑选一组实例做聚合。
+/// 本轮实现 `Children`（当前实例的直接子实例）/ `All`（某实体全部实例）；
+/// 其余留枚举位、随作物拓扑（tree/clonal）实现。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TopoSelector {
+    /// 当前 `for:` 实例的直接子实例（contains 边下行：穗→各果、节→各叶）
+    Children,
+    /// 某实体（`of:`）的全部实例（整株汇总：Σ all metamer）
+    All,
+    /// 某根的跨实体后代闭包（留后，随 tree kind）
+    Subtree,
+    /// 横生侧器官（留后）
+    Borne,
+    /// 同级兄弟（留后）
+    Siblings,
+}
+
+impl TopoSelector {
+    /// 规范名（代码生成 / 解析 / 显示用）。
+    pub fn name(&self) -> &'static str {
+        match self {
+            TopoSelector::Children => "children",
+            TopoSelector::All => "all",
+            TopoSelector::Subtree => "subtree",
+            TopoSelector::Borne => "borne",
+            TopoSelector::Siblings => "siblings",
+        }
+    }
+}
+
 /// 表达式 AST 节点（强类型）
 ///
 /// 遵循规范文档 3.3 节，每个运算符都是独立的变体。
@@ -180,6 +211,17 @@ pub enum Expr {
         index: String,
         lower: Box<Expr>,
         upper: Box<Expr>,
+        body: Box<Expr>,
+    },
+
+    /// 拓扑聚合（FSPM 风险3）：沿结构拓扑邻域对 `body` 聚合成标量。
+    /// `kind`=聚合种类（复用 [`ReduceKind`]，本轮 Sum/Mean）；`over`=邻域选择器；
+    /// `of`=目标实体（`over: all` 时用）；`body`=对被聚合实例求值的表达式。
+    /// L1：加载期按静态拓扑 lower 成标量 add/mul 链，引擎/codegen 不直接处理本节点。
+    Aggregate {
+        kind: ReduceKind,
+        over: TopoSelector,
+        of: Option<String>,
         body: Box<Expr>,
     },
 
@@ -3335,6 +3377,7 @@ impl Expr {
             // 叶子节点
             Expr::Const(_) | Expr::Pi | Expr::E => {}
             Expr::Reduce { arg, .. } => arg.collect_refs(refs, ref_type),
+            Expr::Aggregate { body, .. } => body.collect_refs(refs, ref_type),
             Expr::Var(name) => {
                 if matches!(ref_type, RefType::Variable | RefType::All) && !refs.contains(name) {
                     refs.push(name.clone());
@@ -3792,6 +3835,7 @@ impl Expr {
             Expr::Const(_) | Expr::Var(_) | Expr::Param(_) | Expr::Pi | Expr::E => 1,
 
             Expr::Reduce { arg, .. } => 1 + arg.depth(),
+            Expr::Aggregate { body, .. } => 1 + body.depth(),
 
             Expr::Neg(a)
             | Expr::Abs(a)
@@ -4153,6 +4197,8 @@ impl Expr {
                 };
                 format!("np.{}({})", f, arg.to_python(params_prefix))
             }
+            // FSPM 风险3：Aggregate 在加载期 lower 成标量 add/mul 链，不应到达 codegen
+            Expr::Aggregate { .. } => unreachable!("Expr::Aggregate 应在加载期 lower 后再 to_python"),
 
             // 算术运算
             Expr::Add(a, b) => format!("({} + {})", a.to_python(params_prefix), b.to_python(params_prefix)),
@@ -4796,6 +4842,8 @@ impl Expr {
                 };
                 format!("({}).{}()", arg.to_rust(), m)
             }
+            // FSPM 风险3：Aggregate 在加载期 lower 成标量，不应到达 codegen
+            Expr::Aggregate { .. } => unreachable!("Expr::Aggregate 应在加载期 lower 后再 to_rust"),
 
             // 算术运算
             Expr::Add(a, b) => format!("({} + {})", a.to_rust(), b.to_rust()),
@@ -5440,6 +5488,21 @@ impl Expr {
             Expr::Reduce { kind, arg } => {
                 format!("\\operatorname{{{}}}\\left({}\\right)", kind.name(), arg.to_latex())
             }
+            // FSPM 风险3：拓扑聚合的数学显示（Σ/Π/mean 沿邻域）
+            Expr::Aggregate { kind, over, of, body } => {
+                let op = match kind {
+                    ReduceKind::Sum => "\\sum".to_string(),
+                    ReduceKind::Prod => "\\prod".to_string(),
+                    ReduceKind::Mean => "\\operatorname{mean}".to_string(),
+                    ReduceKind::Min => "\\min".to_string(),
+                    ReduceKind::Max => "\\max".to_string(),
+                };
+                let sub = match of {
+                    Some(e) => format!("{}\\,{}", over.name(), e),
+                    None => over.name().to_string(),
+                };
+                format!("{}_{{{}}}\\left({}\\right)", op, sub, body.to_latex())
+            }
 
             // 算术运算
             Expr::Add(a, b) => format!("{} + {}", a.to_latex(), b.to_latex()),
@@ -6061,6 +6124,12 @@ impl Expr {
             Expr::Reduce { kind, arg } => Expr::Reduce {
                 kind: *kind,
                 arg: Box::new(arg.substitute(var, replacement)),
+            },
+            Expr::Aggregate { kind, over, of, body } => Expr::Aggregate {
+                kind: *kind,
+                over: *over,
+                of: of.clone(),
+                body: Box::new(body.substitute(var, replacement)),
             },
 
             // 一元运算
@@ -6742,6 +6811,15 @@ enum YamlExpr {
         upper: Box<YamlExpr>,
         body: Box<YamlExpr>,
     },
+    /// 拓扑聚合（FSPM 风险3）：{ agg: <kind>, over: <selector>, of?: <entity>, body: <expr> }
+    Aggregate {
+        #[serde(rename = "agg")]
+        kind: String,
+        over: String,
+        #[serde(default)]
+        of: Option<String>,
+        body: Box<YamlExpr>,
+    },
     /// 分段函数
     Piecewise {
         pieces: Vec<PiecewisePiece>,
@@ -6792,6 +6870,31 @@ impl YamlExpr {
                     index,
                     lower: Box::new(lower.into_expr()?),
                     upper: Box::new(upper.into_expr()?),
+                    body: Box::new(body.into_expr()?),
+                })
+            }
+
+            YamlExpr::Aggregate { kind, over, of, body } => {
+                let k = match kind.as_str() {
+                    "sum" => ReduceKind::Sum,
+                    "mean" => ReduceKind::Mean,
+                    "prod" | "product" => ReduceKind::Prod,
+                    "min" => ReduceKind::Min,
+                    "max" => ReduceKind::Max,
+                    other => return Err(format!("未知聚合种类 agg: {other}（本轮支持 sum/mean）")),
+                };
+                let sel = match over.as_str() {
+                    "children" => TopoSelector::Children,
+                    "all" => TopoSelector::All,
+                    "subtree" => TopoSelector::Subtree,
+                    "borne" => TopoSelector::Borne,
+                    "siblings" => TopoSelector::Siblings,
+                    other => return Err(format!("未知聚合邻域 over: {other}（本轮支持 children/all）")),
+                };
+                Ok(Expr::Aggregate {
+                    kind: k,
+                    over: sel,
+                    of,
                     body: Box::new(body.into_expr()?),
                 })
             }
@@ -7672,5 +7775,54 @@ args: [{ ref: x }]
         let yaml = r#"{ ref: e }"#;
         let expr: Expr = serde_yaml::from_str(yaml).unwrap();
         assert!(matches!(expr, Expr::E));
+    }
+
+    #[test]
+    fn test_aggregate_yaml() {
+        // FSPM 风险3：拓扑聚合算子 { agg, over, of?, body } 解析 + 遍历
+        // children 聚合（穗 → Σ 各果库强）
+        let yaml = r#"
+agg: sum
+over: children
+body: { ref: fruit_sink }
+"#;
+        let expr: Expr = serde_yaml::from_str(yaml).unwrap();
+        match &expr {
+            Expr::Aggregate { kind, over, of, body } => {
+                assert_eq!(*kind, ReduceKind::Sum);
+                assert_eq!(*over, TopoSelector::Children);
+                assert!(of.is_none());
+                assert!(matches!(body.as_ref(), Expr::Var(n) if n == "fruit_sink"));
+            }
+            other => panic!("应为 Aggregate，实为 {other:?}"),
+        }
+        // body 的引用被 collect_refs 收集（依赖对分析可见）
+        assert!(expr.get_variable_refs().contains(&"fruit_sink".to_string()));
+        assert_eq!(expr.depth(), 2); // agg + var
+
+        // all 聚合（全株 Σ 叶）带 of: 实体
+        let yaml = r#"
+agg: mean
+over: all
+of: metamer
+body: { ref: leaf_area }
+"#;
+        let expr: Expr = serde_yaml::from_str(yaml).unwrap();
+        match &expr {
+            Expr::Aggregate { kind, over, of, .. } => {
+                assert_eq!(*kind, ReduceKind::Mean);
+                assert_eq!(*over, TopoSelector::All);
+                assert_eq!(of.as_deref(), Some("metamer"));
+            }
+            other => panic!("应为 Aggregate(all)，实为 {other:?}"),
+        }
+
+        // 未知 over / kind 报错（不静默吞）
+        let bad = r#"
+agg: sum
+over: bogus
+body: { ref: x }
+"#;
+        assert!(serde_yaml::from_str::<Expr>(bad).is_err());
     }
 }

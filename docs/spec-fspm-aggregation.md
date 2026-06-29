@@ -37,17 +37,17 @@ EQC **已有**两类聚合 AST 算子（`src/ast/expr.rs`）：
 ```yaml
 # 穗级总库强 = Σ 各果库强（children 聚合）
 - { for: truss, output: truss_sink,
-    expression: { op: agg, kind: sum, over: children, body: { ref: fruit_sink } } }
+    expression: { agg: sum, over: children, body: { ref: fruit_sink } } }
 
 # 全株冠层总叶面积 = Σ 所有 metamer 叶面积（all / 整株汇总）
 - { output: canopy_leaf_area,
-    expression: { op: agg, kind: sum, over: all, of: metamer, body: { ref: leaf_area } } }
+    expression: { agg: sum, over: all, of: metamer, body: { ref: leaf_area } } }
 
 # 平均节间长（mean over 全实体集）
 - { output: mean_internode,
-    expression: { op: agg, kind: mean, over: all, of: metamer, body: { ref: internode_len } } }
+    expression: { agg: mean, over: all, of: metamer, body: { ref: internode_len } } }
 ```
-- `op: agg`（一等算子）；`kind: sum | mean`；`over: children | all`。
+- `agg: <kind>`（一等算子；`kind = sum | mean`）；`over: children | all`；`of: <entity>`（`over: all` 时给）。键名 `agg` 是写法（同 `{sum:…}`/`{product:…}` 结构化算子），非 `{op: agg}`。
 - `over: children` —— 对当前 `for:` 实例的**直接子实例**（contains 边）聚合。
 - `over: all` + `of: <entity>` —— 对某实体**全部实例**聚合，用于**全株汇总**（无 `for:` 的整株共享量也可用）。
 - `body` 内 `ref` 的作用域 = **被聚合的那个子实例**（同 cohort body 里 `at` 的角色）；引用整株共享量仍直接写名。
@@ -59,12 +59,12 @@ EQC **已有**两类聚合 AST 算子（`src/ast/expr.rs`）：
 Aggregate { kind: ReduceKind, over: TopoSelector, of: Option<String>, body: Box<Expr> },
 pub enum TopoSelector { Children, All, Subtree, Borne, Siblings }   // 本轮实现 Children / All
 ```
-- **手写 Deserialize** 加 `op: agg` 分支（★`Expr` 是手写 deserializer，见 [[eqc-yaml-expr-deserialize-bug]] 的坑：分支顺序/字段名要对，加测试锁）。
+- **手写 Deserialize** 加 `YamlExpr::Aggregate`（key=`agg` 的结构化变体，同 `{sum:…}`）+ `into_expr` 解析 kind/over（未知值报错、不静默）（★`Expr` 是手写 deserializer，见 [[eqc-yaml-expr-deserialize-bug]] 的坑：加测试锁）。
 - **加载期 lower（`parser/structure_expand.rs`）**：`for: E` 展开每实例时——
   - `over: children` → 查该实例的 children 实例集（contains 边）；
   - `over: all` + `of: F` → 取实体 F 的全部实例（复用 `StructureInfo.instances` / `organ_groups`）；
   - `body` 对每个目标实例化引用 → 折 `add` 链（`sum`）/ `add 链 ÷ count`（`mean`，count = 加载期常数）。
-- **算子注册表 `ops`**：登记 `agg`（元数据：聚合语义、可变元）→ 契约/分析/codegen 在**声明层**识别（lower 后虽是 add 链，但声明层算子要登记，符合"加新词汇 = 一处扩展点"约定）。
+- **不进 `ops` 注册表**：结构化算子（`Sum`/`Product`/`Reduce`）本就不在注册表（注册表只管 52 个标量算子），`agg` 跟随它们；声明层语义由 `Expr::Aggregate` 变体直接承载，契约/分析读变体。`to_python`/`to_rust` 因「加载期 lower 后不该到 codegen」用 `unreachable!` 守约；`to_latex` 显示成 `\sum_{children}(…)` / `\operatorname{mean}`。
 
 ### 3.1 空集语义（科学 + 工程 + 架构三面收口）
 - **L1 静态 → `mean` 的分母是加载期常数 count**（`children(truss)`=per-count、`all(metamer)`=count），正常态不会 0/0。
@@ -90,7 +90,7 @@ pub enum TopoSelector { Children, All, Subtree, Borne, Siblings }   // 本轮实
 
 ## 6. 施工分步（每步 `cargo test --features cli --offline` 绿 + 用户点头再提交）
 
-1. **AST 算子**：`Expr::Aggregate` + 复用 `ReduceKind` + `TopoSelector{Children,All,…}` + 手写 Deserialize `op: agg` + `ops` 注册表 + 遍历补全（collect_refs/depth/codegen to_python/to_rust/to_latex 三套）。合成单测锁语法+遍历。
+1. **AST 算子 ✅**：`Expr::Aggregate{kind:ReduceKind, over:TopoSelector{Children/All/…}, of, body}` + 手写 Deserialize `{agg:…}` + 6 处穷尽 match 补全（collect_refs/depth/substitute/to_latex(Σ)/to_python·to_rust(unreachable)）+ 单测 `test_aggregate_yaml`。**lib 293 绿（--features cli）**。（不进 ops 注册表——随 Sum/Reduce。）
 2. **加载期 lower**：`structure_expand` 加 children/all 集合解析 + `Aggregate`→add/mul 链展开；`mean` 空集（count=0）加载期报错。端到端番茄 fixture（穗→Σ果、全株 Σ叶）validate + simulate 验证。
 3. **cohort 收编**：`sum_over/prod_over` 宏 → `Aggregate`，统一 lower。**铁回归锚：草莓 S8 / 番茄 cohort 仿真逐位不变**（`to_bits` 对拍）。
 4. **契约 additive（可选本轮 / 或并入风险4）**：`Aggregate` 在声明层导出供分析显"聚合关系"。
