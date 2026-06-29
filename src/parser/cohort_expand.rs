@@ -366,19 +366,15 @@ fn rewrite_expr(
                 ctx: format!("{op}"),
                 field: "body".into(),
             })?;
-            let combine = if op == "sum_over" { "add" } else { "mul" };
-            let ident = if op == "sum_over" { 0.0 } else { 1.0 };
-            if fam.size == 0 {
-                return Ok(const_value(ident));
-            }
+            let is_sum = op == "sum_over";
             let mut args = Vec::with_capacity(fam.size);
             for i in 1..=fam.size {
                 let mut e2 = env.clone();
                 e2.insert(fam.index.clone(), i);
                 args.push(rewrite_expr(body, &e2, families, all_members)?);
             }
-            // 折成二元链，避免对 add/mul 元数做假设
-            return Ok(fold_binary(combine, args));
+            // 单一折叠源（SSOT，与 structure 拓扑聚合共用）：空集→单位元(sum 0/prod 1)、非空→add/mul 二元链
+            return Ok(super::agg_fold::fold_sum_or_prod(is_sum, args));
         }
     }
 
@@ -388,16 +384,6 @@ fn rewrite_expr(
         out.insert(k.clone(), rewrite_expr(val, env, families, all_members)?);
     }
     Ok(Value::Mapping(out))
-}
-
-/// 把多个参数折成左结合的二元 `op` 链；单个参数原样返回。
-fn fold_binary(op: &str, args: Vec<Value>) -> Value {
-    let mut it = args.into_iter();
-    let mut acc = it.next().expect("fold_binary 至少一个参数");
-    for x in it {
-        acc = op_value(op, vec![acc, x]);
-    }
-    acc
 }
 
 // —— FSPM 身份保留（地基）：cohort lower 到结构。展开仍产逐位不变的标量，另注入 ——
@@ -465,13 +451,6 @@ fn ref_value(name: &str) -> Value {
 fn const_value(x: f64) -> Value {
     let mut m = Mapping::new();
     m.insert(Value::from("const"), Value::from(x));
-    Value::Mapping(m)
-}
-
-fn op_value(op: &str, args: Vec<Value>) -> Value {
-    let mut m = Mapping::new();
-    m.insert(Value::from("op"), Value::from(op));
-    m.insert(Value::from("args"), Value::Sequence(args));
     Value::Mapping(m)
 }
 

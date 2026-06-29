@@ -75,11 +75,12 @@ pub enum TopoSelector { Children, All, Subtree, Borne, Siblings }   // 本轮实
 - `sum` 空集 = 0（加法单位元，数学标准，无争议）。
 - ⚠️ **语义边界（留后，本轮不内建）**：foundation 是「预分配 + 门控激活」，"未坐果的果"是**存在但 mass=0 的实例**、会进 `mean` 分母 → 把平均拉低。"只对已激活器官求平均" = **条件聚合**（`over: children where active`），涉科学意图、留风险4 再议。本轮 `mean` = 全集简单平均（分母 = 静态 count）。
 
-## 4. cohort 收编（零回归）
+## 4. cohort 收编（零回归，第3步 ✅ 采 **A·单一折叠源**）
 
-- `cohort_expand` 的 `sum_over`/`prod_over` 宏 → 改成产出 `Expr::Aggregate{kind, over: children}`（cohort 家族 = children-like），再走**统一 lower**。
-- 变量/方程**名 + 轨迹键保持现状**（`name__i`）→ 现有草莓/番茄 cohort 模型仿真**逐位不变**（第3步铁回归锚）。
-- 收益：消掉"宏 vs 一等算子"两套；聚合语义 **AST 可见**（契约/分析能标注"此 rate 沿 children 求和"）。
+- **施工时的发现**（改了原计划）：cohort 的 `sum_over`/`prod_over` **早已在 YAML 层折成 add/mul 链**，且其 `fold_binary` 与 structure 的那份**重复**；pass 顺序 `expand_structure` **在** `expand_cohorts` **前**，cohort 没法发 `{agg}` 给 structure lower。且两条路的聚合**都在反序列化前 lower 成标量** —— `Expr::Aggregate` 并不进最终 AST（它是声明形态/退化场景的类型）。
+- **采 A（安全·单一折叠源）**：抽出 `src/parser/agg_fold.rs`（`fold_binary` / `op_args` / `fold_sum_or_prod`，空集→单位元 sum 0/prod 1）。cohort `sum_over`/`prod_over` 与 structure `sum`/`prod` **共用同一折叠源**，删掉两份重复折叠。**输出逐位不变**：草莓 S8 仿真 `Y=7.558441109220954`（与既知一致）、cohort `sum_over` 单测断言精确 `add(add(…))` 链。
+- **B 档（cohort 发 `{agg}` + 反转 pass 顺序让 structure 统一 lower）暂不做**：要反转既定顺序 + 逐位验证所有 cohort 模型，风险高、收益被"cohort 终将迁 structure"摊薄。
+- 变量/方程**名 + 轨迹键保持现状**（`name__i`）→ 现有草莓/番茄 cohort 模型仿真**逐位不变**。
 
 ## 5. 番茄用例（接地基切片，到单果级）
 
@@ -92,7 +93,7 @@ pub enum TopoSelector { Children, All, Subtree, Borne, Siblings }   // 本轮实
 
 1. **AST 算子 ✅**：`Expr::Aggregate{kind:ReduceKind, over:TopoSelector{Children/All/…}, of, body}` + 手写 Deserialize `{agg:…}` + 6 处穷尽 match 补全（collect_refs/depth/substitute/to_latex(Σ)/to_python·to_rust(unreachable)）+ 单测 `test_aggregate_yaml`。**lib 293 绿（--features cli）**。（不进 ops 注册表——随 Sum/Reduce。）
 2. **加载期 lower**：`structure_expand` 加 children/all 集合解析 + `Aggregate`→add/mul 链展开；`mean` 空集（count=0）加载期报错。端到端番茄 fixture（穗→Σ果、全株 Σ叶）validate + simulate 验证。
-3. **cohort 收编**：`sum_over/prod_over` 宏 → `Aggregate`，统一 lower。**铁回归锚：草莓 S8 / 番茄 cohort 仿真逐位不变**（`to_bits` 对拍）。
+3. **cohort 收编 ✅（A·单一折叠源）**：抽 `agg_fold.rs` 单一折叠源，cohort `sum_over/prod_over` + structure `sum/prod` 共用，删两份重复。297 lib 绿 + 草莓 S8 `Y=7.5584411`（既知值，逐位不变）。
 4. **契约 additive（可选本轮 / 或并入风险4）**：`Aggregate` 在声明层导出供分析显"聚合关系"。
 
 ## 7. 立场与边界

@@ -1,5 +1,6 @@
 //! YAML 解析器模块
 
+mod agg_fold;
 mod cohort_expand;
 mod structure_expand;
 mod yaml_parser;

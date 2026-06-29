@@ -485,7 +485,9 @@ fn expand_aggregate(m: &Mapping, kind: &str, ctx: &RefCtx) -> Result<Value, Stru
 }
 
 /// 折叠聚合项成标量表达式。sum 空集→0、prod 空集→1；mean/min/max 空集→加载期报错。
+/// sum/prod 折叠走 `agg_fold` 单一折叠源（与 cohort sum_over/prod_over 同源、逐位一致）。
 fn fold_aggregate(kind: &str, over: &str, entity: &str, terms: Vec<Value>) -> Result<Value, StructureError> {
+    use super::agg_fold;
     let n = terms.len();
     let empty = || StructureError::EmptyAggregate {
         kind: kind.to_string(),
@@ -493,40 +495,22 @@ fn fold_aggregate(kind: &str, over: &str, entity: &str, terms: Vec<Value>) -> Re
         entity: entity.to_string(),
     };
     match kind {
-        "sum" => Ok(if n == 0 { const_value(0.0) } else { fold_binary("add", terms) }),
-        "prod" | "product" => Ok(if n == 0 { const_value(1.0) } else { fold_binary("mul", terms) }),
+        "sum" => Ok(agg_fold::fold_sum_or_prod(true, terms)),
+        "prod" | "product" => Ok(agg_fold::fold_sum_or_prod(false, terms)),
         "mean" => {
             if n == 0 {
                 return Err(empty());
             }
-            Ok(op_args("div", vec![fold_binary("add", terms), const_value(n as f64)]))
+            Ok(agg_fold::op_args("div", vec![agg_fold::fold_sum_or_prod(true, terms), const_value(n as f64)]))
         }
         "min" | "max" => {
             if n == 0 {
                 return Err(empty());
             }
-            Ok(op_args(kind, terms))
+            Ok(agg_fold::op_args(kind, terms))
         }
         other => Err(StructureError::BadAggregate(format!("kind: {other}"))),
     }
-}
-
-/// 左折叠成二元 op 链：`[a,b,c]` → `op(op(a,b),c)`。`terms` 必须非空。
-fn fold_binary(op: &str, terms: Vec<Value>) -> Value {
-    let mut it = terms.into_iter();
-    let mut acc = it.next().expect("fold_binary 调用前已保证非空");
-    for t in it {
-        acc = op_args(op, vec![acc, t]);
-    }
-    acc
-}
-
-/// 构造 `{op: <op>, args: [...]}` 节点。
-fn op_args(op: &str, args: Vec<Value>) -> Value {
-    let mut m = Mapping::new();
-    m.insert(Value::from("op"), Value::from(op));
-    m.insert(Value::from("args"), Value::Sequence(args));
-    Value::Mapping(m)
 }
 
 /// 构造 StructureInfo 的 YAML（entities + instances + topology）。
