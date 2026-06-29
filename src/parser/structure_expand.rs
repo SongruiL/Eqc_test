@@ -37,6 +37,10 @@ pub enum StructureError {
     BadRefOf(String),
     /// 必需字段缺失。
     MissingField { ctx: String, field: String },
+    /// 聚合声明不合法（缺 over/body、over 取值非法、children 歧义等）。
+    BadAggregate(String),
+    /// 聚合对空集（mean/min/max 基数 0）—— 加载期拒绝（不设运行时 0/NaN）。
+    EmptyAggregate { kind: String, over: String, entity: String },
 }
 
 impl std::fmt::Display for StructureError {
@@ -49,6 +53,10 @@ impl std::fmt::Display for StructureError {
             }
             StructureError::BadRefOf(s) => write!(f, "ref 的 of: 取值非法: {s}（需 self/parent/prev/next）"),
             StructureError::MissingField { ctx, field } => write!(f, "{ctx} 缺少必需字段 {field}"),
+            StructureError::BadAggregate(s) => write!(f, "拓扑聚合声明不合法: {s}"),
+            StructureError::EmptyAggregate { kind, over, entity } => {
+                write!(f, "{kind} 聚合（over: {over}, 实体 {entity}）的集合为空（基数 0）——请检查实体基数，{kind} 对空集未定义")
+            }
         }
     }
 }
@@ -264,57 +272,76 @@ fn expand_eqs(
     insts: &HashMap<String, Vec<Inst>>,
     var_entity: &HashMap<String, String>,
 ) -> Result<Vec<Value>, StructureError> {
-    let chain: HashMap<&str, bool> =
-        entities.iter().map(|e| (e.name.as_str(), e.topology.as_deref() == Some("chain"))).collect();
+    let entities_chain: HashMap<String, bool> =
+        entities.iter().map(|e| (e.name.clone(), e.topology.as_deref() == Some("chain"))).collect();
     let mut out = Vec::new();
     for eq in eqs {
         let Some(emap) = eq.as_mapping() else {
             out.push(eq.clone());
             continue;
         };
-        let Some(ent) = emap.get("for").and_then(Value::as_str) else {
-            out.push(eq.clone()); // 无 for: = 整株共享方程，原样
-            continue;
-        };
-        let ent = ent.to_string();
-        let list = insts.get(&ent).map(|v| v.as_slice()).unwrap_or(&[]);
-        let is_chain = *chain.get(ent.as_str()).unwrap_or(&false);
-        // 父实体的实例数（解析 of: prev/next 边界）。
-        let n_self = list.len();
-        for (idx, inst) in list.iter().enumerate() {
-            let mut clone = emap.clone();
-            clone.remove("for");
-            let sfx = id_safe(&inst.id);
-            // id / output 后缀
-            if let Some(id) = clone.get("id").and_then(Value::as_str).map(|s| s.to_string()) {
-                clone.insert(Value::from("id"), Value::from(format!("{id}__{sfx}")));
+        match emap.get("for").and_then(Value::as_str).map(|s| s.to_string()) {
+            // 整株共享方程（无 for:）：仍要 lower 表达式里的聚合（over: all）；普通共享 ref 原样。
+            None => {
+                let mut clone = emap.clone();
+                if let Some(expr) = clone.get("expression") {
+                    let ctx = RefCtx {
+                        ent: "", inst: None, idx: 0, n_self: 0, is_chain: false,
+                        var_entity, insts, entities_chain: &entities_chain,
+                    };
+                    let rewritten = rewrite_refs(expr, &ctx)?;
+                    clone.insert(Value::from("expression"), rewritten);
+                }
+                out.push(Value::Mapping(clone));
             }
-            let out_name = clone.get("output").and_then(Value::as_str).map(|s| s.to_string()).ok_or(
-                StructureError::MissingField { ctx: "equation".into(), field: "output".into() },
-            )?;
-            clone.insert(Value::from("output"), Value::from(format!("{out_name}__{sfx}")));
-            // 表达式 ref 解析
-            if let Some(expr) = clone.get("expression") {
-                let ctx = RefCtx { ent: &ent, inst, idx, n_self, is_chain, var_entity, insts };
-                let rewritten = rewrite_refs(expr, &ctx)?;
-                clone.insert(Value::from("expression"), rewritten);
+            // `for: E` 方程：每实例一份。
+            Some(ent) => {
+                let list = insts.get(&ent).map(|v| v.as_slice()).unwrap_or(&[]);
+                let is_chain = *entities_chain.get(&ent).unwrap_or(&false);
+                let n_self = list.len(); // 解析 of: prev/next 边界
+                for (idx, inst) in list.iter().enumerate() {
+                    let mut clone = emap.clone();
+                    clone.remove("for");
+                    let sfx = id_safe(&inst.id);
+                    // id / output 后缀
+                    if let Some(id) = clone.get("id").and_then(Value::as_str).map(|s| s.to_string()) {
+                        clone.insert(Value::from("id"), Value::from(format!("{id}__{sfx}")));
+                    }
+                    let out_name = clone.get("output").and_then(Value::as_str).map(|s| s.to_string()).ok_or(
+                        StructureError::MissingField { ctx: "equation".into(), field: "output".into() },
+                    )?;
+                    clone.insert(Value::from("output"), Value::from(format!("{out_name}__{sfx}")));
+                    // 表达式 ref / 聚合 解析
+                    if let Some(expr) = clone.get("expression") {
+                        let ctx = RefCtx {
+                            ent: &ent, inst: Some(inst), idx, n_self, is_chain,
+                            var_entity, insts, entities_chain: &entities_chain,
+                        };
+                        let rewritten = rewrite_refs(expr, &ctx)?;
+                        clone.insert(Value::from("expression"), rewritten);
+                    }
+                    clone.insert(Value::from("instance"), instance_tag(&ent, &inst.id));
+                    out.push(Value::Mapping(clone));
+                }
             }
-            clone.insert(Value::from("instance"), instance_tag(&ent, &inst.id));
-            out.push(Value::Mapping(clone));
         }
     }
     Ok(out)
 }
 
 /// ref 解析上下文（当前方程实例所在实体/实例 + 邻居/父查找所需）。
+/// `inst=None` = 整株共享方程（无 `for:`）：此时只能解析共享 ref 与 `over: all` 聚合，
+/// 引用结构量或 `over: children`/`of: self` 会报错（无当前实例上下文）。
 struct RefCtx<'a> {
     ent: &'a str,
-    inst: &'a Inst,
+    inst: Option<&'a Inst>,
     idx: usize,
     n_self: usize,
     is_chain: bool,
     var_entity: &'a HashMap<String, String>,
     insts: &'a HashMap<String, Vec<Inst>>,
+    /// 实体名 → 是否 chain 拓扑（聚合 lower 时给目标实体建 sub-ctx 用）。
+    entities_chain: &'a HashMap<String, bool>,
 }
 
 /// 递归重写表达式里的 `{ref: X [, of: self|parent|prev|next]}`：解析到对应实例的标量名。
@@ -328,6 +355,11 @@ fn rewrite_refs(v: &Value, ctx: &RefCtx) -> Result<Value, StructureError> {
     }
     let Value::Mapping(m) = v else { return Ok(v.clone()) };
 
+    // FSPM 风险3：拓扑聚合 { agg: K, over: S, of?: E, body: B } → 加载期展开成标量 add/mul 链。
+    if let Some(kind) = m.get("agg").and_then(Value::as_str) {
+        return expand_aggregate(m, kind, ctx);
+    }
+
     if let Some(name) = m.get("ref").and_then(Value::as_str) {
         let of = m.get("of").and_then(Value::as_str);
         let var_ent = ctx.var_entity.get(name).map(|s| s.as_str());
@@ -335,9 +367,13 @@ fn rewrite_refs(v: &Value, ctx: &RefCtx) -> Result<Value, StructureError> {
         if var_ent.is_none() {
             return Ok(ref_value(name));
         }
-        // 结构量：按 of: 解析实例。
+        // 结构量：需当前实例上下文（for: 方程或聚合 body 内）。
+        let cur = ctx.inst.ok_or_else(|| {
+            StructureError::BadRefOf(format!("{name}（结构量需在 for: 方程或聚合 body 内引用，整株共享方程不可直接引用单实例量）"))
+        })?;
+        // 按 of: 解析实例。
         let target_id: Option<String> = match of {
-            None | Some("self") => Some(ctx.inst.id.clone()),
+            None | Some("self") => Some(cur.id.clone()),
             Some("prev") => {
                 if ctx.is_chain && ctx.idx >= 1 {
                     Some(ctx.insts[ctx.ent][ctx.idx - 1].id.clone())
@@ -352,7 +388,7 @@ fn rewrite_refs(v: &Value, ctx: &RefCtx) -> Result<Value, StructureError> {
                     None
                 }
             }
-            Some("parent") => ctx.inst.parent.clone(),
+            Some("parent") => cur.parent.clone(),
             Some(other) => return Err(StructureError::BadRefOf(other.to_string())),
         };
         return Ok(match target_id {
@@ -367,6 +403,130 @@ fn rewrite_refs(v: &Value, ctx: &RefCtx) -> Result<Value, StructureError> {
         out.insert(k.clone(), rewrite_refs(val, ctx)?);
     }
     Ok(Value::Mapping(out))
+}
+
+/// FSPM 风险3：把拓扑聚合 `{ agg, over, of?, body }` lower 成标量 add/mul 链（L1，加载期）。
+/// `over: children` 取当前父实例的子实例集；`over: all` 取某实体全部实例。每个目标以自身为
+/// `self` 实例化 body，再折叠（sum→add 链 / prod→mul 链 / mean→链÷count / min·max→{op,args}）。
+fn expand_aggregate(m: &Mapping, kind: &str, ctx: &RefCtx) -> Result<Value, StructureError> {
+    let over = m
+        .get("over")
+        .and_then(Value::as_str)
+        .ok_or(StructureError::MissingField { ctx: "agg".into(), field: "over".into() })?;
+    let body = m
+        .get("body")
+        .ok_or(StructureError::MissingField { ctx: "agg".into(), field: "body".into() })?;
+    let of_ent = m.get("of").and_then(Value::as_str);
+
+    // 目标实体 + 被聚合的实例集
+    let (target_entity, targets): (String, Vec<Inst>) = match over {
+        "children" => {
+            let cur = ctx.inst.ok_or_else(|| {
+                StructureError::BadAggregate("over: children 需在 for: 方程内（无当前父实例）".into())
+            })?;
+            let pid = cur.id.as_str();
+            if let Some(e) = of_ent {
+                let l = ctx
+                    .insts
+                    .get(e)
+                    .map(|v| v.iter().filter(|i| i.parent.as_deref() == Some(pid)).cloned().collect::<Vec<_>>())
+                    .unwrap_or_default();
+                (e.to_string(), l)
+            } else {
+                // 推断唯一子实体（命中多子实体 → 要求 of: 指定）
+                let mut found: Option<(String, Vec<Inst>)> = None;
+                for (en, l) in ctx.insts.iter() {
+                    let sub: Vec<Inst> =
+                        l.iter().filter(|i| i.parent.as_deref() == Some(pid)).cloned().collect();
+                    if !sub.is_empty() {
+                        if found.is_some() {
+                            return Err(StructureError::BadAggregate(format!(
+                                "over: children 命中多个子实体，请用 of: 指定（如 {en}）"
+                            )));
+                        }
+                        found = Some((en.clone(), sub));
+                    }
+                }
+                found.unwrap_or_else(|| (String::new(), Vec::new()))
+            }
+        }
+        "all" => {
+            let e = of_ent.ok_or(StructureError::MissingField {
+                ctx: "agg over: all".into(),
+                field: "of".into(),
+            })?;
+            (e.to_string(), ctx.insts.get(e).cloned().unwrap_or_default())
+        }
+        other => {
+            return Err(StructureError::BadAggregate(format!("over: {other}（本轮支持 children/all）")))
+        }
+    };
+
+    // 对每个目标以自身为 self 实例化 body
+    let full = ctx.insts.get(&target_entity).map(|v| v.as_slice()).unwrap_or(&[]);
+    let tchain = *ctx.entities_chain.get(&target_entity).unwrap_or(&false);
+    let mut terms: Vec<Value> = Vec::with_capacity(targets.len());
+    for t in &targets {
+        let idx = full.iter().position(|i| i.id == t.id).unwrap_or(0);
+        let sub = RefCtx {
+            ent: &target_entity,
+            inst: Some(t),
+            idx,
+            n_self: full.len(),
+            is_chain: tchain,
+            var_entity: ctx.var_entity,
+            insts: ctx.insts,
+            entities_chain: ctx.entities_chain,
+        };
+        terms.push(rewrite_refs(body, &sub)?);
+    }
+
+    fold_aggregate(kind, over, &target_entity, terms)
+}
+
+/// 折叠聚合项成标量表达式。sum 空集→0、prod 空集→1；mean/min/max 空集→加载期报错。
+fn fold_aggregate(kind: &str, over: &str, entity: &str, terms: Vec<Value>) -> Result<Value, StructureError> {
+    let n = terms.len();
+    let empty = || StructureError::EmptyAggregate {
+        kind: kind.to_string(),
+        over: over.to_string(),
+        entity: entity.to_string(),
+    };
+    match kind {
+        "sum" => Ok(if n == 0 { const_value(0.0) } else { fold_binary("add", terms) }),
+        "prod" | "product" => Ok(if n == 0 { const_value(1.0) } else { fold_binary("mul", terms) }),
+        "mean" => {
+            if n == 0 {
+                return Err(empty());
+            }
+            Ok(op_args("div", vec![fold_binary("add", terms), const_value(n as f64)]))
+        }
+        "min" | "max" => {
+            if n == 0 {
+                return Err(empty());
+            }
+            Ok(op_args(kind, terms))
+        }
+        other => Err(StructureError::BadAggregate(format!("kind: {other}"))),
+    }
+}
+
+/// 左折叠成二元 op 链：`[a,b,c]` → `op(op(a,b),c)`。`terms` 必须非空。
+fn fold_binary(op: &str, terms: Vec<Value>) -> Value {
+    let mut it = terms.into_iter();
+    let mut acc = it.next().expect("fold_binary 调用前已保证非空");
+    for t in it {
+        acc = op_args(op, vec![acc, t]);
+    }
+    acc
+}
+
+/// 构造 `{op: <op>, args: [...]}` 节点。
+fn op_args(op: &str, args: Vec<Value>) -> Value {
+    let mut m = Mapping::new();
+    m.insert(Value::from("op"), Value::from(op));
+    m.insert(Value::from("args"), Value::Sequence(args));
+    Value::Mapping(m)
 }
 
 /// 构造 StructureInfo 的 YAML（entities + instances + topology）。
@@ -557,5 +717,123 @@ equations:
         assert!(m2.iter().any(|n| n.ends_with(".leaf__2")) && m2.iter().any(|n| n.ends_with(".lg__2")), "{m2:?}");
         // T（共享、无 of:）不归入任何实体
         assert!(!g.values().any(|insts| insts.values().any(|ns| ns.iter().any(|n| n.ends_with(".T")))));
+    }
+
+    /// 收集表达式 Value 里所有 `ref` 名（递归）。
+    fn collect_refs(v: &Value, acc: &mut Vec<String>) {
+        match v {
+            Value::Mapping(m) => {
+                if let Some(r) = m.get("ref").and_then(Value::as_str) {
+                    acc.push(r.to_string());
+                }
+                for (_, val) in m {
+                    collect_refs(val, acc);
+                }
+            }
+            Value::Sequence(s) => {
+                for e in s {
+                    collect_refs(e, acc);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn test_aggregate_lowering_children_and_all() {
+        // FSPM 风险3：children 聚合（节→Σ果）+ all 聚合（整株共享方程→Σ全果）
+        let src = yaml(
+            r#"
+structure:
+  entities:
+    metamer: { count: 2, topology: chain }
+    fruit:   { per: metamer, count: 3 }
+variables:
+  fmass:       { of: fruit, class: state, init: 0, rate: fg }
+  fg:          { of: fruit, class: rate }
+  node_fruit:  { of: metamer, class: state }
+  plant_fruit: { class: state }
+equations:
+  - { id: NF, for: metamer, output: node_fruit,
+      expression: { agg: sum, over: children, body: { ref: fmass } } }
+  - { id: PF, output: plant_fruit,
+      expression: { agg: sum, over: all, of: fruit, body: { ref: fmass } } }
+"#,
+        );
+        let out = expand_structure(src).unwrap();
+        let eqs = out.get("equations").unwrap().as_sequence().unwrap();
+        let find = |key: &str| {
+            eqs.iter()
+                .map(|e| e.as_mapping().unwrap())
+                .find(|m| s(m, "id").as_deref() == Some(key))
+                .unwrap_or_else(|| panic!("找不到方程 {key}"))
+                .clone()
+        };
+
+        // NF__1（metamer 1）：children = fruit 1.1/1.2/1.3 → add 链
+        let nf1 = find("NF__1");
+        assert_eq!(s(&nf1, "output").as_deref(), Some("node_fruit__1"));
+        let mut r1 = Vec::new();
+        collect_refs(nf1.get("expression").unwrap(), &mut r1);
+        r1.sort();
+        r1.dedup();
+        assert_eq!(r1, vec!["fmass__1_1", "fmass__1_2", "fmass__1_3"]);
+        // 折叠成 add（lower 后无 agg 残留）
+        assert_eq!(
+            nf1.get("expression").unwrap().as_mapping().unwrap().get("op").and_then(Value::as_str),
+            Some("add")
+        );
+
+        // NF__2（metamer 2）：children = fruit 2.1/2.2/2.3
+        let nf2 = find("NF__2");
+        let mut r2 = Vec::new();
+        collect_refs(nf2.get("expression").unwrap(), &mut r2);
+        r2.sort();
+        r2.dedup();
+        assert_eq!(r2, vec!["fmass__2_1", "fmass__2_2", "fmass__2_3"]);
+
+        // PF（整株共享方程，over: all fruit）：全 6 果；output 无后缀
+        let pf = find("PF");
+        assert_eq!(s(&pf, "output").as_deref(), Some("plant_fruit"));
+        let mut rp = Vec::new();
+        collect_refs(pf.get("expression").unwrap(), &mut rp);
+        rp.sort();
+        rp.dedup();
+        assert_eq!(rp.len(), 6, "{rp:?}");
+        assert!(rp.contains(&"fmass__1_1".to_string()) && rp.contains(&"fmass__2_3".to_string()));
+    }
+
+    #[test]
+    fn test_mean_empty_set_rejected() {
+        // mean over 空集（count 0）→ 加载期报错（不设运行时 0/NaN）
+        let src = yaml(
+            r#"
+structure:
+  entities:
+    leaf: { count: 0 }
+variables:
+  m: { class: state }
+equations:
+  - { id: M, output: m, expression: { agg: mean, over: all, of: leaf, body: { ref: x } } }
+"#,
+        );
+        let err = expand_structure(src);
+        assert!(matches!(err, Err(StructureError::EmptyAggregate { .. })), "应为 EmptyAggregate，实为 {err:?}");
+
+        // sum over 空集 → 0（不报错）
+        let src2 = yaml(
+            r#"
+structure:
+  entities:
+    leaf: { count: 0 }
+variables:
+  m: { class: state }
+equations:
+  - { id: M, output: m, expression: { agg: sum, over: all, of: leaf, body: { ref: x } } }
+"#,
+        );
+        let out = expand_structure(src2).unwrap();
+        let eq = out.get("equations").unwrap().as_sequence().unwrap()[0].as_mapping().unwrap();
+        assert!(eq.get("expression").unwrap().as_mapping().unwrap().contains_key("const"));
     }
 }
