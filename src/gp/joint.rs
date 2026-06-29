@@ -552,8 +552,8 @@ mod tests {
             parameters: IndexMap::new(),
             variables,
             equations: vec![
-                Equation { id: "A".into(), name: "A".into(), output: "yA".into(), expression: Expr::var("chill"), formula_display: None, reference: None, gp_target: gt("monotone_gate") , instance: None },
-                Equation { id: "B".into(), name: "B".into(), output: "yB".into(), expression: Expr::var("lai"), formula_display: None, reference: None, gp_target: gt("saturating_sink") , instance: None },
+                Equation { id: "A".into(), name: "A".into(), output: "yA".into(), expression: Expr::var("chill"), formula_display: None, reference: None, gp_target: gt("monotone_gate") , provenance: None, instance: None },
+                Equation { id: "B".into(), name: "B".into(), output: "yB".into(), expression: Expr::var("lai"), formula_display: None, reference: None, gp_target: gt("saturating_sink") , provenance: None, instance: None },
             ],
          structure: None }
     }

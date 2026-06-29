@@ -828,7 +828,7 @@ mod tests {
                 output: "y".into(),
                 expression: Expr::mul(Expr::var("x"), Expr::Const(2.0)),
                 formula_display: None,
-                reference: None, gp_target: None,
+                reference: None, gp_target: None, provenance: None,
              instance: None }],
          structure: None };
         let files = vec![file];
@@ -879,7 +879,7 @@ mod tests {
             meta: Metadata { id: "M".into(), model: "M".into(), name_cn: "动态".into(), name_en: None, version: "1.0".into(), description: None, reference: None, source_files: vec![], dt: 1.0, dt_seconds: None, calibration: None, modules: Default::default() },
             parameters: Default::default(),
             variables,
-            equations: vec![Equation { id: "E".into(), name: "速率".into(), output: "R".into(), expression: Expr::mul(Expr::var("T"), Expr::Const(2.0)), formula_display: None, reference: None, gp_target: None , instance: None }],
+            equations: vec![Equation { id: "E".into(), name: "速率".into(), output: "R".into(), expression: Expr::mul(Expr::var("T"), Expr::Const(2.0)), formula_display: None, reference: None, gp_target: None, provenance: None , instance: None }],
          structure: None };
         let files = vec![file];
         let dag = crate::dag::build_dag(&files).unwrap();

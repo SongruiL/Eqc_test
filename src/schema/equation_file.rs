@@ -252,7 +252,7 @@ mod tests {
                 output: "y".into(),
                 expression: expr,
                 formula_display: None,
-                reference: None, gp_target: None,
+                reference: None, gp_target: None, provenance: None,
              instance: None }],
          structure: None };
 
@@ -325,7 +325,7 @@ mod tests {
                 output: "DM".into(),
                 expression: Expr::var("Y"),
                 formula_display: None,
-                reference: None, gp_target: None,
+                reference: None, gp_target: None, provenance: None,
              instance: None }],
          structure: None };
         assert_eq!(file.display_name("Y"), "鲜重产量"); // ① 变量 label 最高优先

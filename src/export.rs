@@ -130,6 +130,9 @@ pub struct EqJson {
     /// GP 进化靶点标记（受约束 GP；缺省=机理基座冻结，则不输出此字段）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gp_target: Option<crate::schema::GpTarget>,
+    /// 方程来源档（文献/平移/推导/猜测；出处诚实纪律）。缺省则不输出。additive。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<crate::schema::Provenance>,
 }
 
 /// 把一组方程文件导出为契约 JSON 结构。
@@ -216,6 +219,7 @@ fn module_json(f: &EquationFile) -> ModuleJson {
                 reference: e.reference.clone(),
                 formula_display: e.formula_display.clone(),
                 gp_target: e.gp_target.clone(),
+                provenance: e.provenance,
             }
         })
         .collect();
@@ -740,7 +744,7 @@ mod tests {
                 output: "DDM".into(),
                 expression: crate::ast::Expr::mul(crate::ast::Expr::var("I"), crate::ast::Expr::var("LUE")),
                 formula_display: None,
-                reference: None, gp_target: None,
+                reference: None, gp_target: None, provenance: None,
              instance: None }],
          structure: None };
         let files = vec![file];
@@ -789,7 +793,7 @@ mod tests {
                 monotone,
                 frozen: false,
             }),
-         instance: None };
+         provenance: None, instance: None };
         let plain = Equation {
             id: "BB5-LAI".into(),
             name: "叶面积".into(),
@@ -797,7 +801,7 @@ mod tests {
             expression: Expr::var("W_leaf"),
             formula_display: None,
             reference: None,
-            gp_target: None,
+            gp_target: None, provenance: None,
          instance: None };
         let mut variables = IndexMap::new();
         variables.insert("dormancy_released".to_string(), dyn_var("r1"));

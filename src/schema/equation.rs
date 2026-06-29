@@ -33,6 +33,36 @@ pub struct GpTarget {
     pub frozen: bool,
 }
 
+/// 方程来源档（出处诚实纪律，见 `docs/spec-fspm-development.md` §3）。
+///
+/// 配合 `reference`（引用文献）= 完整出处。按"来源阶梯"标注每条方程的可信层级：
+/// 文献（直接用于本作物的已发表方程，最高）> 平移（从他作物搬）> 推导（从理论推）> 猜测（占位）。
+/// **下游用途**：①受约束 GP 自动选靶点（`推导`/`猜测` → 可进化，`文献` → 冻结基座，与 `gp_target` 协同）；
+/// ②契约带出 → 生长动画按出处上色。additive：缺省（None）= 未标注，序列化跳过，现有模型逐字节不变。
+/// YAML 可写中文（`provenance: 文献`）或英文别名（`literature`/`transferred`/`derived`/`guess`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Provenance {
+    /// 直接用于本作物的已发表方程（置信最高，机理基座、宜冻结）。
+    #[serde(rename = "文献", alias = "literature")]
+    Literature,
+    /// 从其它作物平移的方程（应在 `reference` 标源作物 + 可移植性）。
+    #[serde(rename = "平移", alias = "transferred")]
+    Transferred,
+    /// 从作物生长理论 / 第一性原理推导（无直接文献）。
+    #[serde(rename = "推导", alias = "derived")]
+    Derived,
+    /// 占位 / 猜测（连理论都薄；诚实标注，优先交 GP/标定）。
+    #[serde(rename = "猜测", alias = "guess")]
+    Guess,
+}
+
+impl Provenance {
+    /// 是否"不确定"（推导/猜测）——受约束 GP 选靶点的默认判据。
+    pub fn is_uncertain(&self) -> bool {
+        matches!(self, Provenance::Derived | Provenance::Guess)
+    }
+}
+
 /// 方程定义
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Equation {
@@ -60,6 +90,10 @@ pub struct Equation {
     #[serde(default)]
     pub gp_target: Option<GpTarget>,
 
+    /// 方程来源档（文献/平移/推导/猜测；出处诚实纪律）。缺省 = 未标注。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<Provenance>,
+
     /// FSPM 器官实例身份（地基，见 `docs/spec-fspm-foundation.md`）。
     ///
     /// 由 `structure:`/`cohorts:` 加载期实例化时填（对实体每实例展开一份）；**引擎不读、下游读**。
@@ -84,5 +118,39 @@ impl Equation {
         let mut deps = self.get_variable_refs();
         deps.extend(self.get_parameter_refs());
         deps
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provenance_yaml_roundtrip() {
+        // 中文值反序列化
+        assert_eq!(serde_yaml::from_str::<Provenance>("文献").unwrap(), Provenance::Literature);
+        assert_eq!(serde_yaml::from_str::<Provenance>("猜测").unwrap(), Provenance::Guess);
+        // 英文别名也接受
+        assert_eq!(serde_yaml::from_str::<Provenance>("transferred").unwrap(), Provenance::Transferred);
+        assert_eq!(serde_yaml::from_str::<Provenance>("derived").unwrap(), Provenance::Derived);
+        // 序列化回中文（契约带出用）
+        assert_eq!(serde_yaml::to_string(&Provenance::Literature).unwrap().trim(), "文献");
+        // 不确定性判据（GP 选靶点用）
+        assert!(Provenance::Derived.is_uncertain() && Provenance::Guess.is_uncertain());
+        assert!(!Provenance::Literature.is_uncertain() && !Provenance::Transferred.is_uncertain());
+    }
+
+    #[test]
+    fn equation_provenance_is_additive() {
+        // 无 provenance → None（缺省，现有模型逐字节不变）
+        let e: Equation =
+            serde_yaml::from_str("{id: E1, name: 测试, output: y, expression: {ref: x}}").unwrap();
+        assert!(e.provenance.is_none());
+        // 标 provenance: 文献 → Some
+        let e2: Equation = serde_yaml::from_str(
+            "{id: E2, name: 测试, output: y, expression: {ref: x}, provenance: 文献}",
+        )
+        .unwrap();
+        assert_eq!(e2.provenance, Some(Provenance::Literature));
     }
 }

@@ -259,7 +259,7 @@ pub(crate) mod tests {
                     expression: expr,
                     formula_display: None,
                     reference: None,
-                    gp_target: None,
+                    gp_target: None, provenance: None,
                  instance: None }
             })
             .collect();

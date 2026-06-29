@@ -189,7 +189,7 @@ mod tests {
                     monotone: mono,
                     frozen: false,
                 }),
-             instance: None }],
+             provenance: None, instance: None }],
          structure: None }
     }
 

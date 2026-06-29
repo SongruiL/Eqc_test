@@ -853,7 +853,7 @@ mod tests {
                 output: output.to_string(),
                 expression: parse_to_expr(expr).unwrap(),
                 formula_display: None,
-                reference: None, gp_target: None,
+                reference: None, gp_target: None, provenance: None,
              instance: None }
         }
 
