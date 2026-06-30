@@ -249,9 +249,13 @@ pub fn serve(
 
     for stream in listener.incoming().flatten() {
         let ctx = Arc::clone(&ctx);
-        std::thread::spawn(move || {
-            let _ = handle(stream, &ctx);
-        });
+        // 大栈（64MB）：大模型（数百器官级方程，如 FSPM F4 的 48 果 621 方程）的 pass/eval 递归在
+        // 默认 spawn 线程栈（Windows ~1MB）会溢出（CLI 主线程 8MB 不会）→ 显式放大，让 serve 像 CLI 一样扛大模型。
+        let _ = std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(move || {
+                let _ = handle(stream, &ctx);
+            });
     }
     Ok(())
 }
