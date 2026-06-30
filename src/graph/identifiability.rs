@@ -163,6 +163,7 @@ mod tests {
             optimizable: true,
             management: false,
             description: None,
+            provenance: None,
         }
     }
 

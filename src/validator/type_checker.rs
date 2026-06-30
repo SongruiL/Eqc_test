@@ -322,6 +322,7 @@ mod tests {
                 optimizable: false,
                 management: false,
                 description: None,
+                provenance: None,
             },
         );
 

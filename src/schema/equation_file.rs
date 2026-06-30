@@ -250,6 +250,7 @@ mod tests {
                 optimizable: true,
                 management: false,
                 description: None,
+                provenance: None,
             },
         );
 
@@ -331,6 +332,7 @@ mod tests {
                 optimizable: true,
                 management: false,
                 description: None,
+                provenance: None,
             }, // ③ 参数 → name_cn
         );
         let file = EquationFile {

@@ -56,6 +56,7 @@ pub fn patch_model(base: &EquationFile, target_id: &str, cand: &Candidate) -> Op
                 optimizable: true,
                 management: false,
                 description: None,
+                provenance: None,
             },
         );
     }

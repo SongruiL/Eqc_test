@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::DataType;
+use super::{DataType, Provenance};
 
 /// 参数定义（常量，可被 GP 优化）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +49,11 @@ pub struct Parameter {
     /// 描述
     #[serde(default)]
     pub description: Option<String>,
+
+    /// 来源出处档（F5c 参数选靶）：文献/平移/推导/猜测。机器可读区分「文献冻结」vs「推导/猜测可标」，
+    /// 与方程 provenance 同款；配合 `optimizable`/`bounds` 给受约束 GP 选靶（文献参数保护、只标推导/猜测）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<Provenance>,
 }
 
 fn default_true() -> bool {

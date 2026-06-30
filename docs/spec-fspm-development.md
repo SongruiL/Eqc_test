@@ -185,6 +185,8 @@ metamer 6→**18**（云南长季留 18 穗打顶；荷兰 30-40 穗性能已验
 
 **② measurable 量审计（已实现）**：田间核心量都标 measurable + 口径对齐田间测法——新增 `plant_height`(Σ节间长=2.88m·卷尺测主茎)、`node_count`(Σnode_gate=18·数节)、`fruit_fresh_weight`(单果鲜重·采收称重)+ `fruit_dm_content` 参数；既有 LAI/set_count/Y_harvest/Y_total/leaf_area 已 measurable。★单果鲜重=**总果碳(在株+已采)/坐果数/ASR/干物质率/1000**（口径匹配累计·**不用株密度**因 per m² 在比值抵消；占位 9.99g/矮番茄·待中果型标定）——第一版误用在株 C_fruit_tot/累计 set_count 得 0.062g 荒谬，订正为累计口径。
 
-**③ 参数选靶（待做）**：参数级标定元数据（文献=冻结、推导/猜测=可标定），喂受约束 GP。
+**③ 参数选靶（已实现）**：`Parameter.provenance` schema（additive·和方程 provenance 同款）+ tomato ~40 参数审计——**文献基座 17 冻结**(`optimizable:false`·光合生理/温度基点/呼吸/ASR)、**可标定 24 个**(`optimizable:true`+`bounds`·wmax/tm/te 品种参数最该标、k_ext/Psat/pset_a/te_harvest 等)、provenance 全标(文献25/推导6/猜测7)。GP/标定读 optimizable(选靶)+bounds(约束)+provenance(冻结依据)，文献基座保护、只在可标参数 bounds 内搜。零回归(只加元数据·default 不变·simulate 逐位不变·守恒 2e-11)。
+
+> **★F5c = 标定接口夯实完成**：① 守恒诊断 CLI(安全带)+ ② measurable(田间口径)+ ③ 参数选靶(GP 靶点·文献冻结)——标定工具链齐，卡在云南数据(2026-07→2027-03)分批到来前。契约镜像(provenance→Studio/GP)留有消费者时做。下一程见正文「建议工作顺序」：数据来时标定 → 契约镜像+可信度徽章 → 横向作物 → 农事操作/L2 毕业。
 
 > **★F5a = 采收落地**：成熟果物理移除→分批采收产量曲线 emergent（在株见顶回落+累计阶梯上升）；守恒升级到 C_system 且与 F4 逐位一致=零回归。下一步 F5b 让植株 indeterminate 跑满整季。

@@ -95,6 +95,7 @@ pub fn patch_multi(base: &EquationFile, slots: &[Slot], genome: &[Candidate]) ->
                     optimizable: true,
                     management: false,
                     description: None,
+                    provenance: None,
                 },
             );
         }
