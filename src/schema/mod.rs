@@ -9,7 +9,7 @@ mod structure;
 mod variable;
 
 pub use equation::{Equation, GpTarget, Provenance};
-pub use equation_file::{Calibration, EquationFile, Metadata};
+pub use equation_file::{BalanceLaw, Calibration, EquationFile, Metadata};
 pub use parameter::Parameter;
 pub use structure::{EntityDecl, Instance, InstanceTag, StructureInfo, TopoEdge};
 pub use variable::{DataType, VarClass, Variable, VariableType};

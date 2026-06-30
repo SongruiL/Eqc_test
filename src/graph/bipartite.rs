@@ -276,7 +276,7 @@ pub(crate) mod tests {
                 dt: 1.0,
                 dt_seconds: None,
                 calibration: None,
-                modules: Default::default(),
+                modules: Default::default(), balance: vec![],
             },
             parameters: Default::default(),
             variables: Default::default(),

@@ -547,7 +547,7 @@ mod tests {
             meta: Metadata {
                 id: "M2".into(), model: "M2".into(), name_cn: "双槽".into(), name_en: None,
                 version: "1".into(), description: None, reference: None, source_files: vec![],
-                dt: 1.0, dt_seconds: None, calibration: None, modules: Default::default(),
+                dt: 1.0, dt_seconds: None, calibration: None, modules: Default::default(), balance: vec![],
             },
             parameters: IndexMap::new(),
             variables,

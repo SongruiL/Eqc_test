@@ -184,6 +184,10 @@ enum Commands {
         /// 输出轨迹 CSV
         #[arg(short, long, default_value = "sim_output.csv")]
         output: PathBuf,
+
+        /// 跑完按 meta.balance 声明逐步核守恒律（|Δstock−dt·(Σ源−Σ汇)|≤tol）；超容差非零退出。标定全程安全带（F5c）
+        #[arg(long)]
+        check_balance: bool,
     },
 
     /// 耦合仿真（C1：多速率、单向）：快模型（温室，小 dt）↔ 慢模型（作物，大 dt）一次集成运行。
@@ -478,8 +482,8 @@ fn main() {
         Commands::Couple { fast, slow, weather, links, feedback, fast_params, slow_params, steps, output, fed_out, fast_out } => {
             run_couple(&fast, &slow, &weather, &links, &feedback, fast_params.as_ref(), slow_params.as_ref(), steps, &output, fed_out.as_ref(), fast_out.as_ref())
         }
-        Commands::Simulate { input, drivers, params, steps, output, dt, init } => {
-            run_simulate(&input, &drivers, params.as_ref(), steps, &output, dt, init.as_deref())
+        Commands::Simulate { input, drivers, params, steps, output, dt, init, check_balance } => {
+            run_simulate(&input, &drivers, params.as_ref(), steps, &output, dt, init.as_deref(), check_balance)
         }
         Commands::Sweep { input, drivers, param, range, sensitivity, percent, var, reduce, params, steps, output } => {
             run_sweep(&input, &drivers, param.as_deref(), range.as_deref(), sensitivity, percent, &var, &reduce, params.as_ref(), steps, &output)
@@ -597,6 +601,7 @@ fn run_simulate(
     output: &PathBuf,
     dt: Option<f64>,
     init: Option<&str>,
+    check_balance: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use equation_compiler::scenario::{load_drivers_csv, load_params_json};
     use equation_compiler::{parse_file, simulate, SimInput};
@@ -652,7 +657,141 @@ fn run_simulate(
             }
         }
     }
+
+    // F5c：--check-balance 跑完按 meta.balance 逐步核守恒律
+    if check_balance {
+        let dt_actual = dt.unwrap_or(file.meta.dt);
+        run_balance_check(&file.meta.balance, &out, dt_actual)?;
+    }
     Ok(())
+}
+
+/// 按 `meta.balance` 声明逐步核守恒律（F5c 标定安全带）：`|Δstock − dt·(Σsources−Σsinks)| ≤ tol`。
+/// 超容差返回 Err（→ 进程非零退出，标定脚本可捕捉）；空声明=跳过。
+#[cfg(feature = "cli")]
+fn run_balance_check(
+    laws: &[equation_compiler::BalanceLaw],
+    out: &equation_compiler::SimOutput,
+    dt: f64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if laws.is_empty() {
+        println!("   （--check-balance：模型未声明 meta.balance，跳过守恒诊断）");
+        return Ok(());
+    }
+    println!("⚖️  守恒诊断（--check-balance，dt={dt}）：");
+    let mut any_fail = false;
+    for law in laws {
+        let stock = match out.trajectories.get(&law.stock) {
+            Some(s) => s,
+            None => {
+                println!("   守恒律「{}」：⚠ 存量 {} 不在轨迹（跳过）", law.name, law.stock);
+                any_fail = true;
+                continue;
+            }
+        };
+        let collect = |names: &[String]| -> Option<Vec<&Vec<f64>>> {
+            names.iter().map(|n| out.trajectories.get(n)).collect()
+        };
+        let (srcs, snks) = match (collect(&law.sources), collect(&law.sinks)) {
+            (Some(a), Some(b)) => (a, b),
+            _ => {
+                println!("   守恒律「{}」：⚠ 源/汇变量缺失（跳过）", law.name);
+                any_fail = true;
+                continue;
+            }
+        };
+        // 逐步净流量 net[t] = Σsources[t] − Σsinks[t]
+        let net: Vec<f64> = (0..out.steps)
+            .map(|t| {
+                srcs.iter().map(|s| s.get(t).copied().unwrap_or(0.0)).sum::<f64>()
+                    - snks.iter().map(|s| s.get(t).copied().unwrap_or(0.0)).sum::<f64>()
+            })
+            .collect();
+        let (max_resid, argstep) = balance_residual(stock, &net, dt);
+        let scale = stock.last().map(|x| x.abs()).unwrap_or(0.0);
+        let rel = if scale > 0.0 { max_resid / scale } else { 0.0 };
+        let ok = max_resid <= law.tol;
+        println!(
+            "   守恒律「{}」[Δ{}]：max残差={:.3e} @step{}（相对{:.2e}，tol={:.0e}）{}",
+            law.name,
+            law.stock,
+            max_resid,
+            argstep,
+            rel,
+            law.tol,
+            if ok { "✅ 守恒" } else { "❌ 超容差" }
+        );
+        if !ok {
+            any_fail = true;
+        }
+    }
+    if any_fail {
+        return Err("守恒诊断未通过（见上）".into());
+    }
+    println!("   ✅ 全部守恒律通过");
+    Ok(())
+}
+
+/// 守恒律逐步最大残差（F5c）。**★步对齐**：轨迹里 `state[n]=state[n-1]+dt·rate[n]`，且 `rate[n]`
+/// 与源/汇 auxiliary 同步用 `state[n-1]`、记在【同一行 n】→「进入第 n 步的存量变化 Δstock[n]」对应
+/// 【n 处】净流量 `net[n]`。差一步对齐会把「相邻步通量之差」误报成不守恒（早季通量爬升尤甚）。
+/// 返回 `(max|残差|, 该步)`。
+#[cfg(feature = "cli")]
+fn balance_residual(stock: &[f64], net: &[f64], dt: f64) -> (f64, usize) {
+    let mut max_resid = 0.0f64;
+    let mut argstep = 0usize;
+    let n = stock.len().min(net.len());
+    for t in 0..n.saturating_sub(1) {
+        let resid = ((stock[t + 1] - stock[t]) - dt * net[t + 1]).abs();
+        if resid > max_resid {
+            max_resid = resid;
+            argstep = t + 1;
+        }
+    }
+    (max_resid, argstep)
+}
+
+#[cfg(all(test, feature = "cli"))]
+mod balance_tests {
+    use super::balance_residual;
+
+    #[test]
+    fn conserving_system_zero_residual() {
+        // 守恒系统：stock[n] = stock[n-1] + net[n]（dt=1）→ 残差应 ≈ 0（对齐正确的铁证）
+        let net = vec![0.0, 5.0, 3.0, 8.0, 2.0]; // net[0]=首步边界不参与
+        let mut stock = vec![100.0];
+        for t in 1..net.len() {
+            stock.push(stock[t - 1] + net[t]);
+        }
+        let (resid, _) = balance_residual(&stock, &net, 1.0);
+        assert!(resid < 1e-12, "守恒系统残差应≈0，得 {resid}");
+    }
+
+    #[test]
+    fn leaky_system_flagged() {
+        // 漏项系统：每步多涨 7（源/汇未记全）→ 残差应 ≈ 7（工具能抓真泄漏）
+        let net = vec![0.0, 5.0, 3.0, 8.0];
+        let mut stock = vec![100.0];
+        for t in 1..net.len() {
+            stock.push(stock[t - 1] + net[t] + 7.0);
+        }
+        let (resid, step) = balance_residual(&stock, &net, 1.0);
+        assert!((resid - 7.0).abs() < 1e-9, "漏项残差应≈7，得 {resid}");
+        assert!(step >= 1, "漏项步应被定位");
+    }
+
+    #[test]
+    fn off_by_one_alignment_matters() {
+        // 通量爬升时，错位对齐（比 net[t]）会误报；正确对齐（net[t+1]）应=0。
+        // stock 线性=net 累积，net 单调升 → 若误用 net[t] 残差=net 增量；正确用 net[t+1] 残差=0。
+        let net = vec![0.0, 10.0, 30.0, 60.0, 100.0]; // 快速爬升
+        let mut stock = vec![0.0];
+        for t in 1..net.len() {
+            stock.push(stock[t - 1] + net[t]);
+        }
+        let (resid, _) = balance_residual(&stock, &net, 1.0);
+        assert!(resid < 1e-12, "正确对齐下爬升通量也应守恒，得 {resid}");
+    }
 }
 
 /// 把轨迹/聚合驱动写成 CSV（首列 DAT，列序保 IndexMap 声明序）。

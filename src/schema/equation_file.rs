@@ -86,6 +86,37 @@ pub struct Metadata {
     /// 未列入任何模块的方程归「未分组」。缺省空 = 无模块级视图（回退方程级）。
     #[serde(default)]
     pub modules: IndexMap<String, Vec<String>>,
+
+    /// 守恒律声明（CLI `--check-balance` 用）：模型自声明守什么（碳/水/氮…），CLI 据此逐步核
+    /// `|Δstock − dt·(Σsources − Σsinks)| ≤ tol`。**单一真相源**：守恒结构进契约，标定全程可验。
+    /// additive、`#[serde(default)]` 缺省空 = 不声明=不检查；现有模型逐字节不变。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub balance: Vec<BalanceLaw>,
+}
+
+/// 守恒律（`meta.balance` 一条）：存量的逐步差分应等于源减汇（乘 dt）。
+///
+/// 让「守恒」从测试时手算 → 模型自带、CLI 可验、标定全程的安全带（FSPM F5c）。
+/// 例：`{ name: 碳, stock: C_system, sources: [A_gross], sinks: [resp_total], tol: 1e-6 }`。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BalanceLaw {
+    /// 守恒律名（如「碳」「水」「氮」）
+    pub name: String,
+    /// 存量变量名（如 C_system）；逐步差分 `Δstock` 应 = `dt·(Σsources − Σsinks)`
+    pub stock: String,
+    /// 源项（流入）变量名列表（如 `[A_gross]`）
+    #[serde(default)]
+    pub sources: Vec<String>,
+    /// 汇项（流出）变量名列表（如 `[resp_total]`）
+    #[serde(default)]
+    pub sinks: Vec<String>,
+    /// 绝对残差容差上限（超过即判不守恒）
+    #[serde(default = "default_balance_tol")]
+    pub tol: f64,
+}
+
+fn default_balance_tol() -> f64 {
+    1e-6
 }
 
 /// 模型标定状态：诚实告知非数学用户「此结果可不可信」。
@@ -242,7 +273,7 @@ mod tests {
                 dt: 1.0,
                 dt_seconds: None,
                 calibration: None,
-                modules: Default::default(),
+                modules: Default::default(), balance: vec![],
             },
             parameters,
             variables: Default::default(),
@@ -315,7 +346,7 @@ mod tests {
                 dt: 1.0,
                 dt_seconds: None,
                 calibration: None,
-                modules: Default::default(),
+                modules: Default::default(), balance: vec![],
             },
             parameters,
             variables,
@@ -383,7 +414,7 @@ mod tests {
                 dt: 1.0,
                 dt_seconds: None,
                 calibration: None,
-                modules: Default::default(),
+                modules: Default::default(), balance: vec![],
             },
             parameters: Default::default(),
             variables,
