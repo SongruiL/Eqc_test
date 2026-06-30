@@ -183,7 +183,7 @@ metamer 6→**18**（云南长季留 18 穗打顶；荷兰 30-40 穗性能已验
 
 **① 守恒诊断 CLI（已实现）**：`meta.balance` 声明守恒律（`BalanceLaw{name,stock,sources,sinks,tol}`·additive·**单一真相源·守恒结构进契约**）+ `eqc simulate --check-balance` 逐步核 `|Δstock−dt·(Σ源−Σ汇)|≤tol`（超容差非零退出·标定脚本可捕捉）。tomato 声明碳守恒律 `{stock:C_system, sources:[A_gross], sinks:[resp_total], tol:1e-6}`，实测 **max残差 2e-11 @step97 ✅**。**★步对齐**：`state[n]=state[n-1]+dt·rate[n]`、rate 与源汇 auxiliary 同步用 `state[n-1]` → 「进入第 n 步的存量变化 Δstock[n]」配 `net[n]`（差一步把"相邻步通量之差"误报成不守恒——**这正是此前"71"的真因，模型实则机器精度守恒**）。`balance_residual` 纯函数 + 3 单测（守恒/通量爬升对齐/漏项）。落地：schema `BalanceLaw` + lib/main `--check-balance` + tomato 声明；两配置 cargo test 全绿。**契约镜像（export/contract.ts）暂后置**（无前端消费者，见正文讨论）。
 
-**② measurable 量审计（待做）**：田间能测的量都标 measurable + 口径对齐云南（株高/LAI/坐果数/单果重/累计采收）；★单果重加 `fruit_fresh_weight` 派生量（=C_fruit_tot/set_count/株密度/干物质率→g/果·田间称重对标）。
+**② measurable 量审计（已实现）**：田间核心量都标 measurable + 口径对齐田间测法——新增 `plant_height`(Σ节间长=2.88m·卷尺测主茎)、`node_count`(Σnode_gate=18·数节)、`fruit_fresh_weight`(单果鲜重·采收称重)+ `fruit_dm_content` 参数；既有 LAI/set_count/Y_harvest/Y_total/leaf_area 已 measurable。★单果鲜重=**总果碳(在株+已采)/坐果数/ASR/干物质率/1000**（口径匹配累计·**不用株密度**因 per m² 在比值抵消；占位 9.99g/矮番茄·待中果型标定）——第一版误用在株 C_fruit_tot/累计 set_count 得 0.062g 荒谬，订正为累计口径。
 
 **③ 参数选靶（待做）**：参数级标定元数据（文献=冻结、推导/猜测=可标定），喂受约束 GP。
 
