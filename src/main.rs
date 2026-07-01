@@ -185,7 +185,7 @@ enum Commands {
         #[arg(short, long, default_value = "sim_output.csv")]
         output: PathBuf,
 
-        /// 跑完按 meta.balance 声明逐步核守恒律（|Δstock−dt·(Σ源−Σ汇)|≤tol）；超容差非零退出。标定全程安全带（F5c）
+        /// 跑完按 meta.balance 声明逐步核守恒律（|Δstock−dt·(Σ源−Σ汇)/cap|≤tol，cap 缺省≡1）；超容差非零退出。标定全程安全带（F5c）
         #[arg(long)]
         check_balance: bool,
     },
@@ -666,7 +666,8 @@ fn run_simulate(
     Ok(())
 }
 
-/// 按 `meta.balance` 声明逐步核守恒律（F5c 标定安全带）：`|Δstock − dt·(Σsources−Σsinks)| ≤ tol`。
+/// 按 `meta.balance` 声明逐步核守恒律（F5c 标定安全带）：`|Δstock − dt·(Σsources−Σsinks)/cap| ≤ tol`。
+/// `cap`（可选「有效容量」变量）缺省≡1（碳/水/氮直接源-汇守恒）；温室能量/湿度型平衡声明 cap。
 /// 超容差返回 Err（→ 进程非零退出，标定脚本可捕捉）；空声明=跳过。
 #[cfg(feature = "cli")]
 fn run_balance_check(
@@ -707,14 +708,39 @@ fn run_balance_check(
                     - snks.iter().map(|s| s.get(t).copied().unwrap_or(0.0)).sum::<f64>()
             })
             .collect();
-        let (max_resid, argstep) = balance_residual(stock, &net, dt);
+        // cap：可选「有效容量」变量（能量=ρcp·h、湿度=h；缺省 cap≡1）。逐步 net/cap 后再核算
+        //   |Δstock − dt·(Σ源−Σ汇)/cap| ≤ tol。cap 须在轨迹里（同源/汇）；缺失则跳过并计失败。
+        let net_eff: Vec<f64> = match &law.cap {
+            None => net,
+            Some(capname) => match out.trajectories.get(capname) {
+                Some(capser) => net
+                    .iter()
+                    .enumerate()
+                    .map(|(t, &nt)| {
+                        let c = capser.get(t).copied().unwrap_or(1.0);
+                        if c != 0.0 {
+                            nt / c
+                        } else {
+                            nt
+                        }
+                    })
+                    .collect(),
+                None => {
+                    println!("   守恒律「{}」：⚠ cap 变量 {} 不在轨迹（跳过）", law.name, capname);
+                    any_fail = true;
+                    continue;
+                }
+            },
+        };
+        let (max_resid, argstep) = balance_residual(stock, &net_eff, dt);
         let scale = stock.last().map(|x| x.abs()).unwrap_or(0.0);
         let rel = if scale > 0.0 { max_resid / scale } else { 0.0 };
         let ok = max_resid <= law.tol;
         println!(
-            "   守恒律「{}」[Δ{}]：max残差={:.3e} @step{}（相对{:.2e}，tol={:.0e}）{}",
+            "   守恒律「{}」[Δ{}{}]：max残差={:.3e} @step{}（相对{:.2e}，tol={:.0e}）{}",
             law.name,
             law.stock,
+            law.cap.as_deref().map(|c| format!("÷{c}")).unwrap_or_default(),
             max_resid,
             argstep,
             rel,

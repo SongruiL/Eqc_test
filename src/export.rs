@@ -51,6 +51,10 @@ pub struct ModuleJson {
     pub parameters: Vec<ParamJson>,
     pub variables: Vec<VarJson>,
     pub equations: Vec<EqJson>,
+    /// 守恒律声明（`meta.balance`；CLI `--check-balance` 的单一真相源，契约带出供前端画「守恒徽章」）。
+    /// 每条含 stock/sources/sinks/cap；空则省略。additive。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub balance: Vec<crate::schema::BalanceLaw>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -70,6 +74,9 @@ pub struct ParamJson {
     /// 是否为管理输入（逐处理区可设；园区「本区管理」编辑器据此列出）。false 省略。
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub management: bool,
+    /// 参数来源档（文献/平移/推导/猜测；出处诚实纪律 + 受约束 GP 选靶）。缺省则省略。additive。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<crate::schema::Provenance>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -171,6 +178,7 @@ fn module_json(f: &EquationFile) -> ModuleJson {
             unit: p.unit.clone(),
             values: p.values.clone(),
             management: p.management,
+            provenance: p.provenance,
         })
         .collect();
 
@@ -235,6 +243,7 @@ fn module_json(f: &EquationFile) -> ModuleJson {
         parameters,
         variables,
         equations,
+        balance: f.meta.balance.clone(),
     }
 }
 

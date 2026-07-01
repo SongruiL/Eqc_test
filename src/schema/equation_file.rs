@@ -98,11 +98,14 @@ pub struct Metadata {
 ///
 /// 让「守恒」从测试时手算 → 模型自带、CLI 可验、标定全程的安全带（FSPM F5c）。
 /// 例：`{ name: 碳, stock: C_system, sources: [A_gross], sinks: [resp_total], tol: 1e-6 }`。
+///
+/// 带 `cap` 时核算 `|Δstock − dt·(Σsources − Σsinks)/cap| ≤ tol`，用于「dX/dt = 净通量 / 容量」
+/// 型平衡（温室能量 cap=ρcp·h、湿度 cap=h）；缺省 cap≡1（碳/水/氮等直接源-汇守恒）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BalanceLaw {
     /// 守恒律名（如「碳」「水」「氮」）
     pub name: String,
-    /// 存量变量名（如 C_system）；逐步差分 `Δstock` 应 = `dt·(Σsources − Σsinks)`
+    /// 存量变量名（如 C_system）；逐步差分 `Δstock` 应 = `dt·(Σsources − Σsinks)/cap`
     pub stock: String,
     /// 源项（流入）变量名列表（如 `[A_gross]`）
     #[serde(default)]
@@ -110,6 +113,12 @@ pub struct BalanceLaw {
     /// 汇项（流出）变量名列表（如 `[resp_total]`）
     #[serde(default)]
     pub sinks: Vec<String>,
+    /// 可选「有效容量」**变量名**：存量差分 = `dt·净流量 / cap`。用于状态量不是通量直接积分、
+    /// 而是「净通量 ÷ 容量」的平衡（温室能量 cap=ρcp·h、湿度 cap=h）。须是**轨迹里的变量**
+    /// （同 sources/sinks；若容量由参数构成，请先在 yaml 里抽成辅助变量再引用）。
+    /// 缺省 None = cap≡1（现有碳/水/氮守恒行为逐字节不变）。additive。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cap: Option<String>,
     /// 绝对残差容差上限（超过即判不守恒）
     #[serde(default = "default_balance_tol")]
     pub tol: f64,

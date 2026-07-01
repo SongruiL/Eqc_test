@@ -18,8 +18,9 @@
 ## 构建与运行（本机：Windows，无管理员权限）
 - PATH 顺序：`C:\Users\lzyay\winlibs\mingw64\bin;C:\Users\lzyay\Rust196\Rust\bin;C:\Program Files\Git\cmd`
 - 网络：git/cargo 操作前先清代理变量 `$env:HTTP_PROXY=''; $env:HTTPS_PROXY=''`（cargo 走本项目 `.cargo/config.toml` 里的 rsproxy.cn 镜像）。
-- 构建：`cargo build --features cli --offline`（产物 `target\debug\eqc.exe`）。**跳过 `gsl_math`**（需系统 GSL C 库）。
-- 测试：`cargo test --features cli --offline`（当前应 100 个全过）。
+- 构建：`cargo build --features cli`（清代理走 rsproxy.cn 镜像联网；产物 `target\debug\eqc.exe`）。**跳过 `gsl_math`**（需系统 GSL C 库）。
+  **勿加 `--offline`**：`cli` feature 依赖 `ureq`（serve 的 /api/llm 代理），本机离线稀疏索引缺 ureq 条目→解析期 `no matching package named ureq` 报错；联网走镜像即可（依赖已缓存、约 20–60s）。
+- 测试：`cargo test --features cli`（同样勿加 --offline；当前 413 个全过）。
 
 ## 代码约定
 - 注释与文档用中文，与现有代码保持一致。
