@@ -55,7 +55,14 @@ export async function loadModels() {
     const j = await fetchModels()
     store.models = j.models ?? []
     const saved = ls('eqc_v2_model')
-    store.model = store.models.some((m) => m.id === saved) ? saved! : store.models[0]?.id ?? ''
+    // 统一外壳深链：URL ?model= 优先（GIS 点分区→带该区模型 id 打开工作台）；否则用上次/首个。
+    const urlModel =
+      typeof location !== 'undefined' ? new URLSearchParams(location.search).get('model') : null
+    store.model = store.models.some((m) => m.id === urlModel)
+      ? urlModel!
+      : store.models.some((m) => m.id === saved)
+        ? saved!
+        : (store.models[0]?.id ?? '')
     store.mode = ls('eqc_v2_mode') === 'park' ? 'park' : 'expert'
     const ws = ls('eqc_v2_ws')
     if (ws) store.workspace = ws
