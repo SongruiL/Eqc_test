@@ -2072,6 +2072,23 @@ fn run_calibrate(
             )
             .into());
         }
+        // 每个 spec 处理都须有实测点：防 treatment 列跳号/缺号 → 空表 → 每候选 WORST_COST → 静默垃圾标定。
+        for (k, o) in per.iter().take(problem.treatments.len()).enumerate() {
+            if o.values().map(|v| v.len()).sum::<usize>() == 0 {
+                return Err(format!(
+                    "处理 {} 无任何实测点（实测 CSV 的 treatment 列缺号/空？）：多处理标定要求每个 spec 处理都有观测",
+                    k + 1
+                )
+                .into());
+            }
+        }
+        if per.len() > problem.treatments.len() {
+            eprintln!(
+                "⚠️  实测 CSV 含 {} 个处理，spec 只声明 {} 个 → 多出的处理数据被忽略",
+                per.len(),
+                problem.treatments.len()
+            );
+        }
         let treatments: Vec<_> = problem
             .treatments
             .iter()

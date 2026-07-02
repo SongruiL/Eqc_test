@@ -161,3 +161,30 @@ pub fn load_params_json(path: &Path) -> Result<HashMap<String, f64>, String> {
     }
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_load_observed_by_treatment_routes_and_gaps() {
+        // treatment 1、3 有数据、2 缺（跳号）：应得 3 个槽、槽2 为空（供 run_calibrate 守卫捕获）。
+        let tmp = std::env::temp_dir().join("eqc_test_obs_by_treatment.csv");
+        std::fs::write(&tmp, "treatment,DAT,obs_X\n1,10,1.5\n1,20,2.5\n3,10,9.0\n").unwrap();
+        let per = load_observed_by_treatment(&tmp).unwrap();
+        assert_eq!(per.len(), 3, "处理号最大 3 → 3 个槽");
+        assert_eq!(per[0].get("obs_X").unwrap(), &vec![(10, 1.5), (20, 2.5)], "处理1 两点、按 DAT 归");
+        assert!(per[1].get("obs_X").unwrap().is_empty(), "处理2 跳号 → 空槽（守卫据此报错）");
+        assert_eq!(per[2].get("obs_X").unwrap(), &vec![(10, 9.0)], "处理3 一点");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_load_observed_by_treatment_missing_column() {
+        // 缺 treatment 列 → 明确报错（非 panic）。
+        let tmp = std::env::temp_dir().join("eqc_test_obs_no_treatment.csv");
+        std::fs::write(&tmp, "DAT,obs_X\n10,1.5\n").unwrap();
+        assert!(load_observed_by_treatment(&tmp).is_err(), "缺 treatment 列须报错");
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
