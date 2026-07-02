@@ -138,6 +138,11 @@ pub struct Calibration {
     #[serde(default)]
     pub calibrated: bool,
 
+    /// 合成 twin dry-run 已端到端验证标定管线（能从合成观测恢复真值），但**参数仍未真标定**——
+    /// 前端徽章显「🧪 合成验证」（区别于绿「已标定」/灰「未标定」）。默认 false，仅 true 时进契约。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub dry_run: bool,
+
     /// 说明（如"全部参数为占位值，待云南 2026-07 数据标定"或"已用一区数据标定 LUE/SLA"）。
     #[serde(default)]
     pub note: Option<String>,
@@ -145,6 +150,11 @@ pub struct Calibration {
     /// 标定日期（可选，ISO 如 2026-07-15）。
     #[serde(default)]
     pub date: Option<String>,
+}
+
+/// serde skip 助手：bool 为 false 时不序列化（保持未用 dry_run 的模型契约字节不变）。
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 fn default_version() -> String {
