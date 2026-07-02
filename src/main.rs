@@ -2143,6 +2143,16 @@ fn run_identify(
         driver_path.display(),
         steps,
     );
+    if !problem.treatments.is_empty() {
+        println!(
+            "   处理矩阵 {} 个（各在一组管理工作点上跑灵敏度、拼接后按对比梯度分辨参数）：",
+            problem.treatments.len()
+        );
+        for (i, tr) in problem.treatments.iter().enumerate() {
+            let desc: Vec<String> = tr.iter().map(|(k, v)| format!("{k}={v}")).collect();
+            println!("     处理{} = {{{}}}", i + 1, desc.join(", "));
+        }
+    }
 
     let rep = optimize::identifiability(&file, &problem, &driver_map, steps, &observables, 10.0, 0.01)?;
 
@@ -2168,6 +2178,12 @@ fn run_identify(
         for (a, b, r) in &rep.confounded {
             println!("     {a} ↔ {b}（相关 {r:.3}）");
         }
+    }
+    let eff_cols = observables.len() * problem.treatments.len().max(1);
+    if eff_cols < 3 {
+        println!(
+            "\n   ℹ️  观测×处理列数 {eff_cols} <3，未做异参同效检测（2 点必共线→全假阳）——加处理梯度或多观测变量再看。"
+        );
     }
     // 测量清单建议：可辨识参数所需观测的并集
     let mut need: Vec<String> = Vec::new();

@@ -67,7 +67,29 @@ optimize:
 - 报告：哪些参数对哪些观测敏感（可标）、哪些参数无观测能约束（不可辨识，需补测或固定）。
 - 警惕**异参同效（equifinality）**：多组参数给出几乎相同输出 → 单一观测下不可辨识。对策：多变量观测 + 处理梯度（不同 CO₂/水肥小区）+ 分阶段标定。
 
-CLI 设想：`eqc identify <模型> --spec calib.yaml`（或 `eqc calibrate --identify`）。
+CLI：`eqc identify <模型> --spec calib.yaml [--observables A,B] [-o report.json]`（候选参数=spec 的 knobs；候选观测=spec 的 `observables:` 或 `--observables`）。
+
+### 5.1 处理矩阵（`treatments:`）——把「处理梯度」写进 spec
+
+单一工作点下，**阈值型**参数在未被激发的工况里灵敏度恒为 0（如 `max(0, EC_sub−EC_thresh)=0`、水分充足时 `f_W=1`），而**多个叠加项**（如动态果实干物质 = 基线 `DMC_fruit` + EC 项 `k_DMC_EC·…` + 亏水项 `k_DMC_W·…`）在固定 (EC, 水) 下互为常数偏移 → 敏感行共线 → **异参同效**。对策 = 在 spec 里列一组**处理**（各为一组标量参数覆盖，制造 EC/水分等对比梯度）：
+
+```yaml
+optimize:
+  knobs:            # 只列待标定参数（管理量交给 treatments 设）
+    - { var: k_DMC_EC,  kind: param, bounds: [0.001, 0.01] }
+    - { var: EC_thresh, kind: param, bounds: [2.5, 4.5] }
+    # …
+  treatments:       # 每个 = 一组标量参数覆盖 = 一个管理工作点（应与 knobs 不相交）
+    - { EC_feed: 2.3, Irrig: 8.0 }   # 无胁迫参照 → 锚基线
+    - { EC_feed: 5.0, Irrig: 8.0 }   # 高EC·足水 → 拆 EC 项/斜率
+    - { EC_feed: 2.3, Irrig: 4.0 }   # 低EC·亏水 → 拆水项/临界含水率
+  observables: [Brix, DMC_fruit_dyn, Y_fresh, EC_sub, W_sub]
+  environment: scenario/weather.csv
+```
+
+机制：`identify` **逐处理**跑 OAT 灵敏度（各按本处理基线 RMS 归一）、把子矩阵**横向拼接**成 参数 × (处理×观测) 大矩阵，再判可辨识 / 异参同效。某参数（如 `k_DMC_EC`）的灵敏度随 EC 处理增强、另一参数（`DMC_fruit` 基线）跨处理近乎不变 → 拼接后行向量不再共线 → 混淆解开。报告观测标签变 `观测@处理k`，直接给出「在哪个处理测哪个变量」的实验设计。
+
+注意：异参同效检测需 **≥3 个 (处理×观测) 列**（任意 2 点必然共线 → 全假阳），列数 <3 时跳过并提示。缺省无 `treatments:` = 单一默认工作点（向后兼容）。此外「可辨识」在报告里指**有非零灵敏度**，不等于一组参数能**联合**解出——共线的多参数各自可辨识、却仍需处理梯度才分得开。
 
 ## 6. 科学注意（标定方法论）
 

@@ -12,6 +12,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use indexmap::IndexMap;
+
 use crate::schema::EquationFile;
 use crate::sim::{build_plan, simulate, SimInput, SimOutput};
 
@@ -249,7 +251,25 @@ pub fn simulate_candidate(
     drivers: &HashMap<String, Vec<f64>>,
     steps: usize,
 ) -> Result<SimOutput, String> {
-    let input = build_input(problem, knob_values, drivers, steps);
+    let empty = IndexMap::new();
+    simulate_candidate_with_overrides(file, problem, knob_values, drivers, steps, &empty)
+}
+
+/// 同 [`simulate_candidate`]，但在旋钮装配后再叠加一组【固定标量参数覆盖】——可辨识性
+/// **处理矩阵**的一个工作点（如把 `EC_feed`/`Irrig` 钉在某管理值上，制造 EC/水分对比梯度）。
+/// 覆盖在旋钮之后施加：若某参数既是旋钮又在覆盖里，覆盖值生效（约定：处理参数与旋钮不相交）。
+pub fn simulate_candidate_with_overrides(
+    file: &EquationFile,
+    problem: &Problem,
+    knob_values: &[f64],
+    drivers: &HashMap<String, Vec<f64>>,
+    steps: usize,
+    overrides: &IndexMap<String, f64>,
+) -> Result<SimOutput, String> {
+    let mut input = build_input(problem, knob_values, drivers, steps);
+    for (name, &val) in overrides {
+        input.param_overrides.insert(name.clone(), val);
+    }
     simulate(file, &input).map_err(|e| format!("仿真失败: {e}"))
 }
 

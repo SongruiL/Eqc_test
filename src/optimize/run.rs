@@ -7,10 +7,13 @@
 
 use std::collections::HashMap;
 
+use indexmap::IndexMap;
+
 use crate::schema::EquationFile;
 
 use super::core::{
-    evaluate, evaluate_mo, evaluate_obs, simulate_candidate, validate_problem, EvalOutcome,
+    evaluate, evaluate_mo, evaluate_obs, simulate_candidate_with_overrides, validate_problem,
+    EvalOutcome,
 };
 use super::de::{differential_evolution, differential_evolution_mo, DeConfig};
 use super::objective::ObservedData;
@@ -102,6 +105,11 @@ pub struct IdentReport {
 /// **可辨识性分析**（服务实验设计）：对每个候选参数 ±`percent`% 扰动，量其对**每个候选可观测变量**
 /// 整条轨迹的 RMS 影响 → 敏感矩阵。回答：要定准某参数最该测哪个变量、哪些参数无观测能约束（不可辨识）、
 /// 哪些参数对可能异参同效。见 `docs/spec-calibration.md` §5。候选参数 = `problem.knobs`（kind=param）。
+///
+/// **处理矩阵**（`problem.treatments`，可选）：若给出 N 个处理（各为一组管理参数覆盖，如不同
+/// EC/灌溉工作点），则**逐处理**跑上述 OAT、把敏感子矩阵**横向拼接**成 参数 × (处理×观测) 大矩阵，
+/// 再在其上判可辨识 / 异参同效。这样单一工作点下共线的参数（阈值⟂斜率、多个叠加项）会因**对比梯度**
+/// 而分开；观测标签变为 `观测@处理k` 以指出「在哪个处理测哪个变量」。缺省（空）= 单一默认工作点。
 pub fn identifiability(
     file: &EquationFile,
     problem: &Problem,
@@ -112,11 +120,20 @@ pub fn identifiability(
     rel: f64,
 ) -> Result<IdentReport, String> {
     let nk = problem.knobs.len();
+    let no = observables.len();
     let baseline: Vec<f64> =
         problem.knobs.iter().map(|k| 0.5 * (k.bounds[0] + k.bounds[1])).collect();
 
-    // 基线轨迹（用于把敏感度归一成**相对**变化，跨不同量级观测可比）。
-    let base_out = simulate_candidate(file, problem, &baseline, drivers, steps)?;
+    // 处理矩阵：空 → 单一默认工作点（无覆盖），保持向后兼容。
+    let empty = IndexMap::new();
+    let treatments: Vec<&IndexMap<String, f64>> = if problem.treatments.is_empty() {
+        vec![&empty]
+    } else {
+        problem.treatments.iter().collect()
+    };
+    let nt = treatments.len();
+    let multi = nt > 1;
+
     let rms = |s: &[f64]| -> f64 {
         if s.is_empty() {
             0.0
@@ -124,32 +141,47 @@ pub fn identifiability(
             (s.iter().map(|x| x * x).sum::<f64>() / s.len() as f64).sqrt()
         }
     };
-    let base_rms: Vec<f64> = observables.iter().map(|v| base_out.series(v).map(rms).unwrap_or(0.0)).collect();
 
-    // 敏感矩阵 mat[参数][观测] = 扰动引起的该观测轨迹**相对** RMS 变化（÷ 基线 RMS）
-    let mut mat = vec![vec![0.0_f64; observables.len()]; nk];
-    for i in 0..nk {
-        let (lo, hi) = (problem.knobs[i].bounds[0], problem.knobs[i].bounds[1]);
-        let h = (percent / 100.0) * (hi - lo);
-        if h <= 0.0 {
-            continue;
+    // 拼接敏感矩阵 mat[参数][处理×观测]；列标签 = 「观测」（单处理）或「观测@处理k」（多处理）。
+    let ncol = nt * no;
+    let mut mat = vec![vec![0.0_f64; ncol]; nk];
+    let mut col_labels: Vec<String> = Vec::with_capacity(ncol);
+    for t in 0..nt {
+        for v in observables {
+            col_labels.push(if multi { format!("{v}@处理{}", t + 1) } else { v.clone() });
         }
-        let mut xm = baseline.clone();
-        xm[i] = (baseline[i] - h).max(lo);
-        let mut xp = baseline.clone();
-        xp[i] = (baseline[i] + h).min(hi);
-        let om = simulate_candidate(file, problem, &xm, drivers, steps)?;
-        let op = simulate_candidate(file, problem, &xp, drivers, steps)?;
-        for (j, v) in observables.iter().enumerate() {
-            let abs_change = match (om.series(v), op.series(v)) {
-                (Some(a), Some(b)) if !a.is_empty() && a.len() == b.len() => {
-                    let n = a.len() as f64;
-                    (a.iter().zip(b).map(|(x, y)| (y - x) * (y - x)).sum::<f64>() / n).sqrt()
-                }
-                _ => 0.0, // 该观测变量不在轨迹里 → 无法约束
-            };
-            // 相对化：÷ 基线 RMS（基线≈0 时退回绝对值，避免除零放大）
-            mat[i][j] = if base_rms[j] > 1e-9 { abs_change / base_rms[j] } else { abs_change };
+    }
+
+    for (t, tr) in treatments.iter().enumerate() {
+        // 每个处理各按**自身**基线 RMS 归一（跨处理/观测可比）。
+        let base_out = simulate_candidate_with_overrides(file, problem, &baseline, drivers, steps, tr)?;
+        let base_rms: Vec<f64> =
+            observables.iter().map(|v| base_out.series(v).map(rms).unwrap_or(0.0)).collect();
+
+        for i in 0..nk {
+            let (lo, hi) = (problem.knobs[i].bounds[0], problem.knobs[i].bounds[1]);
+            let h = (percent / 100.0) * (hi - lo);
+            if h <= 0.0 {
+                continue;
+            }
+            let mut xm = baseline.clone();
+            xm[i] = (baseline[i] - h).max(lo);
+            let mut xp = baseline.clone();
+            xp[i] = (baseline[i] + h).min(hi);
+            let om = simulate_candidate_with_overrides(file, problem, &xm, drivers, steps, tr)?;
+            let op = simulate_candidate_with_overrides(file, problem, &xp, drivers, steps, tr)?;
+            for (j, v) in observables.iter().enumerate() {
+                let abs_change = match (om.series(v), op.series(v)) {
+                    (Some(a), Some(b)) if !a.is_empty() && a.len() == b.len() => {
+                        let n = a.len() as f64;
+                        (a.iter().zip(b).map(|(x, y)| (y - x) * (y - x)).sum::<f64>() / n).sqrt()
+                    }
+                    _ => 0.0, // 该观测变量不在轨迹里 → 无法约束
+                };
+                // 相对化：÷ 该处理基线 RMS（基线≈0 时退回绝对值，避免除零放大）
+                let col = t * no + j;
+                mat[i][col] = if base_rms[j] > 1e-9 { abs_change / base_rms[j] } else { abs_change };
+            }
         }
     }
 
@@ -158,7 +190,7 @@ pub fn identifiability(
     let mut params = Vec::with_capacity(nk);
     for i in 0..nk {
         let mut per: Vec<(String, f64)> =
-            observables.iter().cloned().zip(mat[i].iter().cloned()).collect();
+            col_labels.iter().cloned().zip(mat[i].iter().cloned()).collect();
         per.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         let maxs = mat[i].iter().cloned().fold(0.0_f64, f64::max);
         params.push(ParamSens {
@@ -168,17 +200,22 @@ pub fn identifiability(
         });
     }
 
-    // 异参同效：敏感行向量两两相关，高相关 → 可能难分辨
+    // 异参同效：拼接敏感行向量两两相关，高相关 → 可能难分辨。
+    // 拼接后列数 = 处理×观测；多处理会拉开单点下共线的行 → 混淆自动减少。
+    // ★需 ≥3 列 pearson 才有意义：任意 2 点必然共线（r=±1），列数 <3 会把所有参数误报为混淆，
+    //   故此时跳过检测（提示：加处理梯度或多观测变量）。
     let mut confounded = Vec::new();
-    for a in 0..nk {
-        for b in (a + 1)..nk {
-            if let Some(r) = pearson(&mat[a], &mat[b]) {
-                if r > 0.99 {
-                    confounded.push((
-                        problem.knobs[a].var.clone(),
-                        problem.knobs[b].var.clone(),
-                        r,
-                    ));
+    if ncol >= 3 {
+        for a in 0..nk {
+            for b in (a + 1)..nk {
+                if let Some(r) = pearson(&mat[a], &mat[b]) {
+                    if r > 0.99 {
+                        confounded.push((
+                            problem.knobs[a].var.clone(),
+                            problem.knobs[b].var.clone(),
+                            r,
+                        ));
+                    }
                 }
             }
         }
@@ -583,6 +620,54 @@ equations:
         let rep = identifiability(&file, &p, &drivers3(), 3, &["Y".to_string()], 10.0, 0.01).unwrap();
         let noise = rep.params.iter().find(|p| p.param == "noise").unwrap();
         assert!(!noise.identifiable, "只测 Y 时 noise 不可辨识");
+    }
+
+    /// 处理矩阵：门控参数 k 在处理 u=0 时惰性（∂r/∂k=0）、u=10 时激活。单一默认工作点（u=0）
+    /// 下 k 不可辨识；给出对比处理 [{u:0},{u:10}] 后 k 变可辨识，且最该测的 handle 落在激活处理。
+    #[test]
+    fn test_identifiability_treatment_activates_param() {
+        let yaml = r#"
+meta: { id: TRT, model: Trt, name_cn: 处理矩阵测试 }
+parameters:
+  base: { name_cn: 基线, default: 1.0 }
+  k:    { name_cn: 门控增益, default: 1.0 }
+  u:    { name_cn: 处理量, default: 0.0 }
+variables:
+  drive: { type: input, class: driving }
+  Y: { type: output, class: state, init: 0.0, rate: r }
+  r: { type: intermediate, class: rate }
+equations:
+  - { id: E1, name: 速率, output: r, expression: { op: add, args: [ {ref: base}, { op: mul, args: [ {ref: k}, {ref: u} ] } ] } }
+"#;
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("m.eq.yaml");
+        std::fs::File::create(&path).unwrap().write_all(yaml.as_bytes()).unwrap();
+        let file = parse_file(&path).unwrap();
+
+        // (1) 单一默认工作点（u=默认0）：k 惰性 → 不可辨识。
+        let p0 = parse_problem(
+            "optimize:\n  objective: { expr: (final Y) }\n  knobs:\n    - { var: base, kind: param, bounds: [0.5, 1.5] }\n    - { var: k, kind: param, bounds: [0.5, 1.5] }\n",
+        )
+        .unwrap();
+        let rep0 = identifiability(&file, &p0, &drivers3(), 3, &["Y".to_string()], 10.0, 0.01).unwrap();
+        assert!(
+            !rep0.params.iter().find(|p| p.param == "k").unwrap().identifiable,
+            "u=0 单工作点下 k 应不可辨识（惰性）"
+        );
+
+        // (2) 对比处理 [{u:0},{u:10}]：k 在处理2激活 → 可辨识，handle 落在「@处理2」。
+        let p1 = parse_problem(
+            "optimize:\n  objective: { expr: (final Y) }\n  knobs:\n    - { var: base, kind: param, bounds: [0.5, 1.5] }\n    - { var: k, kind: param, bounds: [0.5, 1.5] }\n  treatments:\n    - { u: 0.0 }\n    - { u: 10.0 }\n",
+        )
+        .unwrap();
+        let rep1 = identifiability(&file, &p1, &drivers3(), 3, &["Y".to_string()], 10.0, 0.01).unwrap();
+        let k1 = rep1.params.iter().find(|p| p.param == "k").unwrap();
+        assert!(k1.identifiable, "给出 u=10 对比处理后 k 应可辨识");
+        assert!(
+            k1.per_observable[0].0.contains("处理2"),
+            "k 最佳 handle 应落在激活处理2，得 {}",
+            k1.per_observable[0].0
+        );
     }
 
     #[test]

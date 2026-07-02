@@ -65,6 +65,13 @@ pub struct Problem {
     /// 缺省 = 模型所有 `type: output` 标量变量。可被 CLI `--observables` 覆盖。
     #[serde(default)]
     pub observables: Option<Vec<String>>,
+    /// **处理矩阵**（可辨识性分析用 `eqc identify`）：每个元素 = 一组【模型标量参数覆盖】，
+    /// 代表一个管理/实验工作点（如 `{EC_feed: 5.0, Irrig: 8.0}`）。identify 会**逐处理**跑 OAT
+    /// 灵敏度、把各处理的敏感子矩阵**横向拼接**后再判可辨识 / 异参同效——使单一工作点下共线的
+    /// 参数（阈值⟂斜率、多个叠加项）被【对比梯度】分开，并给出「在哪个处理测哪个观测」的实验设计。
+    /// 缺省 = 空 = 单一默认工作点（现行为，向后兼容）。处理参数应与 knobs 不相交。
+    #[serde(default)]
+    pub treatments: Vec<IndexMap<String, f64>>,
     /// **耦合优化**（C3）：提供则前向模型 = 多速率耦合仿真（温室↔作物），旋钮为温室/作物
     /// 参数（kind=`fast_param`/`slow_param`），目标归约作物轨迹。见 `docs/spec-coupled-simulation.md` §8。
     #[serde(default)]
