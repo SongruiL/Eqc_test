@@ -307,6 +307,12 @@ enum Commands {
         /// 缺省=模型同级的 observations/）。正是 `eqc calibrate --observed` 的输入。
         #[arg(long)]
         data_dir: Option<PathBuf>,
+
+        /// 同源托管的静态站点目录（如 GIS 大屏 dist）：设了则 `/` 发该站点 index.html、
+        /// 静态资源从此目录发（MIME 按扩展名、SPA fallback），Studio 移到 `/v2`、`/api/*` 不变。
+        /// 不设=保持现状（`/` 发 Studio）。让一个二进制同源发全部（免 /eqc 代理跨源坑）。
+        #[arg(long)]
+        static_dir: Option<PathBuf>,
     },
 
     /// 导出模型的 JSON 契约（前端/工具消费用，可检视）
@@ -488,8 +494,8 @@ fn main() {
         Commands::Sweep { input, drivers, param, range, sensitivity, percent, var, reduce, params, steps, output } => {
             run_sweep(&input, &drivers, param.as_deref(), range.as_deref(), sensitivity, percent, &var, &reduce, params.as_ref(), steps, &output)
         }
-        Commands::Serve { input, port, drivers, params, data_dir } => {
-            equation_compiler::serve::serve(&input, port, drivers.as_ref(), params.as_ref(), data_dir.as_ref())
+        Commands::Serve { input, port, drivers, params, data_dir, static_dir } => {
+            equation_compiler::serve::serve(&input, port, drivers.as_ref(), params.as_ref(), data_dir.as_ref(), static_dir.as_ref())
         }
         Commands::Export { input, output } => run_export(&input, output.as_ref()),
         Commands::Structure { input, json, identifiability, metrics, layout3d } => run_structure(&input, json, identifiability, metrics, layout3d),

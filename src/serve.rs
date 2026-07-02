@@ -160,6 +160,8 @@ struct Ctx {
     tasks: Arc<Mutex<HashMap<String, GpTask>>>,
     /// task_id 计数器（无需 rand）。
     task_seq: AtomicU64,
+    /// 同源托管的静态站点目录（--static-dir）：设了则 handle() 兜底发其文件 + SPA fallback。
+    static_dir: Option<PathBuf>,
 }
 
 /// 一个 GP 异步进化任务的状态（S4：后台线程跑、前端轮询）。
@@ -179,6 +181,7 @@ pub fn serve(
     drivers_path: Option<&PathBuf>,
     params_path: Option<&PathBuf>,
     data_dir_arg: Option<&PathBuf>,
+    static_dir: Option<&PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // 本地密钥文件（gitignored）：设一次 key/代理/模型，启动自动加载进 env（不覆盖已设的）。
     load_secret_file();
@@ -220,6 +223,7 @@ pub fn serve(
         version: AtomicU64::new(1),
         tasks: Arc::new(Mutex::new(HashMap::new())),
         task_seq: AtomicU64::new(1),
+        static_dir: static_dir.cloned(),
     });
 
     // 文件监听线程：任一模型文件 mtime 变化 → 版本 +1 → 前端整页刷新
@@ -241,7 +245,12 @@ pub fn serve(
 
     let listener = TcpListener::bind(("127.0.0.1", port))
         .map_err(|e| format!("无法绑定 127.0.0.1:{port}（端口被占用？换 --port）：{e}"))?;
-    println!("🌐 EQC Studio 运行中：  http://localhost:{port}/");
+    if let Some(d) = &ctx.static_dir {
+        println!("🌐 同源托管运行中：      http://localhost:{port}/  （静态站点：{}）", d.display());
+        println!("   /  = 该站点（如 GIS 大屏）；/v2 = EQC Studio；/api/* = 数据/仿真/LLM。");
+    } else {
+        println!("🌐 EQC Studio 运行中：  http://localhost:{port}/");
+    }
     println!("   {} 个模型；编辑模型并保存即自动刷新；Ctrl+C 退出。", ctx.models.len());
 
     for stream in listener.incoming().flatten() {
@@ -737,6 +746,16 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
         return proxy_llm_stream(&mut stream, &req_body);
     }
 
+    // 同源静态托管（--static-dir）：GET 且非 API/Studio/版本路由 → 从站点目录发文件（二进制安全）+ SPA fallback。
+    // 直接写字节（图片/wasm 不能当 UTF-8 String 走下面的常规路径）。返回 true=已处理。
+    if method == "GET" {
+        if let Some(dir) = &ctx.static_dir {
+            if serve_static(&mut stream, dir, route)? {
+                return Ok(());
+            }
+        }
+    }
+
     // 当前模型（按 `?model=<id>`，缺省第一个）。/、/__version、/api/models 不依赖它，但解析无害。
     let m = resolve_model(ctx, query);
 
@@ -912,6 +931,90 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
     );
     stream.write_all(resp.as_bytes())?;
     stream.flush()
+}
+
+// ───────────────────────── 同源静态托管（--static-dir） ─────────────────────────
+
+/// 把 GET route 映射到静态站点目录下的文件并二进制安全地发出；未命中且像 SPA 路由则 fallback 到
+/// index.html。返回 Ok(true)=已处理（已写响应）；Ok(false)=此路由交回常规 match（API/Studio/版本）。
+fn serve_static(stream: &mut TcpStream, dir: &Path, route: &str) -> std::io::Result<bool> {
+    // 这些路由归常规 match 处理：API、Studio(/v2)、版本探测。
+    if route.starts_with("/api/") || route == "/v2" || route == "/__version" {
+        return Ok(false);
+    }
+    // `/` 与 `/index.html` → 站点 index.html。
+    let rel = if route == "/" || route == "/index.html" {
+        "index.html"
+    } else {
+        route.trim_start_matches('/')
+    };
+    // 路径穿越守卫：拒绝 `..` 段、反斜杠、盘符（Windows）、空。
+    if rel.is_empty()
+        || rel.split('/').any(|s| s == "..")
+        || rel.contains('\\')
+        || rel.contains(':')
+    {
+        write_bytes(stream, "400 Bad Request", "text/plain; charset=utf-8", b"Bad Request", "no-store")?;
+        return Ok(true);
+    }
+    match std::fs::read(dir.join(rel)) {
+        Ok(bytes) => {
+            // index.html 永远新鲜；其余静态资源（多为带 hash 名）可缓存。
+            let cache = if rel == "index.html" { "no-store" } else { "public, max-age=86400" };
+            write_bytes(stream, "200 OK", mime_of(rel), &bytes, cache)?;
+            Ok(true)
+        }
+        Err(_) => {
+            // 不存在：末段带 `.`（像静态资源）→ 404（绝不用 index.html 冒充 JS/图片）；否则（像 SPA 路由）→ index.html。
+            let looks_like_file = rel.rsplit('/').next().unwrap_or("").contains('.');
+            if looks_like_file {
+                write_bytes(stream, "404 Not Found", "text/plain; charset=utf-8", b"Not Found", "no-store")?;
+            } else if let Ok(b) = std::fs::read(dir.join("index.html")) {
+                write_bytes(stream, "200 OK", "text/html; charset=utf-8", &b, "no-store")?;
+            } else {
+                write_bytes(stream, "404 Not Found", "text/plain; charset=utf-8", b"Not Found", "no-store")?;
+            }
+            Ok(true)
+        }
+    }
+}
+
+/// 二进制安全地写一个 HTTP 响应（头 + 原始字节体）。常规 match 走 String body、静态资源走这里。
+fn write_bytes(stream: &mut TcpStream, status: &str, ctype: &str, body: &[u8], cache: &str) -> std::io::Result<()> {
+    let head = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: {cache}\r\nAccess-Control-Allow-Origin: *\r\n\r\n",
+        body.len()
+    );
+    stream.write_all(head.as_bytes())?;
+    stream.write_all(body)?;
+    stream.flush()
+}
+
+/// 按扩展名给 MIME。★Cesium 关键：`.wasm`=application/wasm、Worker `.js` 要正确 JS 类型，否则加载崩。
+fn mime_of(path: &str) -> &'static str {
+    match path.rsplit('.').next().unwrap_or("") {
+        "html" | "htm" => "text/html; charset=utf-8",
+        "js" | "mjs" => "application/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "json" | "map" | "czml" | "geojson" => "application/json; charset=utf-8",
+        "wasm" => "application/wasm",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "ico" => "image/x-icon",
+        "bmp" => "image/bmp",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        "xml" => "application/xml; charset=utf-8",
+        "txt" => "text/plain; charset=utf-8",
+        "glb" => "model/gltf-binary",
+        "gltf" => "model/gltf+json",
+        _ => "application/octet-stream",
+    }
 }
 
 // ───────────────────────── 前端 LLM Agent 代理 ─────────────────────────
