@@ -52,6 +52,11 @@ pub struct Problem {
     /// 一般约束：`expr ≤ max`，用惩罚法。
     #[serde(default)]
     pub constraints: Vec<Constraint>,
+    /// **最优点报告量**（决策优化专用）：在求得的最优旋钮处，对每条命名 S 表达式求值，
+    /// 随结果 JSON 一并返回（如「预期鲜产 = (final Y_fresh)」「预期糖度 = (mean Brix)」）。
+    /// 只在最优点算一次、**不进 DE 内循环**；缺省空 = 不报告。供 GIS「本区最优管理」面板显预期产量/品质。
+    #[serde(default)]
+    pub report: Vec<Report>,
     /// 约束惩罚权重（线性外罚 `cost += weight·Σ违反量`）。缺省见 `core::DEFAULT_PENALTY_WEIGHT`（1e9）。
     #[serde(default)]
     pub penalty_weight: Option<f64>,
@@ -213,6 +218,16 @@ pub struct Constraint {
     pub expr: String,
     #[serde(default)]
     pub max: f64,
+}
+
+/// 一条「最优点报告量」：命名 + S 表达式（可含 final/mean/max 等时间归约）+ 单位（仅展示用）。
+/// 在最优旋钮处求值（复用目标的轨迹归约求值），随结果 JSON 返回给前端展示。
+#[derive(Debug, Clone, Deserialize)]
+pub struct Report {
+    pub name: String,
+    pub expr: String,
+    #[serde(default)]
+    pub unit: Option<String>,
 }
 
 /// 优化器配置（阶段 1：差分进化 DE）。

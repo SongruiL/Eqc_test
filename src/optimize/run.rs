@@ -12,8 +12,8 @@ use indexmap::IndexMap;
 use crate::schema::EquationFile;
 
 use super::core::{
-    evaluate, evaluate_mo, evaluate_obs, simulate_candidate_with_overrides, validate_problem,
-    EvalOutcome,
+    evaluate, evaluate_mo, evaluate_obs, evaluate_report, simulate_candidate_with_overrides,
+    validate_problem, EvalOutcome, ReportValue,
 };
 use super::de::{differential_evolution, differential_evolution_mo, DeConfig};
 use super::objective::ObservedData;
@@ -31,6 +31,8 @@ pub struct OptimizeResult {
     pub best_cost: f64,
     /// 实际使用的 DE 配置。
     pub config: DeConfig,
+    /// **最优点报告量**（spec 的 `report:`，如预期鲜产/糖度）；spec 未声明 → 空。
+    pub predicted: Vec<ReportValue>,
 }
 
 /// 跑一次优化：校验决策 spec → DE 搜旋钮空间 → 用最优旋钮再评一次拿完整结果。
@@ -75,6 +77,8 @@ pub fn run_obs(
         evaluate_obs(file, problem, x, drivers, steps, observed).cost
     });
     let outcome = evaluate_obs(file, problem, &res.best_x, drivers, steps, observed);
+    // 最优点报告量（spec `report:`）：只在这里算一次，不进 DE 内循环。
+    let predicted = evaluate_report(file, problem, &res.best_x, drivers, steps, observed);
 
     Ok(OptimizeResult {
         best_knobs: res.best_x,
@@ -82,6 +86,7 @@ pub fn run_obs(
         history: res.history,
         best_cost: res.best_cost,
         config,
+        predicted,
     })
 }
 
@@ -452,6 +457,12 @@ pub fn result_json(
             })
         })
         .collect();
+    // 最优点报告量（spec `report:`，如预期鲜产/糖度）——供前端展示预期产量/品质。
+    let predicted: Vec<serde_json::Value> = r
+        .predicted
+        .iter()
+        .map(|p| serde_json::json!({ "name": p.name, "value": p.value, "unit": p.unit }))
+        .collect();
     serde_json::json!({
         "model": file.meta.id,
         "objective": { "expr": problem.objective.expr, "sense": sense_str },
@@ -460,6 +471,7 @@ pub fn result_json(
         "feasible": r.outcome.feasible,
         "penalty": r.outcome.penalty,
         "constraints": constraints,
+        "predicted": predicted,
         "best_cost": r.best_cost,
         "optimizer": { "method": "de", "pop": r.config.pop, "iters": r.config.iters, "seed": r.config.seed },
         "history": r.history,

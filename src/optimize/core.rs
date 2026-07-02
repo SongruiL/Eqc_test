@@ -123,6 +123,50 @@ pub fn evaluate_obs(
     }
 }
 
+/// 一条报告量在最优点的取值（名/值/单位；`value=None` = 求值失败/非有限）。
+#[derive(Debug, Clone)]
+pub struct ReportValue {
+    pub name: String,
+    pub value: Option<f64>,
+    pub unit: Option<String>,
+}
+
+/// 在给定旋钮点对 `problem.report` 的每条命名 S 表达式求值（复用目标的轨迹归约求值）。
+/// 只跑**一次**前向仿真、逐条求值——供 [`super::run`] 在**最优点**调用一次，随结果返回；
+/// 不进 DE 内循环。`report` 为空 → 返回空 Vec。最优点仿真失败（罕见）→ 各条报 `None`、不崩。
+pub fn evaluate_report(
+    file: &EquationFile,
+    problem: &Problem,
+    knob_values: &[f64],
+    drivers: &HashMap<String, Vec<f64>>,
+    steps: usize,
+    observed: &ObservedData,
+) -> Vec<ReportValue> {
+    if problem.report.is_empty() {
+        return Vec::new();
+    }
+    let prep = match prepare(file, problem, knob_values, drivers, steps, observed) {
+        Ok(p) => p,
+        Err(_) => {
+            return problem
+                .report
+                .iter()
+                .map(|r| ReportValue { name: r.name.clone(), value: None, unit: r.unit.clone() })
+                .collect()
+        }
+    };
+    problem
+        .report
+        .iter()
+        .map(|r| {
+            let value = eval_objective_obs(&r.expr, &prep.out, &prep.bindings, observed)
+                .ok()
+                .filter(|v| v.is_finite());
+            ReportValue { name: r.name.clone(), value, unit: r.unit.clone() }
+        })
+        .collect()
+}
+
 /// 多目标一次评估的结果（雏形：2 目标）。
 #[derive(Debug, Clone)]
 pub struct MoOutcome {

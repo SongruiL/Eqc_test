@@ -840,6 +840,10 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
             Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
             Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
         },
+        "/api/optimize-cached" => match run_optimize_cached(m, query) {
+            Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
+            Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
+        },
         // 受约束 GP：在某 gp_target 靶点进化方程结构（同步 Pareto + 形式识别 + rediscovery）。
         "/api/evolve" => match run_evolve(m, query) {
             Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
@@ -1294,6 +1298,38 @@ fn run_sim(
         input.drivers.insert(k.clone(), vec![*v; *steps]);
     }
     simulate(file, &input).map_err(|e| format!("仿真失败: {e}"))
+}
+
+/// `/api/optimize-cached?spec=<路径>`：**只读**返回离线预算好的决策结果 bundle（不跑优化）。
+/// 结果文件 = spec 同目录、同名但扩展名换 `.result.json`（如 `optimize_t3_fertigation.yaml`
+/// → `optimize_t3_fertigation.result.json`），由 `eqc optimize <model> --spec <spec> -o <该文件>`
+/// 离线生成。★大模型上 live DE 太慢（T3 单次仿真数十秒 × 数百次）→ 面板走缓存秒开、离线预算。
+fn run_optimize_cached(m: &ModelEntry, query: &str) -> Result<String, String> {
+    let spec_arg = parse_spec(query)
+        .ok_or_else(|| "缺少 spec 参数（/api/optimize-cached?spec=problem.yaml）".to_string())?;
+    // spec 路径解析同 run_optimize：绝对直接用，否则相对模型所在目录。
+    let model_dir: PathBuf = if m.path.is_dir() {
+        m.path.clone()
+    } else {
+        m.path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."))
+    };
+    let spec_path = {
+        let p = PathBuf::from(&spec_arg);
+        if p.is_absolute() {
+            p
+        } else {
+            model_dir.join(&spec_arg)
+        }
+    };
+    let result_path = spec_path.with_extension("result.json");
+    std::fs::read_to_string(&result_path).map_err(|_| {
+        format!(
+            "未找到预算结果 {}——请离线跑 `eqc optimize <模型> --spec {} -o {}` 生成",
+            result_path.display(),
+            spec_arg,
+            result_path.display()
+        )
+    })
 }
 
 /// `/api/optimize?spec=<路径>`：读决策 spec，跑优化，返回与 CLI 同一份结果 JSON。
@@ -2739,76 +2775,27 @@ mod tests {
 
     #[test]
     fn test_studio_html_bundled() {
-        assert!(STUDIO_HTML.contains("EQC Studio"));
-        assert!(STUDIO_HTML.contains("/api/model"));
-        // 布局切换条 + 缩放 + 专注控件已打包
-        assert!(STUDIO_HTML.contains("layoutSeg"));
-        assert!(STUDIO_HTML.contains("/api/report?layout="));
-        assert!(STUDIO_HTML.contains("zoomSeg"));
-        assert!(STUDIO_HTML.contains("focusBtn"));
-        // 节点悬停注释 + 点击联动
-        assert!(STUDIO_HTML.contains("nodeTip"));
-        assert!(STUDIO_HTML.contains("wireNodeClicks"));
-        // 决策优化面板 + 多目标前沿渲染
-        assert!(STUDIO_HTML.contains("optRun"));
-        assert!(STUDIO_HTML.contains("/api/optimize?spec="));
-        assert!(STUDIO_HTML.contains("renderParetoResult"));
-        // 受约束 GP 面板（S2）：靶点列表 + 进化端点 + 候选详情/拟合叠图
-        assert!(STUDIO_HTML.contains("gpPanel"));
-        assert!(STUDIO_HTML.contains("buildGpTargets"));
-        assert!(STUDIO_HTML.contains("runEvolve"));
-        assert!(STUDIO_HTML.contains("showCandidate"));
-        assert!(STUDIO_HTML.contains("gpFitSvg"));
-        // S3 对比 + 采纳：采纳区 + 溯源草稿/新方程文本复制下载
-        assert!(STUDIO_HTML.contains("renderAdopt"));
-        assert!(STUDIO_HTML.contains("gp-adopt-btn"));
-        assert!(STUDIO_HTML.contains("gpDownload"));
-        // S4 异步：start/status 端点 + 轮询 + memetic 勾选 + 实时收敛曲线
-        assert!(STUDIO_HTML.contains("/api/evolve/start?"));
-        assert!(STUDIO_HTML.contains("/api/evolve/status?id="));
-        assert!(STUDIO_HTML.contains("pollEvolve"));
-        assert!(STUDIO_HTML.contains("gpMemetic"));
-        assert!(STUDIO_HTML.contains("gpConv"));
-        // S5 多槽位：靶点多选 + 联合 targets= + 候选块逐槽渲染
-        assert!(STUDIO_HTML.contains("toggleGpTarget"));
-        assert!(STUDIO_HTML.contains("gpSelectAll"));
-        assert!(STUDIO_HTML.contains("targets="));
-        assert!(STUDIO_HTML.contains("candidateBlockHtml"));
-        // 园区/简明视图：视图切换 + 录入网格 + 实测数据端点 + 标定
-        assert!(STUDIO_HTML.contains("modeSeg"));
-        assert!(STUDIO_HTML.contains("entryTable"));
-        assert!(STUDIO_HTML.contains("/api/observations?zone="));
-        assert!(STUDIO_HTML.contains("calibRun"));
-        assert!(STUDIO_HTML.contains("/api/calibrate?spec="));
-        // 看懂卡：标定徽章 + 头条 + 胁迫红绿灯
-        assert!(STUDIO_HTML.contains("calBadge"));
-        assert!(STUDIO_HTML.contains("renderUnderstand"));
-        assert!(STUDIO_HTML.contains("stress-lights"));
-        // 管理建议（大白话优化）
-        assert!(STUDIO_HTML.contains("adviceRun"));
-        assert!(STUDIO_HTML.contains("runAdvice"));
-        // 多处理区：全局处理区栏 + 本区管理编辑器 + zone 端点
-        assert!(STUDIO_HTML.contains("zone-bar"));
-        assert!(STUDIO_HTML.contains("mgmtEditor"));
-        assert!(STUDIO_HTML.contains("/api/zone?zone="));
-        // 4：默认进园区 + 区级标定徽章
-        assert!(STUDIO_HTML.contains("ZONE_CALIB"));
-        assert!(STUDIO_HTML.contains("本区已标定"));
-        // DAG 粒度切换（变量/方程/模块）
-        assert!(STUDIO_HTML.contains("levelSeg"));
-        assert!(STUDIO_HTML.contains("&level="));
-        // 多模型选择器（免重启切模型）：花名册端点 + 选择器 + 切换逻辑
-        assert!(STUDIO_HTML.contains("/api/models"));
-        assert!(STUDIO_HTML.contains("modelSel"));
-        assert!(STUDIO_HTML.contains("applyModel"));
-        assert!(STUDIO_HTML.contains("modelParam"));
-        // 耦合视图（step 3）：optgroup 分组 + 标题提示
-        assert!(STUDIO_HTML.contains("耦合视图"));
-        // 耦合面板（可仿真耦合）：仿真 + 优化
-        assert!(STUDIO_HTML.contains("couplePanel"));
-        assert!(STUDIO_HTML.contains("/api/couple"));
-        assert!(STUDIO_HTML.contains("runCoupleSim"));
-        assert!(STUDIO_HTML.contains("/api/couple-optimize"));
+        // v2 Studio = Svelte 编译产物（studio_v2.html，>1MB bundle）。旧 v1 逐个内联标记
+        // （layoutSeg/wireNodeClicks/gpPanel…）在压缩产物里已被重命名/内联、不可再断言——
+        // 这是 Step 1 退役 v1（删 STUDIO_HTML const）后遗留的 v1 断言。改为校验打包资产的
+        // **完整性 + API 面**：API 路径作 fetch 字面量稳定存活于 bundle，可靠断言。
+        assert!(
+            STUDIO_V2_HTML.len() > 100_000,
+            "v2 studio bundle 异常小（{} 字节），疑似未正确打包",
+            STUDIO_V2_HTML.len()
+        );
+        assert!(STUDIO_V2_HTML.contains("EQC Studio"));
+        // Studio 调用的关键 API 端点都在 bundle 里（含决策优化链路 /api/optimize）
+        for ep in [
+            "/api/models",
+            "/api/model",
+            "/api/simulate",
+            "/api/optimize",
+            "/api/couple",
+            "/api/evolve",
+        ] {
+            assert!(STUDIO_V2_HTML.contains(ep), "v2 bundle 缺 API 端点字面量: {ep}");
+        }
     }
 
     #[test]
