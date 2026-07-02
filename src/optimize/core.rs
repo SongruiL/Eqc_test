@@ -267,7 +267,24 @@ fn prepare(
     steps: usize,
     observed: &ObservedData,
 ) -> Result<Prep, String> {
-    let input = build_input(problem, knob_values, drivers, steps);
+    prepare_ov(file, problem, knob_values, drivers, steps, observed, &IndexMap::new())
+}
+
+/// 同 [`prepare`]，但在旋钮装配后再叠加一组【处理管理覆盖】（多处理标定的一个工作点，如把
+/// `EC_feed`/`Irrig` 钉在某管理值上制造 EC/水分对比梯度）。覆盖在旋钮之后施加（与旋钮不相交）。
+fn prepare_ov(
+    file: &EquationFile,
+    problem: &Problem,
+    knob_values: &[f64],
+    drivers: &HashMap<String, Vec<f64>>,
+    steps: usize,
+    observed: &ObservedData,
+    overrides: &IndexMap<String, f64>,
+) -> Result<Prep, String> {
+    let mut input = build_input(problem, knob_values, drivers, steps);
+    for (name, &val) in overrides {
+        input.param_overrides.insert(name.clone(), val);
+    }
     let out = simulate(file, &input).map_err(|e| format!("仿真失败: {e}"))?;
     let bindings = build_bindings(file, problem, knob_values);
 
@@ -285,6 +302,40 @@ fn prepare(
         }
     }
     Ok(Prep { out, bindings, penalty, constraints })
+}
+
+/// **多处理标定评估**：逐处理（叠加该处理管理覆盖 → 跑仿真 → 对该处理实测算误差 + 约束惩罚）**求和**。
+/// 处理矩阵（不同 EC/水工作点）制造对比梯度，把单工作点下共线的参数（如 EC 项 ⟂ 水项）拉开、联合可辨识。
+/// `treatments` = `&[(该处理标量参数覆盖, 该处理实测数据)]`，顺序与 spec `treatments:` 一致。DE 最小化总误差。
+pub fn evaluate_obs_treatments(
+    file: &EquationFile,
+    problem: &Problem,
+    knob_values: &[f64],
+    drivers: &HashMap<String, Vec<f64>>,
+    steps: usize,
+    treatments: &[(IndexMap<String, f64>, ObservedData)],
+) -> EvalOutcome {
+    let mut total_obj = 0.0;
+    let mut total_penalty = 0.0;
+    let mut constraints = Vec::new();
+    for (overrides, observed) in treatments {
+        let prep = match prepare_ov(file, problem, knob_values, drivers, steps, observed, overrides) {
+            Ok(p) => p,
+            Err(note) => return EvalOutcome::garbage(note),
+        };
+        let obj = match eval_objective_obs(&problem.objective.expr, &prep.out, &prep.bindings, observed) {
+            Ok(v) if v.is_finite() => v,
+            Ok(_) => return EvalOutcome::garbage("目标值非有限（NaN/Inf）".into()),
+            Err(e) => return EvalOutcome::garbage(format!("目标求值失败: {e}")),
+        };
+        total_obj += obj;
+        total_penalty += prep.penalty;
+        constraints.extend(prep.constraints);
+    }
+    let feasible = total_penalty == 0.0;
+    let weight = problem.penalty_weight.unwrap_or(DEFAULT_PENALTY_WEIGHT);
+    let cost = sense_cost(problem.objective.sense, total_obj) + weight * total_penalty;
+    EvalOutcome { cost, objective: Some(total_obj), penalty: total_penalty, feasible, constraints, note: None }
 }
 
 /// 用一组旋钮赋值跑一次仿真、返回完整轨迹（可辨识性分析用：要看各观测变量的整条序列）。

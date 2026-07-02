@@ -12,7 +12,7 @@ use indexmap::IndexMap;
 use crate::schema::EquationFile;
 
 use super::core::{
-    evaluate, evaluate_mo, evaluate_obs, evaluate_report, simulate_candidate_with_overrides,
+    evaluate, evaluate_mo, evaluate_obs, evaluate_obs_treatments, evaluate_report, simulate_candidate_with_overrides,
     validate_problem, EvalOutcome, ReportValue,
 };
 use super::de::{differential_evolution, differential_evolution_mo, DeConfig};
@@ -87,6 +87,44 @@ pub fn run_obs(
         best_cost: res.best_cost,
         config,
         predicted,
+    })
+}
+
+/// **多处理标定**：同 [`run_obs`]，但目标 = **逐处理误差求和**（复用 DE）。`treatments` =
+/// `&[(该处理管理覆盖, 该处理实测)]`（顺序与 spec `treatments:` 一致）。处理矩阵制造 EC/水对比梯度、
+/// 把单工作点下共线的参数（EC 项 ⟂ 水项）拉开联合可辨识。不产 `report:`（那是决策优化的最优点报告）。
+pub fn run_obs_treatments(
+    file: &EquationFile,
+    problem: &Problem,
+    drivers: &HashMap<String, Vec<f64>>,
+    steps: usize,
+    treatments: &[(IndexMap<String, f64>, ObservedData)],
+) -> Result<OptimizeResult, String> {
+    validate_problem(file, problem)?;
+    if problem.optimizer.method != "de" {
+        return Err(format!("当前仅支持 method: de（收到 '{}'）", problem.optimizer.method));
+    }
+    let config = DeConfig {
+        pop: problem.optimizer.pop,
+        iters: problem.optimizer.iters,
+        seed: problem.optimizer.seed,
+        ..Default::default()
+    };
+    let bounds: Vec<(f64, f64)> =
+        problem.knobs.iter().map(|k| (k.bounds[0], k.bounds[1])).collect();
+
+    let res = differential_evolution(&bounds, &config, |x| {
+        evaluate_obs_treatments(file, problem, x, drivers, steps, treatments).cost
+    });
+    let outcome = evaluate_obs_treatments(file, problem, &res.best_x, drivers, steps, treatments);
+
+    Ok(OptimizeResult {
+        best_knobs: res.best_x,
+        outcome,
+        history: res.history,
+        best_cost: res.best_cost,
+        config,
+        predicted: Vec::new(),
     })
 }
 

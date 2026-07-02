@@ -84,6 +84,69 @@ pub fn load_observed_csv(path: &Path) -> Result<HashMap<String, Vec<(usize, f64)
     Ok(out)
 }
 
+/// 读**多处理**实测 CSV（多处理标定用）：须含 `treatment`（1 起处理号，与 spec `treatments:` 顺序对应）
+/// + `DAT`（1 起天/步）两列，其余列 = 观测变量。按处理号拆成**逐处理** ObservedData，返回 Vec 按处理号
+/// 1..N 排（缺号=空表·其误差贡献为 0）。稀疏规则同 [`load_observed_csv`]。
+pub fn load_observed_by_treatment(path: &Path) -> Result<Vec<HashMap<String, Vec<(usize, f64)>>>, String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("读取 {} 失败: {e}", path.display()))?;
+    let mut lines = content.lines().filter(|l| !l.trim().is_empty());
+    let header = lines.next().ok_or_else(|| "多处理实测 CSV 为空".to_string())?;
+    let names: Vec<String> = header.split(',').map(|s| s.trim().to_string()).collect();
+    let dat_col = names
+        .iter()
+        .position(|n| n.eq_ignore_ascii_case("DAT"))
+        .ok_or_else(|| "多处理实测 CSV 首行须含 DAT 列（1 起的天/步）".to_string())?;
+    let tr_col = names
+        .iter()
+        .position(|n| n.eq_ignore_ascii_case("treatment"))
+        .ok_or_else(|| "多处理实测 CSV 首行须含 treatment 列（1 起处理号）".to_string())?;
+    let var_cols: Vec<usize> = (0..names.len()).filter(|&i| i != dat_col && i != tr_col).collect();
+
+    let mut per: Vec<HashMap<String, Vec<(usize, f64)>>> = Vec::new();
+    let mut rownum = 1usize;
+    for line in lines {
+        rownum += 1;
+        let fields: Vec<&str> = line.split(',').collect();
+        if fields.len() != names.len() {
+            return Err(format!("多处理实测 CSV 第 {rownum} 行列数与表头不符"));
+        }
+        let tr: usize = fields[tr_col]
+            .trim()
+            .parse()
+            .map_err(|_| format!("多处理实测 CSV 第 {rownum} 行 treatment 不是整数: '{}'", fields[tr_col].trim()))?;
+        if tr == 0 {
+            return Err(format!("多处理实测 CSV 第 {rownum} 行 treatment 须 ≥1"));
+        }
+        let day: usize = fields[dat_col]
+            .trim()
+            .parse()
+            .map_err(|_| format!("多处理实测 CSV 第 {rownum} 行 DAT 不是整数: '{}'", fields[dat_col].trim()))?;
+        // 按需扩到 tr 个处理表（每表含全部观测变量键、初值空）。
+        while per.len() < tr {
+            let mut m = HashMap::new();
+            for &i in &var_cols {
+                m.insert(names[i].clone(), Vec::new());
+            }
+            per.push(m);
+        }
+        for &i in &var_cols {
+            let cell = fields[i].trim();
+            if cell.is_empty() {
+                continue; // 稀疏：那天没测
+            }
+            let v: f64 = cell
+                .parse()
+                .map_err(|_| format!("多处理实测 CSV 第 {rownum} 行列 '{}' 无法解析: '{cell}'", names[i]))?;
+            per[tr - 1].get_mut(&names[i]).unwrap().push((day, v));
+        }
+    }
+    if per.is_empty() {
+        return Err("多处理实测 CSV 无数据行".into());
+    }
+    Ok(per)
+}
+
 /// 读参数覆盖 JSON：`{"name": value, ...}`。
 pub fn load_params_json(path: &Path) -> Result<HashMap<String, f64>, String> {
     let content = std::fs::read_to_string(path)

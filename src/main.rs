@@ -2019,7 +2019,7 @@ fn run_calibrate(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use equation_compiler::optimize::{self, load_problem, Sense};
     use equation_compiler::parse_file;
-    use equation_compiler::scenario::{load_drivers_csv, load_observed_csv};
+    use equation_compiler::scenario::{load_drivers_csv, load_observed_by_treatment, load_observed_csv};
 
     println!("🔧 标定模型: {}", input.display());
     let file = parse_file(input)?;
@@ -2048,26 +2048,52 @@ fn run_calibrate(
             None => return Err("缺实测数据：请加 --observed，或在 spec 写 observed:".into()),
         },
     };
-    let observed_data = load_observed_csv(&obs_path)?;
-    let n_obs: usize = observed_data.values().map(|v| v.len()).sum();
-
     let sense_str = match problem.objective.sense {
         Sense::Max => "max",
         Sense::Min => "min",
     };
-    println!(
-        "   参数 {} 个 | 环境 {} ({} 步) | 实测 {} ({} 观测点 / {} 变量) | 目标 {sense_str} {}",
-        problem.knobs.len(),
-        driver_path.display(),
-        steps,
-        obs_path.display(),
-        n_obs,
-        observed_data.len(),
-        problem.objective.expr,
-    );
 
-    // —— 跑标定（旋钮=参数、目标=误差；与决策优化共用 run_obs）——
-    let res = optimize::run_obs(&file, &problem, &driver_map, steps, &observed_data)?;
+    // —— 实测 + 跑标定：spec 有 treatments → 多处理（逐处理误差聚合、把单工作点共线参数拉开）；否则单工作点 ——
+    let res = if problem.treatments.is_empty() {
+        let observed_data = load_observed_csv(&obs_path)?;
+        let n_obs: usize = observed_data.values().map(|v| v.len()).sum();
+        println!(
+            "   参数 {} 个 | 环境 {} ({} 步) | 实测 {} ({} 观测点 / {} 变量) | 单工作点 | 目标 {sense_str} {}",
+            problem.knobs.len(), driver_path.display(), steps, obs_path.display(), n_obs, observed_data.len(), problem.objective.expr,
+        );
+        optimize::run_obs(&file, &problem, &driver_map, steps, &observed_data)?
+    } else {
+        let per = load_observed_by_treatment(&obs_path)?;
+        if per.len() < problem.treatments.len() {
+            return Err(format!(
+                "处理数不符：spec 有 {} 个 treatments，实测 CSV 只含 {} 个处理",
+                problem.treatments.len(),
+                per.len()
+            )
+            .into());
+        }
+        let treatments: Vec<_> = problem
+            .treatments
+            .iter()
+            .enumerate()
+            .map(|(k, tr)| (tr.clone(), per[k].clone()))
+            .collect();
+        let n_obs: usize = per
+            .iter()
+            .take(problem.treatments.len())
+            .map(|o| o.values().map(|v| v.len()).sum::<usize>())
+            .sum();
+        println!(
+            "   参数 {} 个 | 环境 {} ({} 步) | 实测 {} ({} 观测点) | 处理矩阵 {} 个（逐处理误差求和）| 目标 {sense_str} {}",
+            problem.knobs.len(), driver_path.display(), steps, obs_path.display(), n_obs, problem.treatments.len(), problem.objective.expr,
+        );
+        for (i, tr) in problem.treatments.iter().enumerate() {
+            let desc: Vec<String> = tr.iter().map(|(k, v)| format!("{k}={v}")).collect();
+            let np: usize = per[i].values().map(|v| v.len()).sum();
+            println!("     处理{} = {{{}}}  实测 {np} 点", i + 1, desc.join(", "));
+        }
+        optimize::run_obs_treatments(&file, &problem, &driver_map, steps, &treatments)?
+    };
     let best = &res.outcome;
 
     println!("\n✅ 标定完成");
