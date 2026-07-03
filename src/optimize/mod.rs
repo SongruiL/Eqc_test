@@ -29,8 +29,9 @@ pub use core::{
 };
 pub use de::{differential_evolution, differential_evolution_mo, DeConfig, DeResult, MoSolution};
 pub use run::{
-    identifiability, mo_result_json, prescreen, result_json, run, run_mo, run_obs, run_obs_treatments,
-    IdentReport, MoFrontPoint, MoResult, OptimizeResult, ParamSens, PrescreenResult,
+    identifiability, mo_result_json, prescreen, response_curves_json, result_json, run, run_mo, run_obs,
+    run_obs_treatments, sweep_response_curves, IdentReport, MoFrontPoint, MoResult, OptimizeResult, ParamSens,
+    PrescreenResult, ResponseCurve,
 };
 pub use objective::{
     eval_objective, eval_objective_obs, ObjError, ObservedData, ERROR_OPS, REDUCTIONS,

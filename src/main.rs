@@ -1561,9 +1561,12 @@ fn run_optimize(
 
     // —— 写结果 JSON（与 serve 同一份结构）——
     if let Some(path) = output {
-        let json = optimize::result_json(&file, &problem, &res);
+        let mut json = optimize::result_json(&file, &problem, &res);
+        // ★响应面 1D 扫描（收敛后附加·复用 evaluate/report·不改最优点）：每旋钮固定其他在最优、跨 bounds 扫 21 点。
+        let curves = optimize::sweep_response_curves(&file, &problem, &driver_map, steps, &res.best_knobs, 21);
+        json["response_curves"] = optimize::response_curves_json(&curves);
         std::fs::write(path, serde_json::to_string_pretty(&json)?)?;
-        println!("   结果已写入 {}", path.display());
+        println!("   结果已写入 {}（+{} 条响应曲线）", path.display(), curves.len());
     }
 
     Ok(())

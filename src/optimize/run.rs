@@ -516,6 +516,96 @@ pub fn result_json(
     })
 }
 
+/// 一个旋钮的 1D 响应曲线：收敛后「沿最优点切一刀」——固定其他旋钮在最优、只扫这一个旋钮。
+/// **纯附加、纯读**——不参与 DE、不改任何最优点结果；仅供 GIS 决策地形/权衡可视化。
+pub struct ResponseCurve {
+    pub knob: String,
+    pub unit: Option<String>,
+    /// 该旋钮的最优取值（响应面里的竖线位置）。
+    pub optimum: f64,
+    /// 扫描点（该旋钮跨 bounds 均匀 n 点）。
+    pub xs: Vec<f64>,
+    /// 每点的原始目标值（净利等；仿真失败点 = None）。
+    pub objective: Vec<Option<f64>>,
+    /// 每点是否满足全部约束（GIS 据此染红越界段 = 可行域）。
+    pub feasible: Vec<bool>,
+    /// 每条 report 量随该旋钮的曲线（名 → 各点值）。
+    pub metrics: Vec<(String, Vec<Option<f64>>)>,
+}
+
+/// 在最优点附近对**每个旋钮**做 1D 扫描：固定其他旋钮在 `best_x`，把该旋钮从 `bounds[lo]` 扫到 `[hi]` 共 `n` 点，
+/// 每点复用 [`evaluate`]（目标 + 约束可行性）与 [`evaluate_report`]（report 各量）。**不改任何最优点/收敛结果。**
+pub fn sweep_response_curves(
+    file: &EquationFile,
+    problem: &Problem,
+    drivers: &HashMap<String, Vec<f64>>,
+    steps: usize,
+    best_x: &[f64],
+    n: usize,
+) -> Vec<ResponseCurve> {
+    let empty = ObservedData::new();
+    let report_names: Vec<String> = problem.report.iter().map(|r| r.name.clone()).collect();
+    let mut curves = Vec::with_capacity(problem.knobs.len());
+    for (i, knob) in problem.knobs.iter().enumerate() {
+        let (lo, hi) = (knob.bounds[0], knob.bounds[1]);
+        let mut xs = Vec::with_capacity(n);
+        let mut objective = Vec::with_capacity(n);
+        let mut feasible = Vec::with_capacity(n);
+        let mut metric_vals: Vec<Vec<Option<f64>>> = vec![Vec::with_capacity(n); report_names.len()];
+        for j in 0..n {
+            let t = if n > 1 { j as f64 / (n as f64 - 1.0) } else { 0.0 };
+            let xv = lo + t * (hi - lo);
+            let mut x = best_x.to_vec();
+            if i < x.len() {
+                x[i] = xv;
+            }
+            let outcome = evaluate(file, problem, &x, drivers, steps);
+            let report = evaluate_report(file, problem, &x, drivers, steps, &empty);
+            xs.push(xv);
+            objective.push(outcome.objective);
+            feasible.push(outcome.feasible);
+            for (mi, rv) in report.iter().enumerate() {
+                if mi < metric_vals.len() {
+                    metric_vals[mi].push(rv.value);
+                }
+            }
+        }
+        let metrics = report_names.iter().cloned().zip(metric_vals).collect();
+        curves.push(ResponseCurve {
+            knob: knob.var.clone(),
+            unit: knob.unit.clone(),
+            optimum: best_x.get(i).copied().unwrap_or(0.0),
+            xs,
+            objective,
+            feasible,
+            metrics,
+        });
+    }
+    curves
+}
+
+/// 把响应曲线序列化成 JSON（塞进 result JSON 的 `response_curves` 键；GIS 响应面浏览器消费）。
+pub fn response_curves_json(curves: &[ResponseCurve]) -> serde_json::Value {
+    serde_json::Value::Array(
+        curves
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "knob": c.knob,
+                    "unit": c.unit,
+                    "optimum": c.optimum,
+                    "xs": c.xs,
+                    "objective": c.objective,
+                    "feasible": c.feasible,
+                    "metrics": c.metrics.iter().map(|(name, vals)| {
+                        serde_json::json!({ "name": name, "values": vals })
+                    }).collect::<Vec<_>>(),
+                })
+            })
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
