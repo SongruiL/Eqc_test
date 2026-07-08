@@ -34,6 +34,12 @@ test('进化史工作区 · 轨迹 + 坑清单 + cohort 脚注 + 优雅降级', 
   await page.locator('.evo .chip', { hasText: 's4' }).click()
   await expect(page.locator('.evo .diff')).toBeVisible()
 
+  // 🎬 演化回放：播放 → 3D canvas 挂载 + 章节指示推进 + 退出
+  await page.getByRole('button', { name: /播放进化/ }).click()
+  await expect(page.locator('.evo3d canvas')).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('.playbar .ch')).toBeVisible() // 章节指示 k/N
+  await page.getByRole('button', { name: /退出/ }).click()
+
   // —— 番茄：cohort/箱车假象脚注可展开 ——
   await modelSel.selectOption('tomato')
   const foot = page.locator('.evo .foot')

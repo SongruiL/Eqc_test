@@ -1,23 +1,31 @@
 <script lang="ts">
   // 进化史工作区：沿模型版本血缘（如草莓 s1→s8.1）看图论演化轨迹 + 版本 diff + ★标定坑清单。
   // 数据全来自 /api/evolution 契约（沿 evolution.yaml 走 git 历史算，EQC 持有事实）；前端只拼装展示。
+  import { onDestroy } from 'svelte'
   import { store } from '../lib/store.svelte'
   import { fetchEvolution } from '../lib/api'
   import type { EvolutionReport } from '../lib/contract'
+  import Topology3d from '../components/Topology3d.svelte'
 
   let report = $state<EvolutionReport | null>(null)
   let loading = $state(false)
   let err = $state('')
   let sel = $state(0) // 选中版本下标（驱动 diff / 轨迹高亮）
   let showArtifacts = $state(false)
+  // 演化回放（Step3）：局部 reveal 状态（不占全局 store.growth，与结构视图子系统生长隔离）
+  let evoPlaying = $state(false)
+  let evoChapter = $state(0)
+  let evoTimer: ReturnType<typeof setInterval> | undefined
   let lastModel: string | null = null
 
   $effect(() => {
     if (store.model !== lastModel) {
       lastModel = store.model
+      stopEvo()
       load()
     }
   })
+  onDestroy(() => clearInterval(evoTimer))
 
   async function load() {
     loading = true
@@ -74,6 +82,39 @@
   const thresholds = $derived((report?.calibration_pitlist ?? []).filter((e) => e.kind === 'unidentifiable-threshold'))
   const artifacts = $derived(report?.structural_artifacts ?? [])
   const honest = $derived(report?.final_honest_identifiability ?? null)
+
+  // —— 演化回放 plan：每版一章，nodes=该版新增节点本地名（基线节点未列→Topology3d 默认第0章显）——
+  const evoPlan = $derived.by(() => {
+    if (!report) return null
+    return report.versions.map((v, i) => {
+      const d = i === 0 ? null : report!.diffs.find((dd) => dd.to === v.version)
+      return { key: v.version, title: v.version, narration: v.step, nodes: d ? d.added_nodes : [] }
+    })
+  })
+  const nCh = $derived(evoPlan?.length ?? 0)
+  // reveal 始终非空（隔离 store.growth）：不播时 chapter=末章=全显；播放时=evoChapter。
+  const reveal = $derived(evoPlan ? { chapters: evoPlan, chapter: evoPlaying ? evoChapter : nCh - 1 } : null)
+  const curNarr = $derived(evoPlaying && evoPlan ? evoPlan[evoChapter] : null)
+
+  function playEvo() {
+    if (nCh < 2) return
+    evoPlaying = true
+    evoChapter = 0
+    clearInterval(evoTimer)
+    evoTimer = setInterval(() => {
+      if (evoChapter >= nCh - 1) clearInterval(evoTimer)
+      else evoChapter += 1
+    }, 2200)
+  }
+  function stopEvo() {
+    evoPlaying = false
+    evoChapter = 0
+    clearInterval(evoTimer)
+  }
+  function stepEvo(dir: number) {
+    clearInterval(evoTimer)
+    evoChapter = Math.max(0, Math.min(nCh - 1, evoChapter + dir))
+  }
 </script>
 
 <div class="evo">
@@ -115,6 +156,29 @@
         </div>
       {/if}
     </section>
+
+    <!-- 🎬 演化回放：沿血缘逐版本"长出"当前模型 -->
+    {#if evoPlan && nCh > 1}
+      <section class="card">
+        <h3>🎬 演化回放 <span class="sub">沿血缘逐版本"长出"当前模型（{store.model}）</span></h3>
+        <div class="evo3d">
+          <Topology3d contract={store.modelJson} {reveal} />
+          {#if curNarr}<div class="narr"><b>{curNarr.title}</b> · {curNarr.narration}</div>{/if}
+        </div>
+        <div class="playbar">
+          {#if !evoPlaying}
+            <button class="pbtn" onclick={playEvo}>▶ 播放进化</button>
+            <span class="sub">从 {evoPlan[0].title} 逐版本长到 {evoPlan[nCh - 1].title}（{nCh} 版）</span>
+          {:else}
+            <button class="pbtn" onclick={() => stepEvo(-1)}>⏮</button>
+            <button class="pbtn" onclick={() => stepEvo(1)}>⏭</button>
+            <button class="pbtn" onclick={stopEvo}>⏹ 退出</button>
+            <span class="ch">{evoChapter + 1}/{nCh} · {evoPlan[evoChapter].title}</span>
+          {/if}
+        </div>
+        <p class="sub note">呈现「当前模型怎么一步步搭起来」（存活血缘）；中途被删的瞬态节点不在最新图、不显示。</p>
+      </section>
+    {/if}
 
     <!-- ② 选中版本 + 结构 diff -->
     {#if selVer}
@@ -253,4 +317,12 @@
 
   .warn { color: #7c3aed; }
   .note { margin-top: 6px; opacity: 0.85; }
+
+  .evo3d { position: relative; height: 380px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fafbfc; }
+  .narr { position: absolute; left: 0; right: 0; bottom: 0; padding: 8px 12px; background: rgba(17, 24, 39, 0.72); color: #fff; font-size: 13px; }
+  .narr b { color: #fbbf24; }
+  .playbar { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .pbtn { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 4px 12px; font-size: 13px; cursor: pointer; }
+  .pbtn:hover { background: #f3f4f6; }
+  .ch { font-size: 13px; color: var(--accent); font-weight: 600; }
 </style>

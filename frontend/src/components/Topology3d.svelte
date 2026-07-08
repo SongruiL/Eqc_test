@@ -23,8 +23,16 @@
     phase: number                    // 0=现有结构（新边藏）/ 1=长出（新边伸出 + 脉冲）
     nonce: number                    // 变化即触发重播（父组件每次"再播"自增）
   }
-  type Props = { contract: ModelJson | null; gpDiff?: GpDiffView | null }
-  let { contract, gpDiff = null }: Props = $props()
+  // 进化动画（呈现层 Step3）：外部逐版本揭示计划。非空时接管揭示，**不占用全局 store.growth**
+  // （与结构视图的子系统生长隔离）；chapters[i].nodes=第i版首次出现的本地名，chapter=当前揭示到第几版。
+  export type RevealView = { chapters: { nodes: string[] }[]; chapter: number }
+  type Props = { contract: ModelJson | null; gpDiff?: GpDiffView | null; reveal?: RevealView | null }
+  let { contract, gpDiff = null, reveal = null }: Props = $props()
+
+  // 生长揭示的有效数据源：优先外部 reveal（进化动画自带 plan+章节），否则全局 store.growth（子系统生长）。
+  const growActive = () => reveal != null || store.growth.active
+  const revChapters = () => reveal?.chapters ?? store.growth.plan?.chapters ?? []
+  const revChapter = () => reveal?.chapter ?? store.growth.chapter
 
   let host: HTMLDivElement
   let tip: HTMLDivElement | undefined
@@ -191,7 +199,7 @@
     }
     status = data.nodes.length ? 'ok' : 'empty'
     buildGrowthMap()
-    if (store.growth.active) applyGrowth(true) // 演示进行中切模型/重载 → 直接套用当前章节
+    if (growActive()) applyGrowth(true) // 演示进行中切模型/重载 → 直接套用当前章节
     if (gpDiff) { ensureGpEdgeMesh(); runGpAnim() } // GP 彩蛋：重载后套用当前 diff 动画
     applySelection(store.selectedVars)
     render()
@@ -212,14 +220,14 @@
   /** 从 store.growth.plan 建「本地名 → 章节序」映射。 */
   function buildGrowthMap() {
     growthCh = new Map()
-    ;(store.growth.plan?.chapters ?? []).forEach((ch, i) =>
+    revChapters().forEach((ch, i) =>
       ch.nodes.forEach((ln) => { if (!growthCh.has(ln)) growthCh.set(ln, i) }),
     )
   }
   /** 某本地名当前是否已揭示（演示关=全显；不在 plan 的随第 0 章）。 */
   function revealed(ln: string): boolean {
-    if (!store.growth.active) return true
-    return (growthCh.get(ln) ?? 0) <= store.growth.chapter
+    if (!growActive()) return true
+    return (growthCh.get(ln) ?? 0) <= revChapter()
   }
   /** 套用当前章节：各节点目标缩放（已揭示=r / 未揭示=0）+ 重建可见边 + 启动补间。 */
   function applyGrowth(instant = false) {
@@ -235,7 +243,7 @@
   /** 重建边几何：只画两端都已揭示的边（演示关=全部）。 */
   function rebuildEdges() {
     if (!edgeMesh) return
-    const vis = store.growth.active
+    const vis = growActive()
       ? edgeList.filter(([a, b]) => revealed(localName(a)) && revealed(localName(b)))
       : edgeList
     edgeMesh.geometry.setAttribute('position', new THREE.Float32BufferAttribute(edgeVerts(vis), 3))
@@ -354,7 +362,7 @@
       const on = set.has(ud.ln)
       ud.halo.visible = on               // 描边光环：选中显形（区别于"亮节点"）
       // 生长演示进行中由 applyGrowth 掌管缩放（0→r），选中只切光环、不抢缩放。
-      if (!store.growth.active) mesh.scale.setScalar(on ? ud.r * 1.15 : ud.r)
+      if (!growActive()) mesh.scale.setScalar(on ? ud.r * 1.15 : ud.r)
     }
     render()
   }
@@ -439,6 +447,7 @@
   $effect(() => {
     const g = store.growth
     void g.active; void g.chapter; void g.plan
+    void reveal?.chapter; void reveal?.chapters // 进化动画：外部 reveal 变也重揭示
     if (!nodeMeshes.length || gpDiff) return
     buildGrowthMap()
     applyGrowth()
