@@ -78,8 +78,8 @@ export interface EqJson {
   formula_display?: string
   /** GP 进化靶点标记（仅 gp_target 方程有）。 */
   gp_target?: GpTargetJson
-  /** 方程来源档（出处诚实纪律）：文献/平移/推导/猜测。缺省=未标注。 */
-  provenance?: '文献' | '平移' | '推导' | '猜测'
+  /** 方程来源档（出处诚实纪律）：文献/平移/推导/猜测 + GP(GP 采纳的数据发现源)。缺省=未标注。 */
+  provenance?: '文献' | '平移' | '推导' | '猜测' | 'GP'
 }
 
 // —— GP（/api/evolve[/start|/status]）契约 ——
