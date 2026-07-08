@@ -37,9 +37,11 @@ pub struct GpTarget {
 ///
 /// 配合 `reference`（引用文献）= 完整出处。按"来源阶梯"标注每条方程的可信层级：
 /// 文献（直接用于本作物的已发表方程，最高）> 平移（从他作物搬）> 推导（从理论推）> 猜测（占位）。
+/// 另设 **`GP`**（正交于阶梯）= 受约束遗传编程从数据发现并采纳的经验形式（结构经数据拟合验证、
+/// 系数待联合标定）；进化图论 arc · Tier3 采纳纪律标它（见 `docs/gp-adoption-playbook.md`）。
 /// **下游用途**：①受约束 GP 自动选靶点（`推导`/`猜测` → 可进化，`文献` → 冻结基座，与 `gp_target` 协同）；
 /// ②契约带出 → 生长动画按出处上色。additive：缺省（None）= 未标注，序列化跳过，现有模型逐字节不变。
-/// YAML 可写中文（`provenance: 文献`）或英文别名（`literature`/`transferred`/`derived`/`guess`）。
+/// YAML 可写中文（`provenance: 文献`）或英文别名（`literature`/`transferred`/`derived`/`guess`/`gp`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Provenance {
     /// 直接用于本作物的已发表方程（置信最高，机理基座、宜冻结）。
@@ -54,10 +56,15 @@ pub enum Provenance {
     /// 占位 / 猜测（连理论都薄；诚实标注，优先交 GP/标定）。
     #[serde(rename = "猜测", alias = "guess")]
     Guess,
+    /// GP 采纳的经验形式（受约束进化从数据发现、结构经拟合验证·系数簇待联合标定）。正交于"文献/平移/
+    /// 推导/猜测"阶梯，属"数据发现"源。GP 采纳纪律（Tier3）标它 + reference 记 grammar/rmse/seed。
+    #[serde(rename = "GP", alias = "gp")]
+    Gp,
 }
 
 impl Provenance {
-    /// 是否"不确定"（推导/猜测）——受约束 GP 选靶点的默认判据。
+    /// 是否"不确定"（推导/猜测）——受约束 GP 选靶点的默认判据。**GP 不算 uncertain**：GP 采纳的形式
+    /// 是**深思熟虑的采纳**、非"请进化我"占位；要继续进化须显式带 `gp_target`（非靠 provenance 默认）。
     pub fn is_uncertain(&self) -> bool {
         matches!(self, Provenance::Derived | Provenance::Guess)
     }
@@ -133,11 +140,16 @@ mod tests {
         // 英文别名也接受
         assert_eq!(serde_yaml::from_str::<Provenance>("transferred").unwrap(), Provenance::Transferred);
         assert_eq!(serde_yaml::from_str::<Provenance>("derived").unwrap(), Provenance::Derived);
+        // GP 采纳标记（Tier3）：中文/英文别名 + 序列化回 "GP"
+        assert_eq!(serde_yaml::from_str::<Provenance>("GP").unwrap(), Provenance::Gp);
+        assert_eq!(serde_yaml::from_str::<Provenance>("gp").unwrap(), Provenance::Gp);
+        assert_eq!(serde_yaml::to_string(&Provenance::Gp).unwrap().trim(), "GP");
         // 序列化回中文（契约带出用）
         assert_eq!(serde_yaml::to_string(&Provenance::Literature).unwrap().trim(), "文献");
-        // 不确定性判据（GP 选靶点用）
+        // 不确定性判据（GP 选靶点用）——GP **不算** uncertan（深思熟虑采纳·再进化靠显式 gp_target）
         assert!(Provenance::Derived.is_uncertain() && Provenance::Guess.is_uncertain());
         assert!(!Provenance::Literature.is_uncertain() && !Provenance::Transferred.is_uncertain());
+        assert!(!Provenance::Gp.is_uncertain());
     }
 
     #[test]

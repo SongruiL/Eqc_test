@@ -22,12 +22,12 @@ variables:
 parameters:
   # ★GP 采纳的互作门 3 系数（= 硬过滤标出的 coefficient_cluster·同进本方程·结构共线→须联合标定/多工况正交）。
   #   default = GP 受约束进化最佳拟合值（seed=1·rmse 0.013）；待真数据联合标定。
-  kg_slope: { name_cn: 门控S形斜率,  default: 0.7872, unit: "1/℃·d", provenance: 猜测, optimizable: true }
-  kg_thr:   { name_cn: 门控d1阈值,   default: 15.185, unit: "℃·d",   provenance: 猜测, optimizable: true }
-  kg_d2:    { name_cn: d2互作系数,   default: 0.9723, unit: "-",     provenance: 猜测, optimizable: true }
+  kg_slope: { name_cn: 门控S形斜率,  default: 0.7872, unit: "1/℃·d", provenance: GP, optimizable: true }
+  kg_thr:   { name_cn: 门控d1阈值,   default: 15.185, unit: "℃·d",   provenance: GP, optimizable: true }
+  kg_d2:    { name_cn: d2互作系数,   default: 0.9723, unit: "-",     provenance: GP, optimizable: true }
 
 equations:
-  - { id: GPDEMO3-GATE, name: 门控输出, output: y, provenance: 猜测,
+  - { id: GPDEMO3-GATE, name: 门控输出, output: y, provenance: GP,
       reference: "GP 采纳（受约束进化·monotone_gate·seed=1·rmse 0.013 复现真值 expit(0.8·(d1−15−d2)))：expit(kg_slope·((d1−kg_thr)−kg_d2·d2))。前身=单输入 d1 linear ramp。3 系数结构共线（硬过滤 coefficient_cluster）→联合标定。",
       gp_target: { grammar: monotone_gate, inputs: [d1, d2], output_bounds: [0.0, 1.0], monotone: { d1: increasing } },
       expression: { op: div, args: [ { const: 1.0 }, { op: add, args: [ { const: 1.0 }, { op: exp, args: [ { op: neg, args: [

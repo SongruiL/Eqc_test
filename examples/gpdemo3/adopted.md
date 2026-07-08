@@ -39,7 +39,8 @@
 - 进化分析器/动画自动纳入本分支（`meta.lineage` 自动派生血缘 + `diff_models` 分支 vs main）。
 
 ## 诚实边界
-- **provenance 无「GP」枚举值**（只有 文献/平移/推导/猜测）——spec §5.3「推导→GP」标记无处落，暂记 `reference`+`lineage`。
-  待首席定：是否给 `Provenance` 加 `GP` 值（GP 发现的经验形式=独立来源层级）。
+- **provenance 标 `GP`**（2026-07-08 首席拍板加 `Provenance::GP` 枚举·靶方程 + 3 命名系数参数均标 GP·正交于
+  文献/平移/推导/猜测 阶梯 = 「数据发现」源）；GP 来由记 `reference`、血缘记 `meta.lineage`。`GP` 不算 `is_uncertain`
+  （深思熟虑采纳·再进化靠显式 gp_target）。
 - 分支落在 **Eqc_test 引擎仓**（gpdemo3 fixture 在此）；真作物采纳的 gp/ 分支应落 **crop-models**（per-repo 约定）。
-- 合成 demo·常数为 GP 拟合值非真标定值·转正合 main 待首席拍板。
+- 合成 demo·常数为 GP 拟合值非真标定值。转正 = `--no-ff` merge gp/→main（首席拍板·2026-07-08 已转正 `7180b3b`）。
