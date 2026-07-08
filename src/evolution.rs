@@ -72,6 +72,10 @@ pub struct EvolutionReport {
     pub diffs: Vec<VersionDiff>,
     /// ★最硬产出：结构坑清单（混淆系数簇 + 不可辨识阈值参数），供标定实验设计。
     pub calibration_pitlist: Vec<PitlistEntry>,
+    /// 结构假象脚注：cohort/箱车离散化产生的「同一 base 变量展开兄弟」混淆簇（如 `is_last__1..10`）。
+    /// 结构上确实互不可分、但是**固定展开标记、非标定目标**，故从主坑清单剔除、降为脚注。空则省略。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub structural_artifacts: Vec<PitlistEntry>,
     /// 最新版按**诚实白名单**（真田间可测量 measurable:true）另算一次可辨识性；
     /// 若最新版没标 measurable（= 白名单口径与 all-output 相同）则为 None。
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -288,8 +292,8 @@ pub fn analyze_lineage(
     // —— 最新版诚实白名单可辨识性（先算：坑清单②的阈值不可辨识要从它揭示）——
     let final_honest_identifiability = honest_final(manifest, &per_version_files);
 
-    // —— 标定坑清单 ——
-    let calibration_pitlist =
+    // —— 标定坑清单（真簇进主清单；cohort 展开兄弟簇降为脚注）——
+    let (calibration_pitlist, structural_artifacts) =
         build_pitlist(&versions, &diffs, &per_version_files, final_honest_identifiability.as_ref());
 
     Ok(EvolutionReport {
@@ -298,6 +302,7 @@ pub fn analyze_lineage(
         versions,
         diffs,
         calibration_pitlist,
+        structural_artifacts,
         final_honest_identifiability,
     })
 }
@@ -311,12 +316,15 @@ fn build_pitlist(
     diffs: &[VersionDiff],
     per_version_files: &[Vec<EquationFile>],
     honest: Option<&HonestIdentifiability>,
-) -> Vec<PitlistEntry> {
+) -> (Vec<PitlistEntry>, Vec<PitlistEntry>) {
     let mut out = Vec::new();
+    let mut artifacts = Vec::new();
 
     // ① 混淆系数簇：每个 diff 里 new_confounded 的连通分量 = 一个新经验式的系数簇。
     //    ★严谨语义 = 「该经验式方程集签名**所独有**的系数集」——共享的物理常数（如消光系数 k
     //    也进 Beer 公式、EC_thresh 也进 f_EC）方程集签名不同、被正确排除在团外，只留真正异参同效者。
+    //    ★cohort/箱车过滤：同一 base 变量的展开兄弟簇（is_last__1..10）是离散化结构假象、非标定
+    //    目标 → 剔出主清单、降为 structural_artifacts 脚注（否则会误导标定去"标定固定标记"）。
     for (i, d) in diffs.iter().enumerate() {
         if d.new_confounded.is_empty() {
             continue;
@@ -324,15 +332,27 @@ fn build_pitlist(
         let ver_ef = &per_version_files[i + 1][0]; // diff 的 "to" 版本
         for clique in cliques(&d.new_confounded) {
             let host = clique_mechanism(ver_ef, &clique);
-            out.push(PitlistEntry {
-                kind: "confounding-clique".into(),
-                params: clique,
-                introduced_at: d.to.clone(),
-                mechanism: host.map(|e| e.name.clone()),
-                equation: host.map(|e| e.output.clone()),
-                advice: "该经验式的系数簇结构上异参同效——需一起标定，或加正交/多工况对照实验拆开"
-                    .into(),
-            });
+            if is_cohort_siblings(&clique) {
+                artifacts.push(PitlistEntry {
+                    kind: "cohort-sibling-clique".into(),
+                    params: clique,
+                    introduced_at: d.to.clone(),
+                    mechanism: host.map(|e| e.name.clone()),
+                    equation: host.map(|e| e.output.clone()),
+                    advice: "cohort/箱车离散化的结构假象——同一 base 变量的展开兄弟（固定标记），结构上互不可分但非标定目标"
+                        .into(),
+                });
+            } else {
+                out.push(PitlistEntry {
+                    kind: "confounding-clique".into(),
+                    params: clique,
+                    introduced_at: d.to.clone(),
+                    mechanism: host.map(|e| e.name.clone()),
+                    equation: host.map(|e| e.output.clone()),
+                    advice: "该经验式的系数簇结构上异参同效——需一起标定，或加正交/多工况对照实验拆开"
+                        .into(),
+                });
+            }
         }
     }
 
@@ -360,7 +380,21 @@ fn build_pitlist(
         }
     }
 
-    out
+    (out, artifacts)
+}
+
+/// clique 是否全是「同一 base 变量的 cohort/结构展开兄弟」（只差 `__N` 后缀）。
+///
+/// EQC 的 cohort/structure 展开用双下划线后缀（`is_last__1`、`leaf__1`、`fmass__1_1`）；真经验
+/// 系数名（`A_tr`/`k_DMC_EC`）不含 `__`。故 base = `split("__").next()`；一个簇若所有成员 base
+/// 相同（且确有 `__` 后缀），就是箱车/器官离散化产生的固定标记簇 = 结构假象、非标定目标。
+fn is_cohort_siblings(clique: &[String]) -> bool {
+    if clique.len() < 2 {
+        return false;
+    }
+    let base = |n: &str| n.split("__").next().unwrap_or(n).to_string();
+    let first = base(&clique[0]);
+    clique.iter().all(|m| base(m) == first) && clique.iter().any(|m| m.contains("__"))
 }
 
 /// 最新版按诚实白名单（真 measurable:true）算可辨识性。若最新版没标 measurable，则口径同
@@ -528,5 +562,18 @@ mod tests {
     #[test]
     fn cliques_empty_when_no_pairs() {
         assert!(cliques(&[]).is_empty());
+    }
+
+    #[test]
+    fn cohort_siblings_filtered_but_real_cliques_kept() {
+        // cohort/箱车展开兄弟（同 base + __N 后缀）→ 判为结构假象
+        assert!(is_cohort_siblings(&[s("is_last__1"), s("is_last__2"), s("is_last__10")]));
+        assert!(is_cohort_siblings(&[s("fmass__1_1"), s("fmass__2_1")]));
+        // 真经验系数（不同 base）→ 保留
+        assert!(!is_cohort_siblings(&[s("A_tr"), s("B_tr")]));
+        assert!(!is_cohort_siblings(&[s("DMC_fruit"), s("k_DMC_EC"), s("k_DMC_W")]));
+        // 单成员 / 单下划线（非展开后缀）→ 不误判
+        assert!(!is_cohort_siblings(&[s("is_last__1")]));
+        assert!(!is_cohort_siblings(&[s("k_1"), s("k_2")]));
     }
 }
