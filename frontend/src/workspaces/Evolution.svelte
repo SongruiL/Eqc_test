@@ -2,9 +2,9 @@
   // 进化史工作区：沿模型版本血缘（如草莓 s1→s8.1）看图论演化轨迹 + 版本 diff + ★标定坑清单。
   // 数据全来自 /api/evolution 契约（沿 evolution.yaml 走 git 历史算，EQC 持有事实）；前端只拼装展示。
   import { onDestroy } from 'svelte'
-  import { store } from '../lib/store.svelte'
-  import { fetchEvolution } from '../lib/api'
-  import type { EvolutionReport } from '../lib/contract'
+  import { store, reloadModel } from '../lib/store.svelte'
+  import { fetchEvolution, fetchHistory, fetchSourceAtRev, saveSource } from '../lib/api'
+  import type { EvolutionReport, GitCommit } from '../lib/contract'
   import Topology3d from '../components/Topology3d.svelte'
 
   let report = $state<EvolutionReport | null>(null)
@@ -16,16 +16,71 @@
   let evoPlaying = $state(false)
   let evoChapter = $state(0)
   let evoTimer: ReturnType<typeof setInterval> | undefined
+  // Tier2 回退/checkout：本文件 git 历史 + 查看历史源码 + 人在环回退（write_source 校验+备份+原子写）
+  let history = $state<GitCommit[]>([])
+  let viewRev = $state('') // 正在查看源码的 rev（空=未展开）
+  let viewSrc = $state('')
+  let confirmRev = $state<GitCommit | null>(null) // 待确认回退的 commit
+  let revertStatus = $state('')
+  let reverting = $state(false)
   let lastModel: string | null = null
 
   $effect(() => {
     if (store.model !== lastModel) {
       lastModel = store.model
       stopEvo()
+      resetRevert()
       load()
+      loadHistory()
     }
   })
   onDestroy(() => clearInterval(evoTimer))
+
+  function resetRevert() {
+    history = []
+    viewRev = ''
+    viewSrc = ''
+    confirmRev = null
+    revertStatus = ''
+    reverting = false
+  }
+  async function loadHistory() {
+    try {
+      const h = await fetchHistory(store.model)
+      history = h.commits ?? []
+    } catch {
+      history = []
+    }
+  }
+  async function viewSource(rev: string) {
+    if (viewRev === rev) { viewRev = ''; viewSrc = ''; return } // 再点收起
+    viewRev = rev
+    viewSrc = '加载中…'
+    try {
+      const j = await fetchSourceAtRev(store.model, rev)
+      viewSrc = j.source ?? j.error ?? '(无源码)'
+    } catch (e) {
+      viewSrc = '加载失败：' + String(e)
+    }
+  }
+  async function doRevert() {
+    if (!confirmRev || reverting) return
+    reverting = true
+    revertStatus = '⏳ 取历史源码…'
+    try {
+      const s = await fetchSourceAtRev(store.model, confirmRev.sha)
+      if (!s.source) { revertStatus = '取源码失败：' + (s.error ?? '无源码'); reverting = false; return }
+      revertStatus = '⏳ 校验 + 备份 + 写回…'
+      const j = await saveSource(store.model, s.source) // write_source：校验通过才备份+原子写
+      if (j.error) { revertStatus = '回退失败（校验/写盘被拒）：' + j.error; reverting = false; return }
+      revertStatus = `✅ 已回退到 ${confirmRev.short}（备份 ${j.backup ?? ''}）· ⚠️ 决策缓存可能过期，需重跑 eqc optimize -o`
+      confirmRev = null
+      await reloadModel() // 工作树已变 → 刷新当前模型
+    } catch (e) {
+      revertStatus = '回退请求失败：' + String(e)
+    }
+    reverting = false
+  }
 
   async function load() {
     loading = true
@@ -259,6 +314,36 @@
         <div class="sub note">{honest.note}</div>
       </section>
     {/if}
+
+    <!-- 📜 Tier2：本文件版本历史 + 人在环回退 -->
+    {#if history.length}
+      <section class="card">
+        <h3>📜 本文件版本历史 <span class="sub">git 提交 · 回退=覆盖工作树（校验+备份+人在环）</span></h3>
+        {#if revertStatus}<div class="rstat" class:okmsg={revertStatus.startsWith('✅')}>{revertStatus}</div>{/if}
+        {#each history as c}
+          <div class="hrow">
+            <code class="sha">{c.short}</code>
+            <span class="hdate">{c.date}</span>
+            <span class="hsub" title={c.subject}>{c.subject}</span>
+            <button class="hbtn" onclick={() => viewSource(c.sha)}>{viewRev === c.sha ? '收起' : '查看'}</button>
+            <button class="hbtn danger" onclick={() => (confirmRev = c)}>⤺ 回退</button>
+          </div>
+          {#if viewRev === c.sha}<pre class="hsrc">{viewSrc}</pre>{/if}
+        {/each}
+        {#if confirmRev}
+          <div class="confirm">
+            <div class="chead"><b>确认把当前模型回退到此版本？</b></div>
+            <div class="sub">{confirmRev.short} · {confirmRev.date} · {confirmRev.subject}</div>
+            <div class="sub cwarn">将用该版本源码<b>覆盖当前文件</b>——write_source 自动<b>校验（不合法则拒绝）+ 备份 .bak + 原子写</b>；git 历史不变、随时可再回退。</div>
+            <div class="cact">
+              <button class="hbtn danger" disabled={reverting} onclick={doRevert}>确认回退</button>
+              <button class="hbtn" disabled={reverting} onclick={() => (confirmRev = null)}>取消</button>
+            </div>
+          </div>
+        {/if}
+        <p class="sub note">v1 只回退本文件自己的 git 历史；跨文件的血缘版本（如 s1 是另一个文件）回退留后。</p>
+      </section>
+    {/if}
   {/if}
 </div>
 
@@ -325,4 +410,21 @@
   .pbtn { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 4px 12px; font-size: 13px; cursor: pointer; }
   .pbtn:hover { background: #f3f4f6; }
   .ch { font-size: 13px; color: var(--accent); font-weight: 600; }
+
+  .rstat { font-size: 13px; padding: 6px 10px; border-radius: 6px; background: #f3f4f6; margin-bottom: 8px; }
+  .rstat.okmsg { background: #f0fdf4; color: #15803d; }
+  .hrow { display: flex; align-items: center; gap: 10px; padding: 5px 0; border-bottom: 1px solid #f1f2f4; font-size: 13px; }
+  .sha { font-family: ui-monospace, monospace; color: #6366f1; }
+  .hdate { color: var(--sub); font-size: 12px; white-space: nowrap; }
+  .hsub { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hbtn { border: 1px solid var(--line); background: #fff; color: var(--sub); font-size: 12px; padding: 3px 10px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+  .hbtn:hover { background: #f3f4f6; }
+  .hbtn.danger { color: #b91c1c; border-color: #fca5a5; }
+  .hbtn.danger:hover { background: #fef2f2; }
+  .hbtn:disabled { opacity: 0.5; cursor: default; }
+  .hsrc { max-height: 240px; overflow: auto; background: #0f172a; color: #e2e8f0; font-family: ui-monospace, monospace; font-size: 12px; padding: 8px 10px; border-radius: 6px; margin: 4px 0 8px; white-space: pre-wrap; }
+  .confirm { border: 1px solid #fde68a; background: #fffbeb; border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+  .chead { font-size: 13px; }
+  .cwarn { margin-top: 4px; }
+  .cact { margin-top: 8px; display: flex; gap: 8px; }
 </style>

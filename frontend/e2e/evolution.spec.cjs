@@ -40,6 +40,15 @@ test('进化史工作区 · 轨迹 + 坑清单 + cohort 脚注 + 优雅降级', 
   await expect(page.locator('.playbar .ch')).toBeVisible() // 章节指示 k/N
   await page.getByRole('button', { name: /退出/ }).click()
 
+  // 📜 Tier2 回退：版本历史 + 查看历史源码 + 回退确认框（人在环·点取消不写盘）
+  await expect(page.locator('.hrow').first()).toBeVisible({ timeout: 10_000 })
+  await page.locator('.hrow').first().getByRole('button', { name: '查看' }).click()
+  await expect(page.locator('.hsrc')).toContainText('meta:')
+  await page.locator('.hrow').first().getByRole('button', { name: /回退/ }).click()
+  await expect(page.getByText(/确认把当前模型回退到此版本/)).toBeVisible()
+  await page.locator('.confirm').getByRole('button', { name: '取消' }).click() // 取消=不写盘
+  await expect(page.locator('.confirm')).toHaveCount(0)
+
   // —— 番茄：cohort/箱车假象脚注可展开 ——
   await modelSel.selectOption('tomato')
   const foot = page.locator('.evo .foot')
