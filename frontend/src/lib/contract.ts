@@ -122,6 +122,36 @@ export interface GraphDiffJson {
   distance: number
   edge_similarity: number
 }
+/** 一条守恒律在 baseline vs patched 下的残差对比（仅模型声明 meta.balance 时有）。 */
+export interface ConservationCheckJson {
+  name: string
+  baseline_ok: boolean
+  patched_ok: boolean
+  baseline_resid?: number | null
+  patched_resid?: number | null
+  tol: number
+}
+/** 候选的结构硬过滤裁决 + 图论证据（Tier3·serve 每候选返回；`gp::hard_filter::graph_evidence`）。
+ *  三红线 = 加代数环 / 破守恒律 / 新令既有可辨识参数不可辨识。系数簇（候选自身 __c 常数互混淆）
+ *  = 报告非淘汰（承「混淆团=经验式系数簇」）。 */
+export interface GraphEvidenceJson {
+  passes_hard_filters: boolean
+  adds_algebraic_loop: boolean
+  breaks_conservation: boolean
+  new_confounded_pairs: [string, string][]
+  /** 红线③命中：新混淆对里至少一端是候选 __c 之外的既有参数（淘汰）。 */
+  disqualifying_confounded: [string, string][]
+  /** 候选自身系数簇（全 __c 常数的互混淆参数）→ 需联合标定，非淘汰。 */
+  coefficient_cluster: string[]
+  /** 长出的新边（本地名对，如 [d2,y]）——「看它长出什么」核心信号。 */
+  added_edges: [string, string][]
+  removed_edges: [string, string][]
+  changed_equations: string[]
+  distance: number
+  complexity_delta: { nodes: number; edges: number }
+  conservation: ConservationCheckJson[]
+  reject_reasons: string[]
+}
 /** 一个候选（单靶 ParetoEntry 或联合的一个 slot 都满足）。 */
 export interface GpCandidate {
   target?: string
@@ -139,6 +169,8 @@ export interface GpCandidate {
   consts?: number[]
   /** 采纳此候选相对现有模型的结构 diff（GP「看它长出什么」3D 生长动画用）。 */
   structure_diff?: GraphDiffJson
+  /** 结构硬过滤裁决 + 图论证据（Tier3·体检块显示）。 */
+  graph_evidence?: GraphEvidenceJson
 }
 /** 前沿一点：单靶=候选本身（扁平字段）；联合=含 slots。 */
 export interface GpFrontEntry extends Partial<GpCandidate> {
