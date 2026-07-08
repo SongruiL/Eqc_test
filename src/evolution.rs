@@ -424,7 +424,8 @@ fn honest_final(
 // ============================================================================
 
 /// 在模型所在 git 仓里取某版本某文件的源码：`git -C <repo> show <commit>:<path>`。
-fn git_show(repo: &Path, commit: &str, rel_path: &str) -> Result<String, String> {
+/// pub：CLI 走血缘链 + serve `/api/source?rev=` 取历史源码共用。
+pub fn git_show(repo: &Path, commit: &str, rel_path: &str) -> Result<String, String> {
     let out = Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -439,6 +440,52 @@ fn git_show(repo: &Path, commit: &str, rel_path: &str) -> Result<String, String>
         ));
     }
     String::from_utf8(out.stdout).map_err(|e| format!("历史源码非 UTF-8: {e}"))
+}
+
+/// git 历史一条 commit（serve `/api/history` 用；结构化供前端版本 picker）。
+#[derive(Debug, Clone, Serialize)]
+pub struct GitCommit {
+    pub sha: String,
+    pub short: String,
+    pub date: String,
+    pub author: String,
+    pub subject: String,
+}
+
+/// 取某文件的 git 提交历史（近 `limit` 条）：`git -C <repo> log -- <rel_path>`。
+/// 用 \x1f(单元分隔符) 分字段避免 subject 里的特殊字符干扰解析。
+pub fn git_log(repo: &Path, rel_path: &str, limit: usize) -> Result<Vec<GitCommit>, String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .arg("log")
+        .arg("--format=%H%x1f%h%x1f%ad%x1f%an%x1f%s")
+        .arg("--date=short")
+        .arg("-n")
+        .arg(limit.to_string())
+        .arg("--")
+        .arg(rel_path)
+        .output()
+        .map_err(|e| format!("git log 执行失败（repo={}）: {e}", repo.display()))?;
+    if !out.status.success() {
+        return Err(format!("git log 失败: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let commits = text
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|line| {
+            let f: Vec<&str> = line.split('\u{1f}').collect();
+            GitCommit {
+                sha: f.first().unwrap_or(&"").to_string(),
+                short: f.get(1).unwrap_or(&"").to_string(),
+                date: f.get(2).unwrap_or(&"").to_string(),
+                author: f.get(3).unwrap_or(&"").to_string(),
+                subject: f.get(4).unwrap_or(&"").to_string(),
+            }
+        })
+        .collect();
+    Ok(commits)
 }
 
 /// 清掉所有变量的 measurable 标注 → 逼 `analyze_identifiability` 回退「全 output」口径。

@@ -705,6 +705,71 @@ fn parse_model(query: &str) -> Option<String> {
     None
 }
 
+/// 通用 query 参数取值（url 解码；空/缺省 None）。
+fn query_param(query: &str, key: &str) -> Option<String> {
+    let prefix = format!("{key}=");
+    for kv in query.split('&') {
+        if let Some(v) = kv.strip_prefix(prefix.as_str()) {
+            let s = url_decode(v);
+            if !s.is_empty() {
+                return Some(s);
+            }
+        }
+    }
+    None
+}
+
+/// 从模型文件向上找 git 仓根（含 `.git`）。
+fn find_repo_root(path: &Path) -> Option<PathBuf> {
+    let mut dir: &Path = if path.is_dir() { path } else { path.parent()? };
+    loop {
+        if dir.join(".git").exists() {
+            return Some(dir.to_path_buf());
+        }
+        dir = dir.parent()?;
+    }
+}
+
+/// 模型 →（git 仓根, 相对仓根路径）。进化图论 arc 的 git 历史/源码端点用。
+fn model_repo_rel(m: &ModelEntry) -> Result<(PathBuf, String), String> {
+    let repo = find_repo_root(&m.path).ok_or_else(|| "模型不在 git 仓内（找不到 .git）".to_string())?;
+    let rel = m
+        .path
+        .strip_prefix(&repo)
+        .map_err(|_| "无法计算模型相对仓根路径".to_string())?;
+    Ok((repo, rel.to_string_lossy().replace('\\', "/")))
+}
+
+/// `/api/evolution`：模型同目录找 evolution.yaml → 复用分析器 → EvolutionReport JSON。
+fn evolution_json(m: &ModelEntry) -> Result<String, String> {
+    let evo = m
+        .path
+        .parent()
+        .map(|d| d.join("evolution.yaml"))
+        .filter(|p| p.exists())
+        .ok_or_else(|| format!("模型 {} 无进化血缘清单（同目录 evolution.yaml 不存在）", m.id))?;
+    let report = crate::evolution::analyze_manifest_file(&evo, None)?;
+    serde_json::to_string(&report).map_err(|e| format!("序列化失败: {e}"))
+}
+
+/// `/api/history`：模型文件的 git 提交历史（近 50 条）。
+fn history_json(m: &ModelEntry) -> Result<String, String> {
+    let (repo, rel) = model_repo_rel(m)?;
+    let commits = crate::evolution::git_log(&repo, &rel, 50)?;
+    serde_json::to_string(&serde_json::json!({ "model": m.id, "path": rel, "commits": commits }))
+        .map_err(|e| format!("序列化失败: {e}"))
+}
+
+/// `/api/source?rev=`：某历史版本的模型源码（git show）。
+fn read_source_at_rev(m: &ModelEntry, rev: &str) -> Result<String, String> {
+    let (repo, rel) = model_repo_rel(m)?;
+    let src = crate::evolution::git_show(&repo, rev, &rel)?;
+    serde_json::to_string(
+        &serde_json::json!({ "model": m.id, "rev": rev, "path": rel, "source": src }),
+    )
+    .map_err(|e| format!("序列化失败: {e}"))
+}
+
 /// 模型花名册 JSON（前端据此建顶部选择器；不硬编码作物清单——问 EQC 要）。
 /// `coupled` 标记耦合视图条目（前端可分组/提示其只看结构图）。
 fn models_json(ctx: &Ctx) -> String {
@@ -878,9 +943,25 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
             "application/json; charset=utf-8",
             run_evolve_status(ctx, query),
         ),
-        // 模型源码（浏览器内编辑器 C1）：GET 取原文；POST 受控写回（先校验+自动备份+原子写）。
+        // 进化图论 arc（呈现层）：沿血缘清单走 git 历史算图论轨迹 + 版本 diff + 标定坑清单。
+        "/api/evolution" => match evolution_json(m) {
+            Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
+            Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
+        },
+        // 模型文件的 git 提交历史（进化视图版本 picker 用）。
+        "/api/history" => match history_json(m) {
+            Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
+            Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
+        },
+        // 模型源码（浏览器内编辑器 C1）：GET 取原文（`?rev=` 则取该历史版本 git show）；POST 受控写回。
         "/api/source" => match method {
-            "GET" => ("200 OK", "application/json; charset=utf-8", read_source(m)),
+            "GET" => match query_param(query, "rev") {
+                Some(rev) => match read_source_at_rev(m, &rev) {
+                    Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
+                    Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
+                },
+                None => ("200 OK", "application/json; charset=utf-8", read_source(m)),
+            },
             "POST" => match write_source(m, &req_body) {
                 Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
                 Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
