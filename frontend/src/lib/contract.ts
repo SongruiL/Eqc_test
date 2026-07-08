@@ -329,3 +329,67 @@ export interface GrowthChapter {
 export interface GrowthJson {
   chapters: GrowthChapter[]
 }
+
+// —— 进化图论 arc（/api/evolution）：沿血缘链的图论轨迹 + 版本 diff + 标定坑清单 ——
+export interface EvoVersion {
+  version: string
+  commit: string
+  step: string
+  nodes: number
+  edges: number
+  depth: number
+  algebraic_loops: number
+  n_communities: number
+  modularity_detected: number
+  modularity_modules?: number
+  params: number
+  measurable: number
+  unidentifiable: number
+  confounded_pairs: number
+  hubs: string[]
+  confounded: [string, string][]
+  unidentifiable_params: string[]
+}
+export interface EvoDiff {
+  from: string
+  to: string
+  distance: number
+  edge_similarity: number
+  added_nodes: string[]
+  removed_nodes: string[]
+  added_params: string[]
+  added_equations: string[]
+  changed_equations: string[]
+  added_edges: number
+  removed_edges: number
+  new_confounded: [string, string][]
+}
+/** 坑清单一条：kind = confounding-clique | unidentifiable-threshold | cohort-sibling-clique */
+export interface EvoPitEntry {
+  kind: string
+  params: string[]
+  introduced_at: string
+  mechanism?: string
+  equation?: string
+  advice: string
+}
+export interface EvoHonestId {
+  version: string
+  measurable_whitelist: string[]
+  unidentifiable: string[]
+  confounded: [string, string][]
+  note: string
+}
+export interface EvolutionReport {
+  model: string
+  measurable_convention: string
+  versions: EvoVersion[]
+  diffs: EvoDiff[]
+  calibration_pitlist: EvoPitEntry[]
+  structural_artifacts?: EvoPitEntry[]
+  final_honest_identifiability?: EvoHonestId
+  error?: string
+}
+// —— git 历史（/api/history）——
+export interface GitCommit { sha: string; short: string; date: string; author: string; subject: string }
+export interface HistoryJson { model: string; path: string; commits: GitCommit[]; error?: string }

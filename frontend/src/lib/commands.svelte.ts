@@ -47,6 +47,7 @@ export const COMMANDS: Command[] = [
   { id: 'go.optimize', label: '优化', group: '专家', run: goto('expert', 'optimize'), keywords: 'optimize de 决策', access: 'read', description: '打开「优化」工作区：决策优化（DE 求最优旋钮）。' },
   { id: 'go.calibrate', label: '标定', group: '专家', run: goto('expert', 'calibrate'), keywords: 'calibrate 标定', access: 'read', description: '打开「标定」工作区：用实测数据反推模型参数。' },
   { id: 'go.gp', label: '进化 (GP)', group: '专家', run: goto('expert', 'gp'), keywords: 'gp evolve 进化 遗传', access: 'read', description: '打开「进化(GP)」工作区：在 gp_target 靶点进化方程结构。' },
+  { id: 'go.evolution', label: '进化史', group: '专家', run: goto('expert', 'evolution'), keywords: 'evolution history 进化史 历史 版本 血缘 lineage 轨迹 坑清单', access: 'read', description: '打开「进化史」工作区：沿模型版本血缘(如草莓 s1→s8.1)看图论演化轨迹(节点/边/参数/混淆对随版本涨)+ 选两版看结构 diff + ★标定坑清单(哪些经验式系数簇要联合标定、哪些阈值参数结构上标不出) + 诚实白名单可辨识性。仅草莓/番茄/蓝莓有血缘清单。' },
   { id: 'go.edit', label: '编辑器', group: '专家', run: goto('expert', 'edit'), keywords: 'edit 编辑 yaml 源码', access: 'read', description: '打开「编辑器」工作区：浏览器内编辑模型 YAML 源码。' },
   { id: 'go.understand', label: '看懂', group: '园区', run: goto('park', 'understand'), keywords: 'understand 看懂 状态', access: 'read', description: '打开园区「看懂」卡：标定徽章 + 头条 + 胁迫红绿灯。' },
   { id: 'go.entry', label: '录入', group: '园区', run: goto('park', 'entry'), keywords: 'entry 录入 观测 数据', access: 'read', description: '打开园区「录入」网格：填写本处理区的实测观测数据。' },

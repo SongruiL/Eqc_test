@@ -3,7 +3,7 @@
 import type { ModelEntry, ModelJson, Knob, GrowthJson } from './contract'
 import { fetchModels, fetchModel, fetchGrowth } from './api'
 
-export const EXPERT_WS = ['structure', 'simulate', 'optimize', 'calibrate', 'gp', 'edit'] as const
+export const EXPERT_WS = ['structure', 'simulate', 'optimize', 'calibrate', 'gp', 'evolution', 'edit'] as const
 export const PARK_WS = ['understand', 'entry', 'calibrate'] as const
 
 export const store = $state({

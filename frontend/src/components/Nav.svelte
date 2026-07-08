@@ -8,6 +8,7 @@
     { id: 'optimize', label: '优化' },
     { id: 'calibrate', label: '标定' },
     { id: 'gp', label: '进化' },
+    { id: 'evolution', label: '进化史' },
     { id: 'edit', label: '编辑' },
   ]
   const PARK = [

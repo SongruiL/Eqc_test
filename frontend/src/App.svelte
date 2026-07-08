@@ -11,6 +11,7 @@
   import Optimize from './workspaces/Optimize.svelte'
   import Calibrate from './workspaces/Calibrate.svelte'
   import Gp from './workspaces/Gp.svelte'
+  import Evolution from './workspaces/Evolution.svelte'
   import Understand from './workspaces/Understand.svelte'
   import Entry from './workspaces/Entry.svelte'
   import Edit from './workspaces/Edit.svelte'
@@ -20,7 +21,7 @@
 
   const LABELS: Record<string, string> = {
     structure: '结构', simulate: '仿真', optimize: '优化', calibrate: '标定',
-    gp: '进化', edit: '编辑', understand: '看懂', entry: '录入',
+    gp: '进化', evolution: '进化史', edit: '编辑', understand: '看懂', entry: '录入',
   }
 
   loadModels()
@@ -50,6 +51,8 @@
         <Calibrate />
       {:else if store.workspace === 'gp'}
         <Gp />
+      {:else if store.workspace === 'evolution'}
+        <Evolution />
       {:else if store.workspace === 'understand'}
         <Understand />
       {:else if store.workspace === 'entry'}

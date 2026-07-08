@@ -2,6 +2,7 @@
 import type {
   ModelsJson, ModelJson, EvolveStatus, OptResult, SimSeries, ZoneInfo, ObservationsJson,
   SourceJson, ValidateJson, CoupleOptResult, Layout3dJson, GrowthJson,
+  EvolutionReport, HistoryJson,
 } from './contract'
 
 /** `?model=` / `&model=`（id 为空则省略）。 */
@@ -50,6 +51,20 @@ export function chartUrl(
 /** 结构图报告 HTML（iframe src）。`layout` 布局、`level` 粒度（变量/模块）、`color` 配色（类别/子系统）。 */
 export function reportUrl(model: string, layout: string, level = 'variable', color = 'class'): string {
   return `/api/report?layout=${encodeURIComponent(layout)}&level=${encodeURIComponent(level)}&color=${encodeURIComponent(color)}` + modelQS(model)
+}
+
+// —— 进化图论 arc（沿血缘链的图论轨迹 + 版本 diff + 标定坑清单）——
+/** 沿模型血缘清单(evolution.yaml)算图论轨迹 + 版本 diff + 标定坑清单；无清单则 {error}。 */
+export async function fetchEvolution(model: string): Promise<EvolutionReport> {
+  return (await fetch('/api/evolution?_=' + Date.now() + modelQS(model), { cache: 'no-store' })).json()
+}
+/** 模型文件的 git 提交历史（版本 picker 用）。 */
+export async function fetchHistory(model: string): Promise<HistoryJson> {
+  return (await fetch('/api/history?_=' + Date.now() + modelQS(model), { cache: 'no-store' })).json()
+}
+/** 某历史版本(git rev)的模型源码（只读 git show）。 */
+export async function fetchSourceAtRev(model: string, rev: string): Promise<SourceJson> {
+  return (await fetch(`/api/source?rev=${encodeURIComponent(rev)}` + modelQS(model) + `&_=${Date.now()}`, { cache: 'no-store' })).json()
 }
 
 // —— GP 异步进化 ——
