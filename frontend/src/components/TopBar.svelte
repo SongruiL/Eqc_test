@@ -28,6 +28,7 @@
   <button class="cmdk" title="命令面板（Ctrl/⌘ + K）" onclick={() => (ui.palette = true)}>⌘K 命令</button>
   <button class="ai" class:on={agent.open} title="AI 助手：用自然语言操作前端" onclick={() => (agent.open = !agent.open)}>🤖 问AI</button>
   <span class="status" class:ok={store.connected}>{store.connected ? '● 已连接' : '○ 未连接'}</span>
+  <a class="logout" href="/auth/logout" title="退出登录（清会话·回登录页）">退出</a>
 </header>
 
 <style>
@@ -54,4 +55,6 @@
   .ai:hover, .ai.on { background: #f5f3ff; border-color: #ddd6fe; color: #7c3aed; }
   .status { font-size: 12px; color: var(--sub); }
   .status.ok { color: #16a34a; }
+  .logout { font-size: 12px; color: var(--sub); text-decoration: none; border: 1px solid var(--line); padding: 3px 10px; border-radius: 7px; }
+  .logout:hover { background: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
 </style>
