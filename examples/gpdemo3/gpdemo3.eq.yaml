@@ -9,7 +9,10 @@ meta:
     （单调递增，永远拟合不了非单调）→ 受约束 GP 必须引入 d2、长出 `d2 → y` 新边。
     用途：验进化图论 arc · Tier3 结构硬过滤（新增边通路 + 系数簇报告）+ 候选采纳闭环。
     合成 demo、非机理模型、无守恒律（meta.balance 空 → 守恒硬过滤诚实跳过）。
-  version: "1.0"
+    ★v1.1（Tier3 Phase2 采纳）：GP 受约束进化把单输入 d1 斜坡采纳为 expit 互作门（引入 d2、长出 d2→y 新边、
+    rmse 0.278→0.013 复现真值）。3 系数 kg_slope/kg_thr/kg_d2 = 硬过滤标出的系数簇 → 需联合标定（结构共线）。
+  version: "1.1"
+  lineage: { parent: "GPDEMO3@d07af6c", step: "GP 采纳互作门控候选（单输入 d1 斜坡 → expit 互作门·长出 d2→y·rmse 0.278→0.013）" }
 
 variables:
   d1: { type: input,  class: driving,   unit: "℃·d", label: "主驱动 d1",   description: "主热量/时间驱动（单调升）" }
@@ -17,12 +20,15 @@ variables:
   y:  { type: output, class: auxiliary, unit: "-",    label: "门控 y",      description: "门控输出 [0,1]", measurable: true }
 
 parameters:
-  gate_a: { name_cn: 门控起点,     default: 10.0, unit: "℃·d", provenance: 猜测 }
-  gate_b: { name_cn: 门控斜率宽度, default: 8.0,  unit: "℃·d", provenance: 猜测 }
+  # ★GP 采纳的互作门 3 系数（= 硬过滤标出的 coefficient_cluster·同进本方程·结构共线→须联合标定/多工况正交）。
+  #   default = GP 受约束进化最佳拟合值（seed=1·rmse 0.013）；待真数据联合标定。
+  kg_slope: { name_cn: 门控S形斜率,  default: 0.7872, unit: "1/℃·d", provenance: 猜测, optimizable: true }
+  kg_thr:   { name_cn: 门控d1阈值,   default: 15.185, unit: "℃·d",   provenance: 猜测, optimizable: true }
+  kg_d2:    { name_cn: d2互作系数,   default: 0.9723, unit: "-",     provenance: 猜测, optimizable: true }
 
 equations:
   - { id: GPDEMO3-GATE, name: 门控输出, output: y, provenance: 猜测,
-      reference: "现有形式 = 单输入 d1 linear ramp: clamp((d1−gate_a)/gate_b, 0, 1)；真互作门 = GP 靶点（须引 d2）",
+      reference: "GP 采纳（受约束进化·monotone_gate·seed=1·rmse 0.013 复现真值 expit(0.8·(d1−15−d2)))：expit(kg_slope·((d1−kg_thr)−kg_d2·d2))。前身=单输入 d1 linear ramp。3 系数结构共线（硬过滤 coefficient_cluster）→联合标定。",
       gp_target: { grammar: monotone_gate, inputs: [d1, d2], output_bounds: [0.0, 1.0], monotone: { d1: increasing } },
-      expression: { op: max, args: [ { const: 0 }, { op: min, args: [ { const: 1 },
-        { op: div, args: [ { op: sub, args: [ { ref: d1 }, { ref: gate_a } ] }, { ref: gate_b } ] } ] } ] } }
+      expression: { op: div, args: [ { const: 1.0 }, { op: add, args: [ { const: 1.0 }, { op: exp, args: [ { op: neg, args: [
+        { op: mul, args: [ { ref: kg_slope }, { op: sub, args: [ { op: sub, args: [ { ref: d1 }, { ref: kg_thr } ] }, { op: mul, args: [ { ref: kg_d2 }, { ref: d2 } ] } ] } ] } ] } ] } ] } ] } }
