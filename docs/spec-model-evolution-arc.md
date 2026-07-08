@@ -1,6 +1,9 @@
 # 模型进化图论 arc —— spec / 规划报告
 
-> 状态：**最小验证片已通过（2026-07-03）**，架构待建。这是一个「超级大 arc」，预计 ≥1 周专注协作。
+> 状态：**地基 + 分析层已建成（2026-07-08）**——`meta.lineage` schema + 契约导出 version/lineage +
+> 正式进化分析器 `eqc evolution`（走血缘链 → git 历史 → 统一 all-output 口径 → 图论轨迹 + 版本 diff +
+> 标定坑清单）。草莓 s1→s8.1 链跑通、经科学/代码双对抗审核通过。呈现层（serve/Studio 视图/进化动画）
+> 与 GP 层待建。这是一个「超级大 arc」，预计 ≥1 周专注协作。
 > 本文是蓝图 + 已验证成果的存档，供后续迭代。
 
 ---
@@ -61,7 +64,30 @@
 
 ---
 
-## 3. 架构分层（待建）
+## 2.5 实现进度：地基 + 分析层已建成（2026-07-08·本 session）
+
+把 §2 的临时验证片升级为**正式能力**，经科学/代码双对抗审核通过（无 blocker/high/medium）。
+
+**1a 数据层薄片（schema + 契约）**
+- `schema::Lineage { parent, step }` + `Metadata.lineage: Option<Lineage>`（additive）——之前草莓 yaml 里写的 `meta.lineage` 被 serde 静默忽略，**现在真被读进来**。
+- `export::ModuleJson` 导出 `version`（恒带）+ `lineage`（无声明省略）；`SCHEMA_VERSION` 不动。这是「meta.version 导出契约」推后项的正式落地。
+
+**1b 分析层核心 `src/evolution.rs` + CLI `eqc evolution <manifest>`**
+- 输入 = 血缘清单 `evolution.yaml`（model/repo/path/chain，显式里程碑）；沿链 `git -C <repo> show <commit>:<path>` 取历史源码（旧版本文件已从工作区删、谱系交给 git）。
+- 逐版本：**统一 all-output 口径**（清 measurable → 回退全 output，根治 §2.4 的标注伪影）→ `graph::{analyze_metrics, analyze_identifiability, analyze_structure}` → 相邻版本 `diff_models`。
+- 产出 `EvolutionReport`（Serialize，供 CLI + 后续 serve `/api/evolution` 共用）：`versions[]`（轨迹）+ `diffs[]`（含**这一步新引入的混淆对**）+ **`calibration_pitlist[]`**（★最硬产出：混淆系数簇 + 不可辨识阈值参数，机理归因自动派生自共享方程中文名）+ `final_honest_identifiability`（最新版按真田间可测量白名单另算一次，诚实揭示阈值不可辨识）。
+- **零核心改动**：只 use 已 pub 的 graph API；`cargo test` 两配置各 310 lib 全绿（+4 新单测）。
+
+**审核揪出并已修的两点（记录，防重蹈）**
+- pit-list 的**不可辨识阈值参数必须从诚实白名单取**，不能从 all-output 轨迹取（后者一切可达 unid≡0，会漏报 Brix_grade/Ca_crit_fruit）。
+- 分析器实测 **v1→s1 的 edge_similarity=0.08、删 82 节点** → v1 是 cohort 展开的表示法变体（100 节点）、非 s1（35 节点·扁平）的机理祖先 → **链头取 s1**（表示法口径一致），v1/v1_vector 作并行草稿。这与 §2.4「measurable 口径」是同类「口径伪影」教训。
+- 混淆团严谨语义 = 「该经验式方程集签名**所独有**的系数集」——共享物理常数（如消光系数 k）被正确排除在团外（分析器的精确之处）。
+
+**产物**：`src/evolution.rs`（分析器·已提交）+ `crop-models/strawberry/evolution.yaml`（草莓血缘清单·已提交）。§7 的临时 `examples/evo_metrics.rs` 保留作最小原型参考。
+
+---
+
+## 3. 架构分层（数据层 ✅ + 分析层 ✅ 已建 / 呈现层 + GP 层待建）
 
 ### 3.1 数据层 —— 显式 lineage
 - **已首用**（2026-07-03）：strawberry S8.1 写了 `meta.version:"8.1"` + `meta.lineage:{parent:"STRAWBERRY_S8@53f8e4f", step:"..."}`。EQC serde 现忽略未知字段=不崩。

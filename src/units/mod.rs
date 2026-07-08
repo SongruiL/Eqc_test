@@ -877,7 +877,7 @@ mod tests {
                 dt: 1.0,
                 dt_seconds: None,
                 calibration: None,
-                modules: Default::default(), balance: vec![],
+                modules: Default::default(), balance: vec![], lineage: None,
             },
             parameters: Default::default(),
             variables,
@@ -992,7 +992,7 @@ mod tests {
                 dt: 1.0,
                 dt_seconds: None,
                 calibration: None,
-                modules: Default::default(), balance: vec![],
+                modules: Default::default(), balance: vec![], lineage: None,
             }
         }
 

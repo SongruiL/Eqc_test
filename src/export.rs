@@ -41,6 +41,8 @@ pub struct ModuleJson {
     pub name_cn: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name_en: Option<String>,
+    /// 版本号（`meta.version`；进化链/徽章显示用）。契约恒带出。additive。
+    pub version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -48,6 +50,9 @@ pub struct ModuleJson {
     /// 标定状态（看懂输出的可信度徽章）；未声明则省略，前端视为未标定。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub calibration: Option<crate::schema::Calibration>,
+    /// 进化血缘（`meta.lineage`：父版本 + 演化说明）；未声明则省略。additive。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lineage: Option<crate::schema::Lineage>,
     pub parameters: Vec<ParamJson>,
     pub variables: Vec<VarJson>,
     pub equations: Vec<EqJson>,
@@ -237,9 +242,11 @@ fn module_json(f: &EquationFile) -> ModuleJson {
         model: f.meta.model.clone(),
         name_cn: f.meta.name_cn.clone(),
         name_en: f.meta.name_en.clone(),
+        version: f.meta.version.clone(),
         description: f.meta.description.clone(),
         reference: f.meta.reference.clone(),
         calibration: f.meta.calibration.clone(),
+        lineage: f.meta.lineage.clone(),
         parameters,
         variables,
         equations,
@@ -744,7 +751,7 @@ mod tests {
                 dt: 1.0,
                 dt_seconds: None,
                 calibration: None,
-                modules: Default::default(), balance: vec![],
+                modules: Default::default(), balance: vec![], lineage: None,
             },
             parameters: Default::default(),
             variables,
@@ -780,6 +787,9 @@ mod tests {
         assert!(js.contains("\"label\":\"总干物质\""));
         assert!(js.contains("\"display_name\":\"总干物质\""));
         assert!(js.contains("\"measurable\":true"));
+        // 进化图论 arc：version 恒导出（additive 契约字段·进化链/徽章用）；lineage 无声明则省略。
+        assert!(js.contains("\"version\":"));
+        assert!(!js.contains("\"lineage\""));
     }
 
     /// G0：gp_target 进化靶点标记 —— 出现则导出、缺省则省略（additive 契约）。
@@ -820,7 +830,7 @@ mod tests {
                 id: "M".into(), model: "Demo".into(), name_cn: "演示".into(),
                 name_en: None, version: "1.0".into(), description: None, reference: None,
                 source_files: vec![], dt: 1.0, dt_seconds: None, calibration: None,
-                modules: Default::default(), balance: vec![],
+                modules: Default::default(), balance: vec![], lineage: None,
             },
             parameters: Default::default(),
             variables,

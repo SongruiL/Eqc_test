@@ -92,6 +92,11 @@ pub struct Metadata {
     /// additive、`#[serde(default)]` 缺省空 = 不声明=不检查；现有模型逐字节不变。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub balance: Vec<BalanceLaw>,
+
+    /// 进化血缘（父版本 + 演化说明）。additive、缺省 None 跳过序列化；现有模型逐字节不变。
+    /// 进化图/动画的单一真相源；沿 `parent` 链走 git 历史做进化图论分析（见 `crate::evolution`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lineage: Option<Lineage>,
 }
 
 /// 守恒律（`meta.balance` 一条）：存量的逐步差分应等于源减汇（乘 dt）。
@@ -155,6 +160,20 @@ pub struct Calibration {
 /// serde skip 助手：bool 为 false 时不序列化（保持未用 dry_run 的模型契约字节不变）。
 fn is_false(b: &bool) -> bool {
     !*b
+}
+
+/// 进化血缘（`meta.lineage`）：把「模型进化史」从隐式（文件名后缀 + git commit）
+/// 升级成一等公民的结构化数据——每次改模型 = 进化图上一条边。
+///
+/// `parent` 指向上一版本、`step` 记这一步做了什么；进化图论分析（[`crate::evolution`]）
+/// 沿 `parent` 走 git 历史逐版本算图论指标（可辨识性/反馈环/网络指标的演化轨迹）。
+/// additive：`Metadata.lineage` 缺省 None、序列化跳过，现有模型逐字节不变。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Lineage {
+    /// 父版本引用，格式 `"MODEL_ID@commit_sha"`（sha 指模型所在 git 仓的提交）。
+    pub parent: String,
+    /// 这一步的语义（人读演化说明）。
+    pub step: String,
 }
 
 fn default_version() -> String {
@@ -293,7 +312,7 @@ mod tests {
                 dt: 1.0,
                 dt_seconds: None,
                 calibration: None,
-                modules: Default::default(), balance: vec![],
+                modules: Default::default(), balance: vec![], lineage: None,
             },
             parameters,
             variables: Default::default(),
@@ -367,7 +386,7 @@ mod tests {
                 dt: 1.0,
                 dt_seconds: None,
                 calibration: None,
-                modules: Default::default(), balance: vec![],
+                modules: Default::default(), balance: vec![], lineage: None,
             },
             parameters,
             variables,
@@ -435,7 +454,7 @@ mod tests {
                 dt: 1.0,
                 dt_seconds: None,
                 calibration: None,
-                modules: Default::default(), balance: vec![],
+                modules: Default::default(), balance: vec![], lineage: None,
             },
             parameters: Default::default(),
             variables,

@@ -360,6 +360,16 @@ enum Commands {
         json: bool,
     },
 
+    /// 进化分析：沿血缘清单走 git 历史，统一 all-output 口径逐版本算图论指标 + 相邻版本 diff + 标定坑清单
+    Evolution {
+        /// 血缘清单（evolution.yaml：model/repo/path/chain），见 docs/spec-model-evolution-arc.md
+        manifest: PathBuf,
+
+        /// 模型所在 git 仓根（覆盖清单里的 repo；缺省按清单相对路径解析）
+        #[arg(long)]
+        repo: Option<PathBuf>,
+    },
+
     /// 仿真优化：读模型 + 决策 spec，用差分进化 DE 搜旋钮空间，输出最优旋钮 + 目标值
     Optimize {
         /// 模型文件（单个 .eq.yaml）
@@ -500,6 +510,7 @@ fn main() {
         Commands::Export { input, output } => run_export(&input, output.as_ref()),
         Commands::Structure { input, json, identifiability, metrics, layout3d } => run_structure(&input, json, identifiability, metrics, layout3d),
         Commands::Diff { old, new, json } => run_diff(&old, &new, json),
+        Commands::Evolution { manifest, repo } => run_evolution(&manifest, repo.as_ref()),
         Commands::Optimize { input, spec, drivers, steps, prescreen, output } => {
             run_optimize(&input, &spec, drivers.as_ref(), steps, prescreen, output.as_ref())
         }
@@ -1325,6 +1336,14 @@ fn run_structure(input: &PathBuf, json: bool, identifiability: bool, metrics: bo
             l.bound
         );
     }
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+fn run_evolution(manifest: &PathBuf, repo: Option<&PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+    let report = equation_compiler::evolution::analyze_manifest_file(manifest, repo.map(|p| p.as_path()))
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
 }
 

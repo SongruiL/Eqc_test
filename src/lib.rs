@@ -26,6 +26,8 @@ pub mod dag;
 #[cfg(feature = "cli")]
 pub mod export;
 #[cfg(feature = "cli")]
+pub mod evolution;
+#[cfg(feature = "cli")]
 pub mod generators;
 #[cfg(feature = "cli")]
 pub mod gp;
