@@ -185,13 +185,13 @@ pub fn serve(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // 本地密钥文件（gitignored）：设一次 key/代理/模型，启动自动加载进 env（不覆盖已设的）。
     load_secret_file();
-    match std::env::var("ANTHROPIC_API_KEY") {
+    match std::env::var("GLM_API_KEY") {
         Ok(k) if !k.is_empty() => {
-            let model = std::env::var("EQC_LLM_MODEL").unwrap_or_else(|_| "claude-sonnet-4-6".into());
+            let model = std::env::var("EQC_LLM_MODEL").unwrap_or_else(|_| "glm-5.2".into());
             let proxy = std::env::var("EQC_LLM_PROXY").unwrap_or_else(|_| "直连".into());
             println!("🤖 AI 助手已配置（模型 {model}；出站 {proxy}）");
         }
-        _ => println!("🤖 AI 助手未配置（设 ANTHROPIC_API_KEY 或写 .eqc-secret 后重启即可启用）"),
+        _ => println!("🤖 AI 助手未配置（设 GLM_API_KEY 或写 .eqc-secret 后重启即可启用）"),
     }
 
     // 工作区清单（多模型）优先；否则单模型/目录合并模式（与历史逐位一致）。
@@ -1021,7 +1021,7 @@ fn mime_of(path: &str) -> &'static str {
 
 /// 本地密钥文件（gitignored）→ env。`EQC_SECRET_FILE` 指定路径，否则用 CWD `.eqc-secret`。
 /// 格式：每行 `KEY=VALUE`（`#` 注释、空行忽略；值不去引号外的空白）。只设尚未存在的 env，
-/// 即真·环境变量优先于文件。可放 ANTHROPIC_API_KEY / EQC_LLM_PROXY / EQC_LLM_MODEL。
+/// 即真·环境变量优先于文件。可放 GLM_API_KEY / EQC_LLM_PROXY / EQC_LLM_MODEL。
 fn load_secret_file() {
     let path = std::env::var("EQC_SECRET_FILE").unwrap_or_else(|_| ".eqc-secret".into());
     let content = match std::fs::read_to_string(&path) {
@@ -1063,7 +1063,7 @@ fn build_llm_agent() -> ureq::Agent {
 }
 
 /// `POST /api/llm`：把前端组好的完整 Anthropic 请求体注入 key 后转发，原样回传 Claude 的 JSON。
-/// key 取自 env `ANTHROPIC_API_KEY`（不进浏览器/repo）；缺失→友好错误，前端禁用 AI、其余照常。
+/// key 取自 env `GLM_API_KEY`（不进浏览器/repo）；缺失→友好错误，前端禁用 AI、其余照常。
 fn proxy_llm(body: &[u8]) -> String {
     if mock_enabled() {
         let (blocks, stop, err) = build_mock(body);
@@ -1072,9 +1072,9 @@ fn proxy_llm(body: &[u8]) -> String {
             None => serde_json::json!({"type":"message","role":"assistant","model":"mock","content":blocks,"stop_reason":stop,"usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0}}).to_string(),
         };
     }
-    let key = match std::env::var("ANTHROPIC_API_KEY") {
+    let key = match std::env::var("GLM_API_KEY") {
         Ok(k) if !k.is_empty() => k,
-        _ => return llm_error("missing_api_key", "后端未配置 ANTHROPIC_API_KEY；设置该环境变量后重启 serve 即可启用 AI。"),
+        _ => return llm_error("missing_api_key", "后端未配置 GLM_API_KEY；设置该环境变量后重启 serve 即可启用 AI。"),
     };
     let read_resp = |r: ureq::Response| -> String {
         r.into_string().unwrap_or_else(|e| llm_error("read_error", &format!("读取 Claude 响应失败: {e}")))
@@ -1091,8 +1091,8 @@ fn proxy_llm(body: &[u8]) -> String {
         _ => body.to_vec(),
     };
     let req = build_llm_agent()
-        .post("https://api.anthropic.com/v1/messages")
-        .set("x-api-key", &key)
+        .post("https://open.bigmodel.cn/api/anthropic/v1/messages")
+        .set("Authorization", &format!("Bearer {}", key))
         .set("anthropic-version", "2023-06-01")
         .set("content-type", "application/json")
         .timeout(Duration::from_secs(120));
@@ -1119,9 +1119,9 @@ fn proxy_llm_stream(stream: &mut TcpStream, body: &[u8]) -> std::io::Result<()> 
         stream.flush()
     }
 
-    let key = match std::env::var("ANTHROPIC_API_KEY") {
+    let key = match std::env::var("GLM_API_KEY") {
         Ok(k) if !k.is_empty() => k,
-        _ => return sse_once(stream, &llm_error("missing_api_key", "后端未配置 ANTHROPIC_API_KEY；设置后重启 serve 即可启用 AI。")),
+        _ => return sse_once(stream, &llm_error("missing_api_key", "后端未配置 GLM_API_KEY；设置后重启 serve 即可启用 AI。")),
     };
     let mut v: serde_json::Value = match serde_json::from_slice(body) {
         Ok(v) => v,
@@ -1136,8 +1136,8 @@ fn proxy_llm_stream(stream: &mut TcpStream, body: &[u8]) -> std::io::Result<()> 
     let payload = serde_json::to_vec(&v).unwrap_or_else(|_| body.to_vec());
 
     let req = build_llm_agent()
-        .post("https://api.anthropic.com/v1/messages")
-        .set("x-api-key", &key)
+        .post("https://open.bigmodel.cn/api/anthropic/v1/messages")
+        .set("Authorization", &format!("Bearer {}", key))
         .set("anthropic-version", "2023-06-01")
         .set("content-type", "application/json")
         .timeout(Duration::from_secs(300));
