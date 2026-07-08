@@ -719,20 +719,11 @@ fn query_param(query: &str, key: &str) -> Option<String> {
     None
 }
 
-/// 从模型文件向上找 git 仓根（含 `.git`）。
-fn find_repo_root(path: &Path) -> Option<PathBuf> {
-    let mut dir: &Path = if path.is_dir() { path } else { path.parent()? };
-    loop {
-        if dir.join(".git").exists() {
-            return Some(dir.to_path_buf());
-        }
-        dir = dir.parent()?;
-    }
-}
-
 /// 模型 →（git 仓根, 相对仓根路径）。进化图论 arc 的 git 历史/源码端点用。
+/// 仓根解析走 `crate::evolution::find_repo_root`（单一真相源，CLI 自动派生也用它）。
 fn model_repo_rel(m: &ModelEntry) -> Result<(PathBuf, String), String> {
-    let repo = find_repo_root(&m.path).ok_or_else(|| "模型不在 git 仓内（找不到 .git）".to_string())?;
+    let repo = crate::evolution::find_repo_root(&m.path)
+        .ok_or_else(|| "模型不在 git 仓内（找不到 .git）".to_string())?;
     let rel = m
         .path
         .strip_prefix(&repo)
@@ -740,15 +731,13 @@ fn model_repo_rel(m: &ModelEntry) -> Result<(PathBuf, String), String> {
     Ok((repo, rel.to_string_lossy().replace('\\', "/")))
 }
 
-/// `/api/evolution`：模型同目录找 evolution.yaml → 复用分析器 → EvolutionReport JSON。
+/// `/api/evolution`：清单优先（老作物全谱系），否则走模型自带 meta.lineage 自动派生（向前演进·零手工清单）。
 fn evolution_json(m: &ModelEntry) -> Result<String, String> {
-    let evo = m
-        .path
-        .parent()
-        .map(|d| d.join("evolution.yaml"))
-        .filter(|p| p.exists())
-        .ok_or_else(|| format!("模型 {} 无进化血缘清单（同目录 evolution.yaml 不存在）", m.id))?;
-    let report = crate::evolution::analyze_manifest_file(&evo, None)?;
+    let evo = m.path.parent().map(|d| d.join("evolution.yaml")).filter(|p| p.exists());
+    let report = match evo {
+        Some(evo) => crate::evolution::analyze_manifest_file(&evo, None)?, // A：清单（考古全谱系）
+        None => crate::evolution::analyze_model_lineage(&m.path, None)?,   // B：meta.lineage 自动派生
+    };
     serde_json::to_string(&report).map_err(|e| format!("序列化失败: {e}"))
 }
 

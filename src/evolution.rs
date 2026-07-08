@@ -185,6 +185,121 @@ pub fn analyze_manifest_file(
     analyze_lineage(&manifest, &repo_root)
 }
 
+/// 进化分析统一入口：自动识别输入是「血缘清单(evolution.yaml)」还是「模型文件(.eq.yaml)」。
+/// - 清单（有非空 chain）→ 走清单（老作物考古的全谱系，支持跨文件血缘）。
+/// - 模型文件 → 递归走 `meta.lineage.parent` 链**自动派生**血缘（向前演进：模型带 meta.lineage
+///   就自动进进化分析、不用手写清单 = 单一真相源闭环）。
+pub fn analyze_input(path: &Path, repo_override: Option<&Path>) -> Result<EvolutionReport, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("读文件失败 {}: {e}", path.display()))?;
+    let is_manifest = serde_yaml::from_str::<EvolutionManifest>(&text)
+        .map(|m| !m.chain.is_empty())
+        .unwrap_or(false);
+    if is_manifest {
+        analyze_manifest_file(path, repo_override)
+    } else {
+        analyze_model_lineage(path, repo_override)
+    }
+}
+
+/// 从模型文件自动派生血缘：递归走 `meta.lineage.parent`（= "MODEL_ID@commit"）链，git 取每一版，
+/// 建成 EvolutionManifest 再分析。老版本无 meta.lineage 字段处停止（legacy 全谱系仍需 evolution.yaml 考古）。
+pub fn analyze_model_lineage(
+    model_path: &Path,
+    repo_override: Option<&Path>,
+) -> Result<EvolutionReport, String> {
+    let repo = match repo_override {
+        Some(p) => p.to_path_buf(),
+        None => find_repo_root(model_path)
+            .ok_or_else(|| "模型不在 git 仓内（找不到 .git），无法走血缘".to_string())?,
+    };
+    let rel = model_path
+        .strip_prefix(&repo)
+        .map_err(|_| "无法计算模型相对仓根路径".to_string())?
+        .to_string_lossy()
+        .replace('\\', "/");
+    let manifest = build_manifest_from_lineage(&repo, &rel)?;
+    if manifest.chain.len() < 2 {
+        return Err("模型 meta.lineage 链不足 2 版（无法构成进化轨迹）——请随演进写 meta.lineage，或用 evolution.yaml 清单（老作物考古）".into());
+    }
+    analyze_lineage(&manifest, &repo)
+}
+
+/// 递归走 meta.lineage.parent 链建血缘清单（时间正序）。带防环护栏（最多 200 步 + 去重）。
+fn build_manifest_from_lineage(repo: &Path, rel: &str) -> Result<EvolutionManifest, String> {
+    #[derive(Deserialize)]
+    struct MetaPeek {
+        meta: MetaInner,
+    }
+    #[derive(Deserialize)]
+    struct MetaInner {
+        #[serde(default)]
+        version: Option<String>,
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        lineage: Option<LineagePeek>,
+    }
+    #[derive(Deserialize)]
+    struct LineagePeek {
+        parent: String,
+        #[serde(default)]
+        step: String,
+    }
+
+    let mut nodes: Vec<LineageNode> = Vec::new(); // 最新在前
+    let mut commit = "HEAD".to_string();
+    let mut model_name: Option<String> = None;
+    let mut seen = std::collections::BTreeSet::new();
+    for _ in 0..200 {
+        if !seen.insert(commit.clone()) {
+            break; // 环护栏（lineage 指回已访问的 commit）
+        }
+        let content = git_show(repo, &commit, rel)?;
+        let peek: MetaPeek = serde_yaml::from_str(&content)
+            .map_err(|e| format!("解析 {commit}:{rel} 的 meta 失败: {e}"))?;
+        if model_name.is_none() {
+            model_name = peek.meta.model.clone();
+        }
+        // 版本标签：优先 meta.version；无则回退 commit 短哈希（legacy 无 version 字段的版本）
+        let version = peek
+            .meta
+            .version
+            .clone()
+            .unwrap_or_else(|| commit.chars().take(7).collect());
+        let step = peek.meta.lineage.as_ref().map(|l| l.step.clone()).unwrap_or_default();
+        nodes.push(LineageNode { version, commit: commit.clone(), path: Some(rel.to_string()), step });
+        match peek.meta.lineage {
+            Some(l) => {
+                // parent = "MODEL_ID@commit" → 取 @ 后的 commit
+                let pc = l.parent.rsplit('@').next().unwrap_or("").trim().to_string();
+                if pc.is_empty() {
+                    break;
+                }
+                commit = pc;
+            }
+            None => break, // 老版本无 lineage → 链到此为止
+        }
+    }
+    nodes.reverse(); // 时间正序（最老在前）
+    Ok(EvolutionManifest {
+        model: model_name.unwrap_or_else(|| rel.to_string()),
+        repo: ".".to_string(), // 未用：analyze_lineage 用传入的 repo（非 manifest.repo）
+        path: Some(rel.to_string()),
+        chain: nodes,
+    })
+}
+
+/// 从文件向上找 git 仓根（含 `.git`）。CLI 自动派生 + serve 的 model→repo 解析共用此单一真相源。
+pub fn find_repo_root(path: &Path) -> Option<PathBuf> {
+    let mut dir: &Path = if path.is_dir() { path } else { path.parent()? };
+    loop {
+        if dir.join(".git").exists() {
+            return Some(dir.to_path_buf());
+        }
+        dir = dir.parent()?;
+    }
+}
+
 /// 核心：沿 `manifest.chain` 逐版本走 git 历史算指标 + diff + 坑清单。
 pub fn analyze_lineage(
     manifest: &EvolutionManifest,
