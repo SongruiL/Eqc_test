@@ -1,0 +1,13 @@
+# gpdemo3 GP 进化 spec（Tier3 硬过滤/采纳测试）。
+# 用法：eqc evolve examples/gpdemo3/gpdemo3.eq.yaml --spec examples/gpdemo3/spec.yaml -o examples/gpdemo3/candidates.json
+target: GPDEMO3-GATE       # 靶方程 id（output y，带 gp_target monotone_gate [d1,d2]）
+output: y                  # 拟合变量
+drivers: drivers.csv       # 相对 spec 目录
+observed: observed.csv
+baseline_form: linear_ramp # 现有形式名（单输入 d1 斜坡）；GP 找到互作门 = 非 rediscovery
+evolve:
+  pop: 60
+  gens: 40
+  seed: 1
+  pareto: true             # 多目标 Pareto（精度 vs 复杂度）→ 前沿候选集
+  archive_cap: 24

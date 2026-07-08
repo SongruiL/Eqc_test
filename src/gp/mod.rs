@@ -13,12 +13,14 @@ pub mod constraints;
 pub mod evolve;
 pub mod fitness;
 pub mod grammar;
+pub mod hard_filter;
 pub mod joint;
 pub mod operators;
 pub mod pareto;
 pub mod provenance;
 
 pub use constraints::{bounds_ok, check_candidate, eval_candidate, monotone_ok, units_ok, CandidateCheck};
+pub use hard_filter::{graph_evidence, ComplexityDelta, ConservationCheck, GraphEvidence};
 pub use evolve::{evolve, EvolveConfig, EvolveResult};
 pub use fitness::{context_from_target, evaluate_in_model, patch_model, Observed};
 pub use grammar::{

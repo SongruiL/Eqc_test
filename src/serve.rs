@@ -1789,6 +1789,9 @@ fn run_evolve_job(job: &EvolveJob, progress: &mut dyn FnMut(usize, f64)) -> Stri
             let stub = gp::provenance_stub(&report, target, output, grammar);
             let yaml_fragment = candidate_yaml_fragment(target, eqname, output, &e.cand);
             let structure_diff = gp_structure_diff(file, target, &e.cand);
+            // Tier3 结构硬过滤 + 图论证据（SSOT：CLI evolve 与本端点共调 gp::graph_evidence）。
+            let graph_evidence = serde_json::to_value(gp::graph_evidence(file, target, &e.cand, sim_input))
+                .unwrap_or(serde_json::Value::Null);
             serde_json::json!({
                 "complexity": e.complexity,
                 "error": e.error,
@@ -1802,6 +1805,7 @@ fn run_evolve_job(job: &EvolveJob, progress: &mut dyn FnMut(usize, f64)) -> Stri
                 "provenance_stub": stub,
                 "yaml_fragment": yaml_fragment,
                 "structure_diff": structure_diff,
+                "graph_evidence": graph_evidence,
             })
         })
         .collect();

@@ -32,7 +32,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use indexmap::IndexMap;
 
 use crate::eval::{value_binop, Env, EvalError, Value};
-use crate::schema::EquationFile;
+use crate::schema::{BalanceLaw, EquationFile};
 
 /// 仿真错误。
 #[derive(Debug, Clone, PartialEq)]
@@ -140,6 +140,133 @@ impl SimOutput {
     pub fn final_value(&self, name: &str) -> Option<f64> {
         self.trajectories.get(name).and_then(|v| v.last().copied())
     }
+}
+
+/// 一条守恒律的逐步残差核算（`|Δstock − dt·净流量/cap|` 的最大值）。
+#[derive(Debug, Clone, Copy)]
+pub struct BalanceResidual {
+    /// 逐步最大绝对残差。
+    pub max_resid: f64,
+    /// 取到最大残差的步索引。
+    pub argstep: usize,
+    /// 相对残差 = max_resid / |stock 末值|（末值为 0 时记 0）。
+    pub rel: f64,
+}
+
+/// 一条守恒律的核算结果（供 CLI `--check-balance` 诊断打印 + GP 硬过滤复用；**本函数不打印、不 IO**）。
+#[derive(Debug, Clone)]
+pub struct BalanceLawCheck {
+    /// 守恒律名。
+    pub name: String,
+    /// 存量变量名。
+    pub stock: String,
+    /// 可选容量变量名。
+    pub cap: Option<String>,
+    /// 容差上限。
+    pub tol: f64,
+    /// 可核算时 = 残差；缺变量无法核算时 = None。
+    pub residual: Option<BalanceResidual>,
+    /// 无法核算的原因（存量/源汇/cap 缺轨迹）；可核算时 None。文案即 CLI 诊断的「⚠ …」后半句。
+    pub skip_reason: Option<String>,
+    /// 守恒是否通过：可核算且 `max_resid ≤ tol`。**缺变量跳过 = false**（与 CLI 旧 `any_fail` 同义）。
+    pub ok: bool,
+}
+
+/// 守恒律逐步最大残差（F5c）。**★步对齐**：轨迹里 `state[n]=state[n-1]+dt·rate[n]`，且 `rate[n]`
+/// 与源/汇 auxiliary 同步用 `state[n-1]`、记在【同一行 n】→「进入第 n 步的存量变化 Δstock[n]」对应
+/// 【n 处】净流量 `net[n]`。差一步对齐会把「相邻步通量之差」误报成不守恒（早季通量爬升尤甚）。
+/// 返回 `(max|残差|, 该步)`。
+pub fn balance_residual(stock: &[f64], net: &[f64], dt: f64) -> (f64, usize) {
+    let mut max_resid = 0.0f64;
+    let mut argstep = 0usize;
+    let n = stock.len().min(net.len());
+    for t in 0..n.saturating_sub(1) {
+        let resid = ((stock[t + 1] - stock[t]) - dt * net[t + 1]).abs();
+        if resid > max_resid {
+            max_resid = resid;
+            argstep = t + 1;
+        }
+    }
+    (max_resid, argstep)
+}
+
+/// 按 `meta.balance` 声明逐条核守恒律：`|Δstock − dt·(Σsources − Σsinks)/cap| ≤ tol`。
+/// `cap`（可选「有效容量」变量）缺省≡1。**纯核算、不打印**：CLI `--check-balance` 消费它做诊断输出，
+/// GP 候选硬过滤（Tier3）也消费它判「候选是否破守恒」——单一真相源。
+/// 缺存量/源汇/cap 轨迹的守恒律记 `skip_reason` + `ok=false`（与旧 CLI `any_fail` 逐字节等义）。
+pub fn check_balance_laws(laws: &[BalanceLaw], out: &SimOutput, dt: f64) -> Vec<BalanceLawCheck> {
+    let mut results = Vec::with_capacity(laws.len());
+    for law in laws {
+        let mk_skip = |reason: String| BalanceLawCheck {
+            name: law.name.clone(),
+            stock: law.stock.clone(),
+            cap: law.cap.clone(),
+            tol: law.tol,
+            residual: None,
+            skip_reason: Some(reason),
+            ok: false,
+        };
+        let stock = match out.trajectories.get(&law.stock) {
+            Some(s) => s,
+            None => {
+                results.push(mk_skip(format!("存量 {} 不在轨迹（跳过）", law.stock)));
+                continue;
+            }
+        };
+        let collect = |names: &[String]| -> Option<Vec<&Vec<f64>>> {
+            names.iter().map(|n| out.trajectories.get(n)).collect()
+        };
+        let (srcs, snks) = match (collect(&law.sources), collect(&law.sinks)) {
+            (Some(a), Some(b)) => (a, b),
+            _ => {
+                results.push(mk_skip("源/汇变量缺失（跳过）".to_string()));
+                continue;
+            }
+        };
+        // 逐步净流量 net[t] = Σsources[t] − Σsinks[t]
+        let net: Vec<f64> = (0..out.steps)
+            .map(|t| {
+                srcs.iter().map(|s| s.get(t).copied().unwrap_or(0.0)).sum::<f64>()
+                    - snks.iter().map(|s| s.get(t).copied().unwrap_or(0.0)).sum::<f64>()
+            })
+            .collect();
+        // cap：可选「有效容量」变量（缺省 cap≡1）。逐步 net/cap 后再核算。
+        let net_eff: Vec<f64> = match &law.cap {
+            None => net,
+            Some(capname) => match out.trajectories.get(capname) {
+                Some(capser) => net
+                    .iter()
+                    .enumerate()
+                    .map(|(t, &nt)| {
+                        let c = capser.get(t).copied().unwrap_or(1.0);
+                        if c != 0.0 {
+                            nt / c
+                        } else {
+                            nt
+                        }
+                    })
+                    .collect(),
+                None => {
+                    results.push(mk_skip(format!("cap 变量 {capname} 不在轨迹（跳过）")));
+                    continue;
+                }
+            },
+        };
+        let (max_resid, argstep) = balance_residual(stock, &net_eff, dt);
+        let scale = stock.last().map(|x| x.abs()).unwrap_or(0.0);
+        let rel = if scale > 0.0 { max_resid / scale } else { 0.0 };
+        let ok = max_resid <= law.tol;
+        results.push(BalanceLawCheck {
+            name: law.name.clone(),
+            stock: law.stock.clone(),
+            cap: law.cap.clone(),
+            tol: law.tol,
+            residual: Some(BalanceResidual { max_resid, argstep, rel }),
+            skip_reason: None,
+            ok,
+        });
+    }
+    results
 }
 
 /// 步内可计算节点的种类。

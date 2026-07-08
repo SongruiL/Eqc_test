@@ -697,75 +697,36 @@ fn run_balance_check(
         return Ok(());
     }
     println!("⚖️  守恒诊断（--check-balance，dt={dt}）：");
+    // 核算逻辑抽到 sim::check_balance_laws（GP 硬过滤复用同一真相源），此处只负责诊断打印。
+    let checks = equation_compiler::sim::check_balance_laws(laws, out, dt);
     let mut any_fail = false;
-    for law in laws {
-        let stock = match out.trajectories.get(&law.stock) {
-            Some(s) => s,
+    for c in &checks {
+        match &c.residual {
             None => {
-                println!("   守恒律「{}」：⚠ 存量 {} 不在轨迹（跳过）", law.name, law.stock);
+                // 缺存量/源汇/cap 轨迹 → 跳过并计失败（skip_reason 即旧「⚠ …」后半句）。
+                println!(
+                    "   守恒律「{}」：⚠ {}",
+                    c.name,
+                    c.skip_reason.as_deref().unwrap_or("无法核算（跳过）")
+                );
                 any_fail = true;
-                continue;
             }
-        };
-        let collect = |names: &[String]| -> Option<Vec<&Vec<f64>>> {
-            names.iter().map(|n| out.trajectories.get(n)).collect()
-        };
-        let (srcs, snks) = match (collect(&law.sources), collect(&law.sinks)) {
-            (Some(a), Some(b)) => (a, b),
-            _ => {
-                println!("   守恒律「{}」：⚠ 源/汇变量缺失（跳过）", law.name);
-                any_fail = true;
-                continue;
-            }
-        };
-        // 逐步净流量 net[t] = Σsources[t] − Σsinks[t]
-        let net: Vec<f64> = (0..out.steps)
-            .map(|t| {
-                srcs.iter().map(|s| s.get(t).copied().unwrap_or(0.0)).sum::<f64>()
-                    - snks.iter().map(|s| s.get(t).copied().unwrap_or(0.0)).sum::<f64>()
-            })
-            .collect();
-        // cap：可选「有效容量」变量（能量=ρcp·h、湿度=h；缺省 cap≡1）。逐步 net/cap 后再核算
-        //   |Δstock − dt·(Σ源−Σ汇)/cap| ≤ tol。cap 须在轨迹里（同源/汇）；缺失则跳过并计失败。
-        let net_eff: Vec<f64> = match &law.cap {
-            None => net,
-            Some(capname) => match out.trajectories.get(capname) {
-                Some(capser) => net
-                    .iter()
-                    .enumerate()
-                    .map(|(t, &nt)| {
-                        let c = capser.get(t).copied().unwrap_or(1.0);
-                        if c != 0.0 {
-                            nt / c
-                        } else {
-                            nt
-                        }
-                    })
-                    .collect(),
-                None => {
-                    println!("   守恒律「{}」：⚠ cap 变量 {} 不在轨迹（跳过）", law.name, capname);
+            Some(r) => {
+                println!(
+                    "   守恒律「{}」[Δ{}{}]：max残差={:.3e} @step{}（相对{:.2e}，tol={:.0e}）{}",
+                    c.name,
+                    c.stock,
+                    c.cap.as_deref().map(|cap| format!("÷{cap}")).unwrap_or_default(),
+                    r.max_resid,
+                    r.argstep,
+                    r.rel,
+                    c.tol,
+                    if c.ok { "✅ 守恒" } else { "❌ 超容差" }
+                );
+                if !c.ok {
                     any_fail = true;
-                    continue;
                 }
-            },
-        };
-        let (max_resid, argstep) = balance_residual(stock, &net_eff, dt);
-        let scale = stock.last().map(|x| x.abs()).unwrap_or(0.0);
-        let rel = if scale > 0.0 { max_resid / scale } else { 0.0 };
-        let ok = max_resid <= law.tol;
-        println!(
-            "   守恒律「{}」[Δ{}{}]：max残差={:.3e} @step{}（相对{:.2e}，tol={:.0e}）{}",
-            law.name,
-            law.stock,
-            law.cap.as_deref().map(|c| format!("÷{c}")).unwrap_or_default(),
-            max_resid,
-            argstep,
-            rel,
-            law.tol,
-            if ok { "✅ 守恒" } else { "❌ 超容差" }
-        );
-        if !ok {
-            any_fail = true;
+            }
         }
     }
     if any_fail {
@@ -775,28 +736,9 @@ fn run_balance_check(
     Ok(())
 }
 
-/// 守恒律逐步最大残差（F5c）。**★步对齐**：轨迹里 `state[n]=state[n-1]+dt·rate[n]`，且 `rate[n]`
-/// 与源/汇 auxiliary 同步用 `state[n-1]`、记在【同一行 n】→「进入第 n 步的存量变化 Δstock[n]」对应
-/// 【n 处】净流量 `net[n]`。差一步对齐会把「相邻步通量之差」误报成不守恒（早季通量爬升尤甚）。
-/// 返回 `(max|残差|, 该步)`。
-#[cfg(feature = "cli")]
-fn balance_residual(stock: &[f64], net: &[f64], dt: f64) -> (f64, usize) {
-    let mut max_resid = 0.0f64;
-    let mut argstep = 0usize;
-    let n = stock.len().min(net.len());
-    for t in 0..n.saturating_sub(1) {
-        let resid = ((stock[t + 1] - stock[t]) - dt * net[t + 1]).abs();
-        if resid > max_resid {
-            max_resid = resid;
-            argstep = t + 1;
-        }
-    }
-    (max_resid, argstep)
-}
-
 #[cfg(all(test, feature = "cli"))]
 mod balance_tests {
-    use super::balance_residual;
+    use equation_compiler::sim::balance_residual;
 
     #[test]
     fn conserving_system_zero_residual() {
@@ -1951,27 +1893,73 @@ fn run_evolve(
         let front = gp::evolve_pareto(&grammar, &ctx, &unit_env, &pcfg, |cand| {
             gp::evaluate_in_model(&file, &target, &outv, cand, &sim_input, &observed_data)
         });
-        println!("\n✅ 进化完成 · Pareto 前沿 {} 个（精度 vs 复杂度，挑拐点）", front.len());
-        println!("   {:<10} {:<12} 形式", "复杂度", "rmse");
-        for e in &front {
-            println!("   {:<10} {:<12.6} {}", e.complexity, e.error, render(&e.cand));
+        // Tier3 结构硬过滤：每候选算图论证据（SSOT gp::graph_evidence，与 serve 同源）。
+        let evidence: Vec<gp::GraphEvidence> = front
+            .iter()
+            .map(|e| gp::graph_evidence(&file, &target, &e.cand, &sim_input))
+            .collect();
+        let n_pass = evidence.iter().filter(|g| g.passes_hard_filters).count();
+        // 候选 expr 常数代回字面值 → 可粘贴 yaml（采纳落盘用）。
+        let expr_yaml_of = |cand: &gp::Candidate| -> String {
+            let mut e = cand.expr.clone();
+            for (i, v) in cand.consts.iter().enumerate() {
+                e = e.substitute(
+                    &gp::Candidate::const_name(i),
+                    &equation_compiler::ast::Expr::constant(*v),
+                );
+            }
+            equation_compiler::sexpr::to_yaml::to_yaml_string(&e).unwrap_or_default()
+        };
+        println!(
+            "\n✅ 进化完成 · Pareto 前沿 {} 个（{} 过硬过滤 / {} 被淘汰）",
+            front.len(), n_pass, front.len() - n_pass,
+        );
+        println!("   {:<8} {:<12} {:<6} 形式 / 硬过滤说明", "复杂度", "rmse", "硬过滤");
+        for (e, g) in front.iter().zip(&evidence) {
+            let (flag, note) = if g.passes_hard_filters {
+                let mut tags = Vec::new();
+                if !g.coefficient_cluster.is_empty() {
+                    tags.push(format!("系数簇{}(需联合标定)", g.coefficient_cluster.len()));
+                }
+                if !g.new_confounded_pairs.is_empty() && tags.is_empty() {
+                    tags.push(format!("新混淆{}对", g.new_confounded_pairs.len()));
+                }
+                ("✓过", tags.join(" "))
+            } else {
+                ("✗淘汰", g.reject_reasons.join("；"))
+            };
+            println!(
+                "   {:<8} {:<12.6} {:<6} {}  {}",
+                e.complexity, e.error, flag, render(&e.cand), note,
+            );
         }
         if let Some(out) = output {
             let entries: Vec<_> = front
                 .iter()
-                .map(|e| {
+                .zip(&evidence)
+                .map(|(e, g)| {
+                    let report = gp::form_report(
+                        &e.cand, e.error, e.complexity, &grammar, &ctx, s.baseline_form.as_deref(),
+                    );
                     serde_json::json!({
                         "complexity": e.complexity, "error": e.error,
                         "consts": e.cand.consts, "formula": render(&e.cand),
+                        "expr_yaml": expr_yaml_of(&e.cand),
+                        "mechanistic_form": report.form,
+                        "rediscovery": report.rediscovery,
+                        "graph_evidence": serde_json::to_value(g).unwrap_or(serde_json::Value::Null),
                     })
                 })
                 .collect();
             let j = serde_json::json!({
                 "target": s.target, "output": s.output, "grammar": grammar,
-                "mode": mode, "pareto_front": entries,
+                "mode": mode,
+                "n_candidates": front.len(), "n_pass_hard_filters": n_pass,
+                "n_rejected": front.len() - n_pass,
+                "pareto_front": entries,
             });
             std::fs::write(out, serde_json::to_string_pretty(&j)?)?;
-            println!("   结果写入 {}", out.display());
+            println!("   结果写入 {}（含图论证据 + 硬过滤标注 = candidates.json）", out.display());
         }
         return Ok(());
     }
