@@ -4,6 +4,7 @@
   import { onMount, onDestroy } from 'svelte'
   import { store, startGrowth, stopGrowth, growthStep, growthTogglePlay, growthTick } from '../lib/store.svelte'
   import { reportUrl, fetchModel } from '../lib/api'
+  import { firstChapterMap, applyReveal2d, clearReveal2d } from '../lib/reveal2d'
   import type { ModelJson } from '../lib/contract'
   import { tipHtml } from '../lib/annotate'
   import Topology3d from '../components/Topology3d.svelte'
@@ -98,39 +99,14 @@
   }
   function syncAllHl() { for (const v of store.selectedVars) setHl(v, true) }
 
-  // —— 生长演示 · 2D 同步（GA-6b Phase 2）：伸进 iframe 按同一 plan 逐章把 [data-var]/边显形 ——
-  function growthRevealedLocal(): Set<string> {
-    const s = new Set<string>()
-    const chs = store.growth.plan?.chapters ?? []
-    for (let i = 0; i <= store.growth.chapter && i < chs.length; i++) chs[i].nodes.forEach((n) => s.add(n))
-    return s
-  }
+  // —— 生长演示 · 2D 同步（GA-6b Phase 2）：伸进 iframe 按同一 plan 逐章显形（reveal2d 单一真相源，与演化回放共用）——
   function applyGrowth2d() {
     const d = rdoc(); if (!d) return
-    const active = store.growth.active && store.structureView === '2d'
-    const nodes = d.querySelectorAll('[data-var]')
-    const edges = d.querySelectorAll('.fedge, .edge')
-    if (!active) { // 复原：清掉内联 opacity/transition，回到报告默认
-      nodes.forEach((n) => { const e = n as HTMLElement; e.style.opacity = ''; e.style.transition = '' })
-      edges.forEach((p) => { const e = p as HTMLElement; e.style.opacity = ''; e.style.transition = '' })
-      return
+    if (store.growth.active && store.structureView === '2d') {
+      applyReveal2d(d, firstChapterMap(store.growth.plan?.chapters ?? []), store.growth.chapter)
+    } else {
+      clearReveal2d(d)
     }
-    const reveal = growthRevealedLocal()
-    const shownIds = new Set<string>()
-    nodes.forEach((node) => {
-      const el = node as HTMLElement
-      const on = reveal.has(el.getAttribute('data-var') || '')
-      el.style.transition = 'opacity 0.5s ease'
-      el.style.opacity = on ? '1' : '0'
-      if (on) { const id = el.getAttribute('data-id'); if (id) shownIds.add(id) }
-    })
-    // 边：两端节点都已显形才出现（data-from/to = 全 id，对 data-id）
-    edges.forEach((edge) => {
-      const el = edge as HTMLElement
-      const on = shownIds.has(el.getAttribute('data-from') || '') && shownIds.has(el.getAttribute('data-to') || '')
-      el.style.transition = 'opacity 0.5s ease'
-      el.style.opacity = on ? '1' : '0'
-    })
   }
   function selectVar(name: string) {
     const has = store.selectedVars.includes(name)

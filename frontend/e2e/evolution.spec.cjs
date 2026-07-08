@@ -39,6 +39,10 @@ test('进化史工作区 · 轨迹 + 坑清单 + cohort 脚注 + 优雅降级', 
   await expect(page.locator('.evo3d canvas')).toBeVisible({ timeout: 15_000 })
   await expect(page.locator('.playbar .ch')).toBeVisible() // 章节指示 k/N
   await page.getByRole('button', { name: /退出/ }).click()
+  // 2D 同步：切「2D 报告」→ Forrester iframe 挂载，切回 3D
+  await page.locator('.viewtog button', { hasText: '2D' }).click()
+  await expect(page.locator('.evo2dframe')).toBeVisible({ timeout: 10_000 })
+  await page.locator('.viewtog button', { hasText: '3D' }).click()
 
   // 📜 Tier2 回退：版本历史 + 查看历史源码 + 回退确认框（人在环·点取消不写盘）
   await expect(page.locator('.hrow').first()).toBeVisible({ timeout: 10_000 })
@@ -60,7 +64,7 @@ test('进化史工作区 · 轨迹 + 坑清单 + cohort 脚注 + 优雅降级', 
   // —— 温室：无 evolution.yaml → 优雅降级 ——
   await modelSel.selectOption('greenhouse')
   await expect(page.locator('.evo .empty')).toBeVisible({ timeout: 15_000 })
-  await expect(page.getByText(/无进化血缘清单/)).toBeVisible()
+  await expect(page.getByText(/血缘清单/)).toBeVisible() // 空态静态说明文案（稳定·不随后端错误措辞变）
 
   const real = errors.filter((e) => !/webgl|gl_|swiftshader|gpu|deprecat|failed to load resource|404|favicon/i.test(e))
   expect(real, real.join('\n')).toHaveLength(0)

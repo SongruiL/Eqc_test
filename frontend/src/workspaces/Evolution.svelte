@@ -3,9 +3,10 @@
   // 数据全来自 /api/evolution 契约（沿 evolution.yaml 走 git 历史算，EQC 持有事实）；前端只拼装展示。
   import { onDestroy } from 'svelte'
   import { store, reloadModel } from '../lib/store.svelte'
-  import { fetchEvolution, fetchHistory, fetchSourceAtRev, saveSource } from '../lib/api'
+  import { fetchEvolution, fetchHistory, fetchSourceAtRev, saveSource, reportUrl } from '../lib/api'
   import type { EvolutionReport, GitCommit } from '../lib/contract'
   import Topology3d from '../components/Topology3d.svelte'
+  import { firstChapterMap, applyReveal2d, clearReveal2d } from '../lib/reveal2d'
 
   let report = $state<EvolutionReport | null>(null)
   let loading = $state(false)
@@ -16,6 +17,8 @@
   let evoPlaying = $state(false)
   let evoChapter = $state(0)
   let evoTimer: ReturnType<typeof setInterval> | undefined
+  let evoView = $state<'3d' | '2d'>('3d') // 演化回放 3D 拓扑 ↔ 2D Forrester 报告
+  let evoIframe = $state<HTMLIFrameElement | undefined>(undefined)
   // Tier2 回退/checkout：本文件 git 历史 + 查看历史源码 + 人在环回退（write_source 校验+备份+原子写）
   let history = $state<GitCommit[]>([])
   let viewRev = $state('') // 正在查看源码的 rev（空=未展开）
@@ -170,6 +173,21 @@
     clearInterval(evoTimer)
     evoChapter = Math.max(0, Math.min(nCh - 1, evoChapter + dir))
   }
+
+  // —— 演化回放 · 2D 同步（reveal2d 共享·与子系统生长同一套逐章揭示）——
+  const evoReportSrc = $derived(reportUrl(store.model, 'forrester', 'variable', store.topoColorMode))
+  function evoDoc(): Document | null {
+    try { return evoIframe?.contentDocument ?? null } catch { return null }
+  }
+  function applyEvo2d() {
+    const d = evoDoc(); if (!d) return
+    if (evoView !== '2d' || !evoPlan) { clearReveal2d(d); return }
+    applyReveal2d(d, firstChapterMap(evoPlan), evoPlaying ? evoChapter : nCh - 1) // 不播=末章全显
+  }
+  $effect(() => {
+    void evoChapter; void evoPlaying; void evoView; void store.model
+    applyEvo2d()
+  })
 </script>
 
 <div class="evo">
@@ -215,9 +233,18 @@
     <!-- 🎬 演化回放：沿血缘逐版本"长出"当前模型 -->
     {#if evoPlan && nCh > 1}
       <section class="card">
-        <h3>🎬 演化回放 <span class="sub">沿血缘逐版本"长出"当前模型（{store.model}）</span></h3>
+        <h3>🎬 演化回放 <span class="sub">沿血缘逐版本"长出"当前模型（{store.model}）</span>
+          <span class="viewtog">
+            <button class:on={evoView === '3d'} onclick={() => (evoView = '3d')}>3D 拓扑</button>
+            <button class:on={evoView === '2d'} onclick={() => (evoView = '2d')}>2D 报告</button>
+          </span>
+        </h3>
         <div class="evo3d">
-          <Topology3d contract={store.modelJson} {reveal} />
+          {#if evoView === '3d'}
+            <Topology3d contract={store.modelJson} {reveal} />
+          {:else}
+            <iframe class="evo2dframe" bind:this={evoIframe} title="演化回放 2D 报告" src={evoReportSrc} onload={applyEvo2d}></iframe>
+          {/if}
           {#if curNarr}<div class="narr"><b>{curNarr.title}</b> · {curNarr.narration}</div>{/if}
         </div>
         <div class="playbar">
@@ -403,7 +430,11 @@
   .warn { color: #7c3aed; }
   .note { margin-top: 6px; opacity: 0.85; }
 
+  .viewtog { margin-left: auto; display: inline-flex; gap: 4px; }
+  .viewtog button { border: 1px solid var(--line); background: #fff; color: var(--sub); font-size: 12px; padding: 2px 10px; border-radius: 6px; cursor: pointer; }
+  .viewtog button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
   .evo3d { position: relative; height: 380px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fafbfc; }
+  .evo2dframe { width: 100%; height: 100%; border: 0; background: #fff; }
   .narr { position: absolute; left: 0; right: 0; bottom: 0; padding: 8px 12px; background: rgba(17, 24, 39, 0.72); color: #fff; font-size: 13px; }
   .narr b { color: #fbbf24; }
   .playbar { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
