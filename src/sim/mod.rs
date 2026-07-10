@@ -682,15 +682,42 @@ pub fn simulate_coupled(input: &CoupledInput) -> Result<CoupledOutput, SimError>
     }
     let total_fast = input.slow_steps * r;
 
-    // —— 校验：慢模型每个驱动量都须被某条链接覆盖（C1 单向：作物气候全来自温室）——
+    // —— 校验：慢模型每个驱动量须被 link 覆盖，或由共享室外驱动(weather CSV)供给 ——
+    // 原设计假设「慢模型气候全来自快模型」（温室→作物单向级联）；泛化后支持**对等双向耦合**：
+    // 两模型都读同一份室外气象（如 apple↔soil：apple 要 T/Sr、soil 要 Rain/Es_pot·都在共享 weather 里），
+    // 慢模型未被 link 覆盖的外生 driving 从共享 weather 取（fast_drivers 即整份 weather，fast 只取自己需要的列）。
+    // 见 get_slow_driver 的 weather fallback。温室场景慢模型 driving 全被 link 覆盖→走原路径、行为不变。
     let link_tos: HashSet<&str> = input.links.iter().map(|l| l.to.as_str()).collect();
     {
         let slow_stepper = Stepper::new(slow, slow.meta.dt, &input.slow_params, &input.slow_init)?;
         for &d in slow_stepper.drivers() {
-            if !link_tos.contains(d) {
-                return Err(SimError::Coupling(format!(
-                    "慢模型驱动量 '{d}' 没有耦合链接（请在 links 里把它接到某快模型输出）"
-                )));
+            if link_tos.contains(d) {
+                continue; // 被 link 覆盖：由快模型聚合供值
+            }
+            // 未被 link 覆盖 → 须由共享室外驱动(weather)供给（对等双向耦合）
+            match input.fast_drivers.get(d) {
+                None => {
+                    return Err(SimError::Coupling(format!(
+                        "慢模型驱动量 '{d}' 既无耦合链接、也不在共享室外驱动中（请加 --link 接到快模型输出，或在 weather CSV 加 '{d}' 列）"
+                    )))
+                }
+                Some(col) => {
+                    // weather fallback 仅支持 R=1（同速率对等耦合）。R>1 时慢步取窗口首值 v[s·R] 与 link
+                    // 的窗口均值(Agg::Mean)语义不一致（日内步长气象取首行=错的日代表值）→ 强制此类驱动走 link。
+                    if r > 1 {
+                        return Err(SimError::Coupling(format!(
+                            "慢模型驱动量 '{d}' 走共享 weather，但 R={r}>1：weather fallback 仅支持 R=1(同速率对等耦合)；多速率下请把 '{d}' 用 --link 接快模型输出"
+                        )));
+                    }
+                    // 长度校验：慢步 s∈[0,slow_steps) 取 v[s]（R=1）→ 须 col.len() ≥ slow_steps，否则 v[s·R] 越界 panic。
+                    if col.len() < input.slow_steps {
+                        return Err(SimError::DriverLengthMismatch {
+                            name: d.to_string(),
+                            expected: input.slow_steps,
+                            found: col.len(),
+                        });
+                    }
+                }
             }
         }
     }
@@ -706,6 +733,14 @@ pub fn simulate_coupled(input: &CoupledInput) -> Result<CoupledOutput, SimError>
                 return Err(SimError::Coupling(format!(
                     "反馈目标 '{}' 不是快模型 {} 的输入（驱动量）",
                     f.to, fast.meta.id
+                )));
+            }
+            // 反馈目标不得与共享 weather 列同名：快步取值 fast_drivers.get(d) 优先于 fb.get(d)，
+            // 撞名会让反馈被 weather 静默覆盖（反馈链路失效）→ 早失败。
+            if input.fast_drivers.contains_key(f.to.as_str()) {
+                return Err(SimError::Coupling(format!(
+                    "反馈目标 '{}' 与共享室外驱动(weather)列同名 → 反馈会被 weather 静默覆盖；请重命名其一",
+                    f.to
                 )));
             }
         }
@@ -795,9 +830,16 @@ pub fn simulate_coupled(input: &CoupledInput) -> Result<CoupledOutput, SimError>
         for (li, link) in input.links.iter().enumerate() {
             fed.entry(link.to.clone()).or_default().push(finalize(li));
         }
-        // 慢模型推进一步：驱动量按 to 名取聚合值
+        // 慢模型推进一步：驱动量优先取 link 聚合值；未被 link 覆盖的外生 driving 从共享室外驱动
+        // (weather)取 v[s·R]。校验段已保证走此 fallback 的驱动仅在 R=1 出现(v[s·R]=v[s])且列长≥slow_steps
+        // →不越界；R>1/短列在校验段已 Err、不会执行到这。
         let get_slow_driver = |name: &str| -> Option<f64> {
-            input.links.iter().position(|l| l.to == name).map(finalize)
+            input
+                .links
+                .iter()
+                .position(|l| l.to == name)
+                .map(finalize)
+                .or_else(|| input.fast_drivers.get(name).map(|v| v[s * r]))
         };
         slow_stepper.step(get_slow_driver)?;
         for name in slow.variables.keys() {
@@ -1410,6 +1452,88 @@ equations:
         // 慢步2：g=46 → y=47、ybar=47、z=94。反馈滞后一慢步。
         assert_eq!(out.fed_drivers["ybar"], vec![11.0, 23.0, 47.0]);
         assert_eq!(out.slow.series("z").unwrap(), &[22.0, 46.0, 94.0]);
+    }
+
+    /// 耦合泛化：慢模型未被 link 覆盖的外生 driving 从**共享室外驱动(weather)**取（对等双向耦合，
+    /// 如 apple↔soil：两模型都读同一份室外气象·apple 要 T/Sr、soil 要 Rain/Es_pot）。
+    /// b 不在 links、但在 weather 有列 → 从中取值（v[s·R]），不再报「无耦合链接」。
+    #[test]
+    fn test_coupled_slow_reads_shared_weather() {
+        let fast_yaml = r#"
+meta: { id: F, model: F, name_cn: x, dt: 1, dt_seconds: 1 }
+variables: { u: { type: input, class: driving }, y: { type: output } }
+equations: [ { id: E, name: y, output: y, expression: { ref: u } } ]
+"#;
+        // 慢模型 driving：a（由 link 从 fast.y 取）+ b（未被 link·从共享 weather 取）
+        let slow_yaml = r#"
+meta: { id: S, model: S, name_cn: x, dt: 1, dt_seconds: 1 }
+variables: { a: { type: input, class: driving }, b: { type: input, class: driving }, o: { type: output } }
+equations: [ { id: E, name: o, output: o, expression: { op: add, args: [ { ref: a }, { ref: b } ] } } ]
+"#;
+        let (_df, fast) = write_model(fast_yaml);
+        let (_ds, slow) = write_model(slow_yaml);
+        // 只给 a 一条 link；b 无 link 但在 weather 有列 → 从 weather 取、不报错（R=1 对等耦合）
+        let links = vec![CoupledLink { to: "a".into(), from: "y".into(), agg: Agg::Mean, scale: 1.0 }];
+        let mut drv = HashMap::new();
+        drv.insert("u".to_string(), vec![1.0, 2.0]); // fast 驱动（2 慢步 × R=1）
+        drv.insert("b".to_string(), vec![10.0, 20.0]); // slow 的共享室外驱动（未被 link）
+        let inp = CoupledInput::new(&fast, &slow, links, drv, 2);
+        let out = simulate_coupled(&inp).unwrap(); // 不再报 Coupling 错
+        // 慢步0：a=mean(y)=1、b=weather[0]=10 → o=11；慢步1：a=2、b=20 → o=22
+        assert_eq!(out.slow.series("o").unwrap(), &[11.0, 22.0]);
+    }
+
+    /// 耦合泛化护栏：短 weather 列→Err(非 panic)、R>1 走 fallback→Err、feedback 与 weather 撞名→Err。
+    #[test]
+    fn test_coupled_weather_fallback_guards() {
+        let fast_yaml = r#"
+meta: { id: F, model: F, name_cn: x, dt: 1, dt_seconds: 1 }
+variables: { u: { type: input, class: driving }, y: { type: output } }
+equations: [ { id: E, name: y, output: y, expression: { ref: u } } ]
+"#;
+        let slow_yaml = r#"
+meta: { id: S, model: S, name_cn: x, dt: 1, dt_seconds: 1 }
+variables: { a: { type: input, class: driving }, b: { type: input, class: driving }, o: { type: output } }
+equations: [ { id: E, name: o, output: o, expression: { op: add, args: [ { ref: a }, { ref: b } ] } } ]
+"#;
+        let (_df, fast) = write_model(fast_yaml);
+        let (_ds, slow) = write_model(slow_yaml);
+        let mk_link = || vec![CoupledLink { to: "a".into(), from: "y".into(), agg: Agg::Mean, scale: 1.0 }];
+
+        // (1) 短列：b 只有 1 行 < slow_steps=2 → DriverLengthMismatch（不 panic）
+        let mut drv = HashMap::new();
+        drv.insert("u".to_string(), vec![1.0, 2.0]);
+        drv.insert("b".to_string(), vec![10.0]);
+        let inp = CoupledInput::new(&fast, &slow, mk_link(), drv, 2);
+        assert!(matches!(simulate_coupled(&inp), Err(SimError::DriverLengthMismatch { .. })));
+
+        // (2) R>1（slow dt_seconds=2 → R=2）且 b 走 weather fallback → Coupling Err
+        let slow_r2_yaml = r#"
+meta: { id: S2, model: S, name_cn: x, dt: 1, dt_seconds: 2 }
+variables: { a: { type: input, class: driving }, b: { type: input, class: driving }, o: { type: output } }
+equations: [ { id: E, name: o, output: o, expression: { op: add, args: [ { ref: a }, { ref: b } ] } } ]
+"#;
+        let (_ds2, slow2) = write_model(slow_r2_yaml);
+        let mut drv2 = HashMap::new();
+        drv2.insert("u".to_string(), vec![1.0, 2.0, 3.0, 4.0]);
+        drv2.insert("b".to_string(), vec![10.0, 20.0, 30.0, 40.0]);
+        let inp2 = CoupledInput::new(&fast, &slow2, mk_link(), drv2, 2);
+        assert!(matches!(simulate_coupled(&inp2), Err(SimError::Coupling(_))));
+
+        // (3) feedback target 与 weather 列撞名（都叫 g）→ Coupling Err（防反馈被 weather 静默覆盖）
+        let fast_g_yaml = r#"
+meta: { id: FG, model: F, name_cn: x, dt: 1, dt_seconds: 1 }
+variables: { u: { type: input, class: driving }, g: { type: input, class: driving }, y: { type: output } }
+equations: [ { id: E, name: y, output: y, expression: { op: add, args: [ { ref: u }, { ref: g } ] } } ]
+"#;
+        let (_dfg, fastg) = write_model(fast_g_yaml);
+        let mut drv3 = HashMap::new();
+        drv3.insert("u".to_string(), vec![1.0, 2.0]);
+        drv3.insert("g".to_string(), vec![5.0, 5.0]);
+        drv3.insert("b".to_string(), vec![10.0, 20.0]);
+        let mut inp3 = CoupledInput::new(&fastg, &slow, mk_link(), drv3, 2);
+        inp3.feedback = vec![FeedbackLink { to: "g".into(), from: "o".into(), scale: 1.0, init: 0.0 }];
+        assert!(matches!(simulate_coupled(&inp3), Err(SimError::Coupling(_))));
     }
 
     /// 速率方程引用自身状态量当前值 → 步内环。
