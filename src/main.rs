@@ -223,6 +223,14 @@ enum Commands {
         #[arg(long)]
         slow_params: Option<PathBuf>,
 
+        /// 快模型状态初值覆盖 JSON（情景分析，如土壤氮库存量；镜像 sim --init·core 早支持只缺 CLI）
+        #[arg(long)]
+        fast_init: Option<PathBuf>,
+
+        /// 慢模型状态初值覆盖 JSON（情景分析，如果树储氮 N_reserve 耗尽起始）
+        #[arg(long)]
+        slow_init: Option<PathBuf>,
+
         /// 慢步数（作物天数；缺省 = 室外驱动行数 / R）
         #[arg(short, long)]
         steps: Option<usize>,
@@ -495,8 +503,8 @@ fn main() {
         Commands::SexprSpec => run_sexpr_spec(),
         Commands::CheckDims { input, strict } => run_check_dims(&input, strict),
         Commands::Report { input, output, layout } => run_report(&input, &output, &layout),
-        Commands::Couple { fast, slow, weather, links, feedback, fast_params, slow_params, steps, output, fed_out, fast_out } => {
-            run_couple(&fast, &slow, &weather, &links, &feedback, fast_params.as_ref(), slow_params.as_ref(), steps, &output, fed_out.as_ref(), fast_out.as_ref())
+        Commands::Couple { fast, slow, weather, links, feedback, fast_params, slow_params, fast_init, slow_init, steps, output, fed_out, fast_out } => {
+            run_couple(&fast, &slow, &weather, &links, &feedback, fast_params.as_ref(), slow_params.as_ref(), fast_init.as_ref(), slow_init.as_ref(), steps, &output, fed_out.as_ref(), fast_out.as_ref())
         }
         Commands::Simulate { input, drivers, params, steps, output, dt, init, check_balance } => {
             run_simulate(&input, &drivers, params.as_ref(), steps, &output, dt, init.as_deref(), check_balance)
@@ -814,6 +822,8 @@ fn run_couple(
     feedback: &[String],
     fast_params: Option<&PathBuf>,
     slow_params: Option<&PathBuf>,
+    fast_init: Option<&PathBuf>,
+    slow_init: Option<&PathBuf>,
     steps: Option<usize>,
     output: &PathBuf,
     fed_out: Option<&PathBuf>,
@@ -902,6 +912,13 @@ fn run_couple(
     }
     if let Some(sp) = slow_params {
         inp.slow_params = load_params_json(sp)?;
+    }
+    // 状态初值覆盖（情景分析）：core 的 CoupledInput.fast_init/slow_init 早已接进三处 Stepper，这里补 CLI 通道
+    if let Some(fi) = fast_init {
+        inp.fast_init = load_params_json(fi)?;
+    }
+    if let Some(si) = slow_init {
+        inp.slow_init = load_params_json(si)?;
     }
     let out = simulate_coupled(&inp).map_err(|e| format!("耦合仿真失败: {e}"))?;
 
