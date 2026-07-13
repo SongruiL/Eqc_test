@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
 
-use crate::schema::EquationFile;
+use crate::schema::{EquationFile, VarClass};
 use crate::sim::{build_plan, simulate, SimInput, SimOutput};
 
 use super::objective::{eval_objective_obs, ObservedData};
@@ -282,9 +282,7 @@ fn prepare_ov(
     overrides: &IndexMap<String, f64>,
 ) -> Result<Prep, String> {
     let mut input = build_input(problem, knob_values, drivers, steps);
-    for (name, &val) in overrides {
-        input.param_overrides.insert(name.clone(), val);
-    }
+    apply_overrides(file, &mut input, steps, overrides);
     let out = simulate(file, &input).map_err(|e| format!("仿真失败: {e}"))?;
     let bindings = build_bindings(file, problem, knob_values);
 
@@ -362,10 +360,36 @@ pub fn simulate_candidate_with_overrides(
     overrides: &IndexMap<String, f64>,
 ) -> Result<SimOutput, String> {
     let mut input = build_input(problem, knob_values, drivers, steps);
-    for (name, &val) in overrides {
-        input.param_overrides.insert(name.clone(), val);
-    }
+    apply_overrides(file, &mut input, steps, overrides);
     simulate(file, &input).map_err(|e| format!("仿真失败: {e}"))
+}
+
+/// 施加一组【处理管理覆盖】（多处理标定的一个工作点），按变量的**有效 Forrester 分类**路由：
+/// - **driving 输入**（如 `f_W`，逐日从 `drivers` 读值）→ 覆写成**整列常数**（镜像
+///   [`KnobKind::DriverConst`] 对驱动列的处理）；
+/// - 其余（`parameters:` 块的标量，如 `EC_feed`/`Irrig`）→ 进 `param_overrides`。
+///
+/// 这样 `treatments:` 既能钉管理**参数**、也能钉管理**驱动量**工作点——后者是苹果 `f_W`（水→糖
+/// keystone）在单工况下 `(1−f_W)=0` 恒零效应、必须靠**多处理 f_W 梯度**激活并与 DMC 发育项拆共线
+/// 的场景（见 `docs/spec-calibration.md` §5.1 处理矩阵）。覆盖名不是 driving 变量时行为与旧版（一律进
+/// `param_overrides`）逐位一致——番茄 `EC_feed`/`Irrig` 走原路不变。
+fn apply_overrides(
+    file: &EquationFile,
+    input: &mut SimInput,
+    steps: usize,
+    overrides: &IndexMap<String, f64>,
+) {
+    for (name, &val) in overrides {
+        let is_driving = file
+            .variables
+            .get(name)
+            .is_some_and(|v| v.effective_class() == VarClass::Driving);
+        if is_driving {
+            input.drivers.insert(name.clone(), vec![val; steps]);
+        } else {
+            input.param_overrides.insert(name.clone(), val);
+        }
+    }
 }
 
 /// 把旋钮值装配进 [`SimInput`]：param→参数覆盖，init→初值覆盖，driver_const→整列常数。
@@ -549,6 +573,31 @@ equations:
         // drive=5 → r=10 每步 → Y=10,20,30 → final=30
         let e = evaluate(&file, &p, &[5.0], &drv, 3);
         assert_eq!(e.objective, Some(30.0));
+    }
+
+    #[test]
+    fn test_treatment_override_routes_driving_vs_param() {
+        // 处理管理覆盖按有效分类路由：driving(drive)→drivers 常数列、param(gain)→param_overrides。
+        // 模型 Y=∫(drive·gain)；基线 drive=[1,1,1]、gain=2 → Y=2,4,6。
+        let (_d, file) = model();
+        let p = parse_problem(
+            "optimize:\n  objective: { expr: (final Y) }\n  knobs:\n    - { var: gain, kind: param, bounds: [1, 5] }\n",
+        )
+        .unwrap();
+        let drv = drivers3();
+
+        // ① 覆盖 driving `drive`=5 → 应写进 drivers 常数列 → r=5·2=10/步 → Y=10,20,30。
+        //    （旧版把它塞进 param_overrides 对 driving 无效 → 会退回 drive=1、final=6，测试即失败。）
+        let mut ov = IndexMap::new();
+        ov.insert("drive".to_string(), 5.0);
+        let out = simulate_candidate_with_overrides(&file, &p, &[2.0], &drv, 3, &ov).unwrap();
+        assert_eq!(out.series("Y").unwrap().last().copied(), Some(30.0));
+
+        // ② 覆盖 param `gain`=4 → 应写进 param_overrides（压过旋钮值 2）→ r=1·4=4/步 → Y=4,8,12。
+        let mut ov2 = IndexMap::new();
+        ov2.insert("gain".to_string(), 4.0);
+        let out2 = simulate_candidate_with_overrides(&file, &p, &[2.0], &drv, 3, &ov2).unwrap();
+        assert_eq!(out2.series("Y").unwrap().last().copied(), Some(12.0));
     }
 
     #[test]

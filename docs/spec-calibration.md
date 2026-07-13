@@ -79,7 +79,7 @@ optimize:
     - { var: k_DMC_EC,  kind: param, bounds: [0.001, 0.01] }
     - { var: EC_thresh, kind: param, bounds: [2.5, 4.5] }
     # …
-  treatments:       # 每个 = 一组标量参数覆盖 = 一个管理工作点（应与 knobs 不相交）
+  treatments:       # 每个 = 一组管理量覆盖（参数**或驱动量**）= 一个管理工作点（应与 knobs 不相交）
     - { EC_feed: 2.3, Irrig: 8.0 }   # 无胁迫参照 → 锚基线
     - { EC_feed: 5.0, Irrig: 8.0 }   # 高EC·足水 → 拆 EC 项/斜率
     - { EC_feed: 2.3, Irrig: 4.0 }   # 低EC·亏水 → 拆水项/临界含水率
@@ -88,6 +88,8 @@ optimize:
 ```
 
 机制：`identify` **逐处理**跑 OAT 灵敏度（各按本处理基线 RMS 归一）、把子矩阵**横向拼接**成 参数 × (处理×观测) 大矩阵，再判可辨识 / 异参同效。某参数（如 `k_DMC_EC`）的灵敏度随 EC 处理增强、另一参数（`DMC_fruit` 基线）跨处理近乎不变 → 拼接后行向量不再共线 → 混淆解开。报告观测标签变 `观测@处理k`，直接给出「在哪个处理测哪个变量」的实验设计。
+
+**处理量既可是参数、也可是驱动量**：覆盖名若是 `class:driving` 输入（逐日从 `environment:` CSV 读、或经耦合供入，如 `f_W`），引擎按变量的有效 Forrester 分类**自动路由成整列常数**注入 `drivers`（等同一个 `driver_const` 旋钮）；是 `parameters:` 块的标量（如 `EC_feed`/`Irrig`）则进 `param_overrides`（`apply_overrides`·`optimize/core.rs`）。**苹果 `k_DMC_W`（水→糖 keystone）正是驱动量工作点的例子**：`f_W` 是驱动量、单工况 `(1−f_W)=0` → `k_DMC_W` 精确零效应不可辨识，须 `treatments: [{f_W: 1.0}, {f_W: 0.7}, {f_W: 0.5}]` 的 f_W 梯度激活并与 DMC 发育项拆共线（demo：`crop-models/apple/calibrate_a8_wsugar_treatments.yaml`；单工况标不出 vs 多处理标得出的对照见 twin 报告）。
 
 注意：异参同效检测需 **≥3 个 (处理×观测) 列**（任意 2 点必然共线 → 全假阳），列数 <3 时跳过并提示。缺省无 `treatments:` = 单一默认工作点（向后兼容）。此外「可辨识」在报告里指**有非零灵敏度**，不等于一组参数能**联合**解出——共线的多参数各自可辨识、却仍需处理梯度才分得开。
 
