@@ -608,6 +608,154 @@ fn run_couple_optimize(m: &ModelEntry, query: &str) -> Result<String, String> {
     Ok(j.to_string())
 }
 
+/// `/api/couple-scan?model=<耦合id>&spec=<扫描spec>[&irr_min=&irr_max=&irr_n=&fert_min=&fert_max=&fert_n=&scenario=]`
+/// 在耦合前向模型上遍历双旋钮（第0=Irrig 行、第1=Fert_NO3_rate 列）**均匀网格**，每格跑一次
+/// `simulate_coupled`：净利 net 由 objective 在作物侧 `out.slow` 求值、N淋失/吸氮从土壤侧 `out.fast`
+/// 季累计（逐日速率求和）。返回与静态 `wn-decision-*.json` 同构的 2D 决策曲面 JSON，供 GIS live 热图重扫。
+/// 网格范围/分辨率走 query（拖滑块用·缺省用 spec 旋钮 bounds·分辨率上限 12 护栏）；经济常数取 spec.constants。
+/// 耦合配置(fast/slow/weather/links/feedback + 威海 theta)取自清单该条目（SSOT）；本端点只做网格扫描不进 DE。
+fn run_couple_scan(m: &ModelEntry, query: &str) -> Result<String, String> {
+    use crate::optimize::load_problem;
+    use crate::optimize::objective::eval_objective;
+    use crate::optimize::problem::KnobKind;
+
+    let sim = m
+        .coupling
+        .as_ref()
+        .and_then(|c| c.sim.as_ref())
+        .ok_or_else(|| "该条目不是可仿真耦合（清单需写 fast/slow/weather）".to_string())?;
+    let spec_arg = parse_spec(query)
+        .ok_or_else(|| "缺少 spec 参数（/api/couple-scan?spec=scan.yaml）".to_string())?;
+    let problem = load_problem(&PathBuf::from(&spec_arg))?;
+    if problem.knobs.len() < 2 {
+        return Err("couple-scan 需 2 个旋钮（第0=Irrig 行、第1=Fert_NO3_rate 列）".into());
+    }
+    let k_irr = &problem.knobs[0];
+    let k_fert = &problem.knobs[1];
+
+    // —— 均匀网格：范围从 query（缺省用旋钮 bounds），夹到 bounds 内；分辨率 [2,12] 护栏 ——
+    let irr_min = query_f64(query, "irr_min").unwrap_or(k_irr.bounds[0]).max(k_irr.bounds[0]);
+    let irr_max = query_f64(query, "irr_max").unwrap_or(k_irr.bounds[1]).min(k_irr.bounds[1]);
+    let fert_min = query_f64(query, "fert_min").unwrap_or(k_fert.bounds[0]).max(k_fert.bounds[0]);
+    let fert_max = query_f64(query, "fert_max").unwrap_or(k_fert.bounds[1]).min(k_fert.bounds[1]);
+    let irr_n = query_usize(query, "irr_n").unwrap_or(6).clamp(2, 12);
+    let fert_n = query_usize(query, "fert_n").unwrap_or(6).clamp(2, 12);
+    let linspace =
+        |lo: f64, hi: f64, n: usize| -> Vec<f64> { (0..n).map(|i| lo + (hi - lo) * (i as f64) / ((n - 1).max(1) as f64)).collect() };
+    let irr_grid = linspace(irr_min, irr_max, irr_n);
+    let fert_grid = linspace(fert_min, fert_max, fert_n);
+
+    // —— 解析 fast/slow + 裁室外天气（同 run_couple）——
+    let fast = parse_file(&sim.fast).map_err(|e| e.to_string())?;
+    let slow = parse_file(&sim.slow).map_err(|e| e.to_string())?;
+    let (rows, wmap) = &sim.weather;
+    let dtf = fast.meta.dt_seconds.ok_or("温室模型缺 meta.dt_seconds")?;
+    let dts = slow.meta.dt_seconds.ok_or("作物模型缺 meta.dt_seconds")?;
+    let r = (dts / dtf).round().max(1.0) as usize;
+    let slow_steps = sim.steps.unwrap_or(rows / r);
+    let need = slow_steps * r;
+    if *rows < need {
+        return Err(format!("室外天气 {rows} 行 < 慢步数·R = {need}"));
+    }
+    let weather: HashMap<String, Vec<f64>> =
+        wmap.iter().map(|(k, v)| (k.clone(), v[..need.min(v.len())].to_vec())).collect();
+
+    // 前向模型只构建一次（天气只克隆一次），循环内只改 params（同 coupled.rs 的优化）
+    let mut input = CoupledInput::new(&fast, &slow, sim.links.clone(), weather, slow_steps);
+    input.feedback = sim.feedback.clone();
+    let base_fast = sim.fast_params.clone(); // 含烤进 workspace 的威海 theta 真参
+    let base_slow = sim.slow_params.clone();
+    let consts: HashMap<String, f64> = problem.constants.iter().map(|(k, v)| (k.clone(), *v)).collect();
+
+    let (ni, nj) = (irr_grid.len(), fert_grid.len());
+    let mut net = vec![vec![f64::NAN; nj]; ni];
+    let mut yield_g = vec![vec![f64::NAN; nj]; ni];
+    let mut brix = vec![vec![f64::NAN; nj]; ni];
+    let mut nleach = vec![vec![f64::NAN; nj]; ni];
+    let mut nup = vec![vec![f64::NAN; nj]; ni];
+    let mut napp = vec![vec![f64::NAN; nj]; ni];
+    let mut best: Option<(f64, usize, usize)> = None; // (net, i, j)
+
+    for (i, &iv) in irr_grid.iter().enumerate() {
+        for (j, &fv) in fert_grid.iter().enumerate() {
+            input.fast_params = base_fast.clone();
+            input.slow_params = base_slow.clone();
+            // 注入两旋钮（按 kind；Irrig/Fert_NO3_rate 都是 fast_param → 土壤参数）
+            for (k, val) in [(k_irr, iv), (k_fert, fv)] {
+                match k.kind {
+                    KnobKind::SlowParam => {
+                        input.slow_params.insert(k.var.clone(), val);
+                    }
+                    _ => {
+                        input.fast_params.insert(k.var.clone(), val);
+                    }
+                }
+            }
+            let out = match simulate_coupled(&input) {
+                Ok(o) => o,
+                Err(_) => continue, // 该格跑挂 → 留 NaN（→ JSON null）
+            };
+            // 作物侧末值 + 土壤侧季累计（N_leach/Nup_total 是逐日速率，sum = 季总量）
+            yield_g[i][j] = out.slow.final_value("Yield_fresh").unwrap_or(f64::NAN);
+            brix[i][j] = out.slow.final_value("Brix").unwrap_or(f64::NAN);
+            nleach[i][j] = out.fast.series("N_leach").map(|s| s.iter().sum()).unwrap_or(f64::NAN);
+            nup[i][j] = out.fast.series("Nup_total").map(|s| s.iter().sum()).unwrap_or(f64::NAN);
+            napp[i][j] = fv * 365.0;
+            // 净利：objective 在 out.slow 求值（bindings = 常数 + 两旋钮当前值）
+            let mut binds = consts.clone();
+            binds.insert(k_irr.var.clone(), iv);
+            binds.insert(k_fert.var.clone(), fv);
+            if let Ok(n) = eval_objective(&problem.objective.expr, &out.slow, &binds) {
+                if n.is_finite() {
+                    net[i][j] = n;
+                    if best.map_or(true, |(bn, _, _)| n > bn) {
+                        best = Some((n, i, j));
+                    }
+                }
+            }
+        }
+    }
+
+    // —— 最优点（字段名/单位换算同静态 wn-decision 的 best）——
+    let round = |x: f64, d: i32| {
+        let p = 10f64.powi(d);
+        (x * p).round() / p
+    };
+    let best_json = match best {
+        Some((bn, bi, bj)) => serde_json::json!({
+            "irr": irr_grid[bi],
+            "fert": fert_grid[bj],
+            "net": round(bn, 2),
+            "yield_kg": round(yield_g[bi][bj] * 0.001, 3),
+            "brix": round(brix[bi][bj], 2),
+            "nleach_kgha": round(nleach[bi][bj] * 10.0, 1),
+            "nup_kgha": round(nup[bi][bj] * 10.0, 1),
+        }),
+        None => serde_json::Value::Null,
+    };
+    let mut consts_map = serde_json::Map::new();
+    for (k, v) in &problem.constants {
+        consts_map.insert(k.clone(), serde_json::json!(v));
+    }
+
+    let j = serde_json::json!({
+        "coupled": true,
+        "scenario": query_get(query, "scenario").unwrap_or_else(|| "weihai".to_string()),
+        "label": "威海(live 扫描)",
+        "irr_grid": irr_grid,
+        "fert_grid": fert_grid,
+        "net": net,
+        "yield_g": yield_g,
+        "brix": brix,
+        "nleach": nleach,
+        "nup": nup,
+        "napp": napp,
+        "best": best_json,
+        "constants": consts_map,
+    });
+    Ok(j.to_string())
+}
+
 /// 把耦合输出（作物 slow + 温室 fast 日均）合成一份轨迹：作物变量原名，温室变量加 `温室:` 前缀。
 fn couple_trajectories(out: &crate::sim::CoupledOutput) -> IndexMap<String, Vec<f64>> {
     let mut t: IndexMap<String, Vec<f64>> = IndexMap::new();
@@ -906,6 +1054,11 @@ fn handle(mut stream: TcpStream, ctx: &Ctx) -> std::io::Result<()> {
             ("200 OK", "image/svg+xml; charset=utf-8", svg)
         }
         "/api/couple-optimize" => match run_couple_optimize(m, query) {
+            Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
+            Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
+        },
+        // 耦合决策曲面 live 网格扫描（水肥联合）：遍历双旋钮网格 → 2D 决策曲面 JSON（GIS 水肥面板 live 重扫）。
+        "/api/couple-scan" => match run_couple_scan(m, query) {
             Ok(j) => ("200 OK", "application/json; charset=utf-8", j),
             Err(e) => ("200 OK", "application/json; charset=utf-8", error_json(&e)),
         },
