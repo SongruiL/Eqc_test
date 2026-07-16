@@ -88,10 +88,26 @@ struct CouplingDecl {
     weather: Option<String>,
     #[serde(default)]
     feedback: Vec<LinkDecl>,
+    // —— 参数/初值：内联字面值 + 外部文件引用（★参数 SSOT：外部文件作基线、内联叠加在其上就地微调）——
+    //   `*_file` 让 workspace **引用** 版本化的参数文件（如 θ 走 crop-models/soil/weihai_override.json），
+    //   而非手抄一份副本；离线 harness 也读同一文件 → 两路自动一致（单一真相源）。
     #[serde(default)]
     fast_params: HashMap<String, f64>,
     #[serde(default)]
     slow_params: HashMap<String, f64>,
+    #[serde(default)]
+    fast_params_file: Option<String>,
+    #[serde(default)]
+    slow_params_file: Option<String>,
+    // 状态初值覆盖（per-site 初始条件，如土壤有机氮库 HUM_N 真值）；走引擎 CoupledInput.fast_init/slow_init。
+    #[serde(default)]
+    fast_init: HashMap<String, f64>,
+    #[serde(default)]
+    slow_init: HashMap<String, f64>,
+    #[serde(default)]
+    fast_init_file: Option<String>,
+    #[serde(default)]
+    slow_init_file: Option<String>,
     #[serde(default)]
     steps: Option<usize>,
 }
@@ -130,6 +146,9 @@ struct CoupledSim {
     feedback: Vec<crate::sim::FeedbackLink>,
     fast_params: HashMap<String, f64>,
     slow_params: HashMap<String, f64>,
+    /// 状态初值覆盖（per-site 初始条件·如 HUM_N 真值）→ 引擎 CoupledInput.fast_init/slow_init。
+    fast_init: HashMap<String, f64>,
+    slow_init: HashMap<String, f64>,
     steps: Option<usize>,
 }
 
@@ -314,6 +333,27 @@ fn load_params_opt(p: Option<&Path>) -> Option<HashMap<String, f64>> {
         .ok()
 }
 
+/// 合并耦合的"外部参数/初值文件（基线）+ 内联覆盖（就地微调优先）"成一份映射。
+/// ★参数 SSOT：`*_file` 让 workspace 引用版本化参数文件而非手抄副本。
+/// 文件缺失/格式坏 → **硬报错**（θ/初值是决策地基，绝不静默 fallback 到模型默认 → 决策失真）。
+fn merge_coupling_params(
+    file: &Option<String>,
+    inline: &HashMap<String, f64>,
+    resolve: &dyn Fn(&str) -> PathBuf,
+    ctx: &str,
+    kind: &str,
+) -> Result<HashMap<String, f64>, String> {
+    let mut m = match file {
+        Some(f) => crate::scenario::load_params_json(&resolve(f))
+            .map_err(|e| format!("耦合 '{ctx}' {kind} 文件加载失败（{f}）：{e}"))?,
+        None => HashMap::new(),
+    };
+    for (k, v) in inline {
+        m.insert(k.clone(), *v); // 内联叠加在文件之上
+    }
+    Ok(m)
+}
+
 /// 读模型友好名（`meta.name_cn`）；解析失败则 `None`。
 fn model_display_name(path: &Path) -> Option<String> {
     parse_file(path).ok().map(|f| f.meta.name_cn)
@@ -460,6 +500,11 @@ fn build_roster_from_manifest(manifest: &Path) -> Result<Vec<ModelEntry>, String
                     .map_err(|e| format!("耦合 '{}' 天气加载失败: {e}", c.id))?,
                 None => return Err(format!("可仿真耦合 '{}' 缺 weather", c.id)),
             };
+            // ★参数 SSOT：优先从外部文件加载基线（θ/init 真参），内联叠加在其上；文件坏→硬报错。
+            let fast_params = merge_coupling_params(&c.fast_params_file, &c.fast_params, &resolve, &c.id, "fast_params")?;
+            let slow_params = merge_coupling_params(&c.slow_params_file, &c.slow_params, &resolve, &c.id, "slow_params")?;
+            let fast_init = merge_coupling_params(&c.fast_init_file, &c.fast_init, &resolve, &c.id, "fast_init")?;
+            let slow_init = merge_coupling_params(&c.slow_init_file, &c.slow_init, &resolve, &c.id, "slow_init")?;
             Coupling {
                 paths: vec![fast_path.clone(), slow_path.clone()],
                 links: view_links,
@@ -469,8 +514,10 @@ fn build_roster_from_manifest(manifest: &Path) -> Result<Vec<ModelEntry>, String
                     weather,
                     links: sim_links,
                     feedback: sim_fb,
-                    fast_params: c.fast_params.clone(),
-                    slow_params: c.slow_params.clone(),
+                    fast_params,
+                    slow_params,
+                    fast_init,
+                    slow_init,
                     steps: c.steps,
                 }),
             }
@@ -540,6 +587,8 @@ fn run_couple(m: &ModelEntry, param_ov: &HashMap<String, f64>) -> Result<crate::
     input.feedback = sim.feedback.clone();
     input.fast_params = sim.fast_params.clone();
     input.slow_params = sim.slow_params.clone();
+    input.fast_init = sim.fast_init.clone();
+    input.slow_init = sim.slow_init.clone();
     // 请求级覆盖：gh:name→温室、crop:name→作物
     for (k, v) in param_ov {
         if let Some(n) = k.strip_prefix("gh:") {
@@ -588,6 +637,8 @@ fn run_couple_optimize(m: &ModelEntry, query: &str) -> Result<String, String> {
         slow_steps,
         base_fast_params: sim.fast_params.clone(),
         base_slow_params: sim.slow_params.clone(),
+        base_fast_init: sim.fast_init.clone(),
+        base_slow_init: sim.slow_init.clone(),
     };
     let res = run_coupled(&model, &problem)?;
 
@@ -663,6 +714,8 @@ fn run_couple_scan(m: &ModelEntry, query: &str) -> Result<String, String> {
     // 前向模型只构建一次（天气只克隆一次），循环内只改 params（同 coupled.rs 的优化）
     let mut input = CoupledInput::new(&fast, &slow, sim.links.clone(), weather, slow_steps);
     input.feedback = sim.feedback.clone();
+    input.fast_init = sim.fast_init.clone(); // per-site 初值（HUM_N 真值等）·网格恒定，循环外设一次
+    input.slow_init = sim.slow_init.clone();
     let base_fast = sim.fast_params.clone(); // 含烤进 workspace 的威海 theta 真参
     let base_slow = sim.slow_params.clone();
     let consts: HashMap<String, f64> = problem.constants.iter().map(|(k, v)| (k.clone(), *v)).collect();

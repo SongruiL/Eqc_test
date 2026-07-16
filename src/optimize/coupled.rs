@@ -30,6 +30,10 @@ pub struct CoupledModel<'a> {
     pub base_fast_params: HashMap<String, f64>,
     /// 作物固定参数。
     pub base_slow_params: HashMap<String, f64>,
+    /// 快模型状态初值覆盖（per-site 初始条件，如 HUM_N 真值）；旋钮不碰 init。
+    pub base_fast_init: HashMap<String, f64>,
+    /// 慢模型状态初值覆盖。
+    pub base_slow_init: HashMap<String, f64>,
 }
 
 /// 一次耦合优化的结果。
@@ -99,6 +103,8 @@ pub fn run_coupled(m: &CoupledModel, problem: &Problem) -> Result<CoupledOptimiz
         m.slow_steps,
     );
     input.feedback = m.feedback.clone();
+    input.fast_init = m.base_fast_init.clone(); // per-site 初值（HUM_N 真值等）·旋钮不碰 init，闭包外设一次
+    input.slow_init = m.base_slow_init.clone();
     let consts: HashMap<String, f64> =
         problem.constants.iter().map(|(k, v)| (k.clone(), *v)).collect();
 
@@ -187,6 +193,8 @@ mod tests {
             slow_steps: 2,
             base_fast_params: HashMap::new(),
             base_slow_params: HashMap::new(),
+            base_fast_init: HashMap::new(),
+            base_slow_init: HashMap::new(),
         };
         let res = run_coupled(&m, &problem).unwrap();
         assert!((res.best_knobs[0] - 5.0).abs() < 0.05, "g={}", res.best_knobs[0]);
@@ -201,7 +209,7 @@ mod tests {
         let problem = parse_problem("optimize:\n  knobs: [ { var: a, kind: param, bounds: [0, 1] } ]\n  objective: { expr: \"(final z)\" }\n").unwrap();
         let mut weather = HashMap::new();
         weather.insert("u".to_string(), vec![1.0; 2]);
-        let m = CoupledModel { fast: &fast, slow: &slow, links: vec![CoupledLink { to: "a".into(), from: "y".into(), agg: crate::sim::Agg::Mean, scale: 1.0 }], feedback: vec![], weather, slow_steps: 1, base_fast_params: HashMap::new(), base_slow_params: HashMap::new() };
+        let m = CoupledModel { fast: &fast, slow: &slow, links: vec![CoupledLink { to: "a".into(), from: "y".into(), agg: crate::sim::Agg::Mean, scale: 1.0 }], feedback: vec![], weather, slow_steps: 1, base_fast_params: HashMap::new(), base_slow_params: HashMap::new(), base_fast_init: HashMap::new(), base_slow_init: HashMap::new() };
         assert!(run_coupled(&m, &problem).is_err());
     }
 }

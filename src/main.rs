@@ -1623,6 +1623,8 @@ fn run_optimize_coupled(
         slow_steps,
         base_fast_params,
         base_slow_params,
+        base_fast_init: std::collections::HashMap::new(), // CLI optimize-coupled 无 init 通道（保持现状）
+        base_slow_init: std::collections::HashMap::new(),
     };
     println!(
         "   旋钮 {} 个 | {} 慢步 × R={} | DE pop={} iters={} seed={}",
