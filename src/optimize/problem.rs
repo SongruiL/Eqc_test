@@ -49,6 +49,11 @@ pub struct Problem {
     /// 目标/约束方程引用的非模型标量（单价、成本系数、目标值…）。
     #[serde(default)]
     pub constants: IndexMap<String, f64>,
+    /// ★参数 SSOT：外部常数文件（如经济系数 SSOT `econ_params.json`）；相对 spec 目录解析。
+    /// 读其 `coeffs` 子对象（econ_params.json 约定·跳过 units/provenance 等非数值）或扁平 `{name: number}` map
+    /// 作基线，spec 内联 `constants:` 叠加在其上（内联覆盖·就地微调优先）。让 spec 不再手抄 econ 值→退役 verify 创可贴。
+    #[serde(default)]
+    pub constants_file: Option<String>,
     /// 一般约束：`expr ≤ max`，用惩罚法。
     #[serde(default)]
     pub constraints: Vec<Constraint>,
@@ -281,11 +286,44 @@ pub fn parse_problem(yaml: &str) -> Result<Problem, String> {
     Ok(pf.optimize)
 }
 
-/// 从文件读取决策 spec。
+/// 读外部常数文件（JSON）：取 `coeffs` 子对象（econ_params.json 约定·跳过 units/provenance 等非数值），
+/// 否则把顶层当扁平 `{name: number}` map。缺失/坏/无数值 → **硬报错**（econ 是决策地基，绝不静默丢失）。
+fn load_constants_file(path: &Path) -> Result<IndexMap<String, f64>, String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("读常数文件失败（{}）：{e}", path.display()))?;
+    let v: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("常数文件不是合法 JSON（{}）：{e}", path.display()))?;
+    let obj = v
+        .get("coeffs")
+        .and_then(|c| c.as_object())
+        .or_else(|| v.as_object())
+        .ok_or_else(|| format!("常数文件应为对象或含 coeffs 对象：{}", path.display()))?;
+    let mut out = IndexMap::new();
+    for (k, val) in obj {
+        if let Some(f) = val.as_f64() {
+            out.insert(k.clone(), f); // 跳过非数值项（元数据）
+        }
+    }
+    if out.is_empty() {
+        return Err(format!("常数文件无数值常量：{}", path.display()));
+    }
+    Ok(out)
+}
+
+/// 从文件读取决策 spec。若 spec 声明 `constants_file`，加载并合并（文件作基线、内联覆盖）。
 pub fn load_problem(path: &Path) -> Result<Problem, String> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| format!("读取决策 spec {} 失败: {e}", path.display()))?;
-    parse_problem(&text)
+    let mut problem = parse_problem(&text)?;
+    if let Some(cf) = problem.constants_file.clone() {
+        let base = path.parent().unwrap_or_else(|| Path::new("."));
+        let mut merged = load_constants_file(&base.join(&cf))?; // 外部文件（econ SSOT）作基线
+        for (k, v) in &problem.constants {
+            merged.insert(k.clone(), *v); // spec 内联叠加在其上（就地微调优先）
+        }
+        problem.constants = merged;
+    }
+    Ok(problem)
 }
 
 #[cfg(test)]
