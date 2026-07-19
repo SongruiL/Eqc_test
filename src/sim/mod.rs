@@ -178,6 +178,9 @@ pub struct BalanceLawCheck {
     pub skip_reason: Option<String>,
     /// 守恒是否通过：可核算且 `max_resid ≤ tol`。**缺变量跳过 = false**（与 CLI 旧 `any_fail` 同义）。
     pub ok: bool,
+    /// §8：本条走的口径。`true` = 瞬时结构残差（`|rate−net/cap|`·solver-无关·找到权威 rate 变量）；
+    /// `false` = 有限差分回退（`|Δstock−dt·net|`·仅显式机器零·状态量无 `rate:` 声明时）。
+    pub structural: bool,
 }
 
 /// 守恒律逐步最大残差（F5c）。**★步对齐**：轨迹里 `state[n]=state[n-1]+dt·rate[n]`，且 `rate[n]`
@@ -198,11 +201,57 @@ pub fn balance_residual(stock: &[f64], net: &[f64], dt: f64) -> (f64, usize) {
     (max_resid, argstep)
 }
 
-/// 按 `meta.balance` 声明逐条核守恒律：`|Δstock − dt·(Σsources − Σsinks)/cap| ≤ tol`。
-/// `cap`（可选「有效容量」变量）缺省≡1。**纯核算、不打印**：CLI `--check-balance` 消费它做诊断输出，
-/// GP 候选硬过滤（Tier3）也消费它判「候选是否破守恒」——单一真相源。
+/// **§8 瞬时结构残差**（守恒徽章新口径）：`max_t |rate_recorded[t] − net_eff[t]|`，
+/// 其中 `net_eff = (Σsources − Σsinks)/cap`、`rate_recorded` = 状态量的已记录速率变量。
+///
+/// 验的是「**速率方程 ≡ 守恒律声明**」（authoring 守恒）：rate 与 net_eff 同一时刻、同一批
+/// 记录值求值，方程照守恒律写时**按定义机器零、与积分器无关**（显式 Euler / 隐式 BDF 皆过）。
+/// 相较 [`balance_residual`] 的有限差分口径 `|Δstock − dt·net|`（硬编码显式 Euler 步、隐式 BDF
+/// 段内自适应多步时因求积错配误判超容差），本口径把「方程是否守恒」与「积分器是否忠实执行」解耦：
+/// 前者=本律，后者=V1 双路径 / V6。漏一项汇 / 加平衡表外项立刻现形（rate ≠ net_eff）。
+pub fn structural_residual(rate: &[f64], net_eff: &[f64]) -> (f64, usize) {
+    let mut max_resid = 0.0f64;
+    let mut argstep = 0usize;
+    let n = rate.len().min(net_eff.len());
+    for t in 0..n {
+        let resid = (rate[t] - net_eff[t]).abs();
+        if resid > max_resid {
+            max_resid = resid;
+            argstep = t;
+        }
+    }
+    (max_resid, argstep)
+}
+
+/// §8：解析守恒律 `stock` 的**权威速率变量名**——来自状态量的 `rate:` 声明（SSOT），**非命名约定**。
+/// 标量态：直查 `file.variables[stock].rate`；cohort 展开态 `base__i`：拆末尾 `__i` 后缀、查 base 的
+/// rate 再接回（`FOM_N__1` → base `FOM_N` 的 rate `rate_FOMN` → `rate_FOMN__1`）。stock 非状态量/无
+/// `rate:` → None（守恒律核算回退有限差分）。这样不同模型任意 rate 命名（`rate_CBuf`/`bal_rate`…）都对。
+pub fn resolve_stock_rate(file: &EquationFile, stock: &str) -> Option<String> {
+    if let Some(v) = file.variables.get(stock) {
+        return v.rate.clone();
+    }
+    if let Some(idx) = stock.rfind("__") {
+        let (base, suffix) = (&stock[..idx], &stock[idx..]);
+        if let Some(v) = file.variables.get(base) {
+            return v.rate.as_ref().map(|r| format!("{r}{suffix}"));
+        }
+    }
+    None
+}
+
+/// 按 `meta.balance` 声明逐条核守恒律。**§8：守恒徽章 = 瞬时结构残差** `|rate − (Σ源−Σ汇)/cap|`
+/// （验「速率方程 ≡ 守恒律声明」·solver-无关·显式/隐式 BDF 皆机器零；rate 变量经 [`resolve_stock_rate`]
+/// 从 `variable.rate` 权威解析）；stock 无权威 rate 变量时回退有限差分 `|Δstock − dt·net|`（仅显式机器零，
+/// 隐式会因求积错配假报——`structural=false` 标记之）。`cap` 缺省≡1。**纯核算、不打印**：CLI
+/// `--check-balance` 消费它做诊断输出，GP 候选硬过滤（Tier3）也消费它——单一真相源。
 /// 缺存量/源汇/cap 轨迹的守恒律记 `skip_reason` + `ok=false`（与旧 CLI `any_fail` 逐字节等义）。
-pub fn check_balance_laws(laws: &[BalanceLaw], out: &SimOutput, dt: f64) -> Vec<BalanceLawCheck> {
+pub fn check_balance_laws(
+    laws: &[BalanceLaw],
+    out: &SimOutput,
+    dt: f64,
+    file: &EquationFile,
+) -> Vec<BalanceLawCheck> {
     let mut results = Vec::with_capacity(laws.len());
     for law in laws {
         let mk_skip = |reason: String| BalanceLawCheck {
@@ -213,6 +262,7 @@ pub fn check_balance_laws(laws: &[BalanceLaw], out: &SimOutput, dt: f64) -> Vec<
             residual: None,
             skip_reason: Some(reason),
             ok: false,
+            structural: false,
         };
         let stock = match out.trajectories.get(&law.stock) {
             Some(s) => s,
@@ -260,7 +310,21 @@ pub fn check_balance_laws(laws: &[BalanceLaw], out: &SimOutput, dt: f64) -> Vec<
                 }
             },
         };
-        let (max_resid, argstep) = balance_residual(stock, &net_eff, dt);
+        // §8：优先瞬时结构残差（solver-无关·验速率方程≡守恒律声明）。速率变量经 resolve_stock_rate
+        // 从 variable.rate 权威解析（非命名约定·任意 rate 命名都对）；无 rate 声明则回退有限差分（显式机器零）。
+        let (max_resid, argstep, used_structural) = match resolve_stock_rate(file, &law.stock)
+            .as_deref()
+            .and_then(|rn| out.trajectories.get(rn))
+        {
+            Some(rate_series) => {
+                let (r, a) = structural_residual(rate_series, &net_eff);
+                (r, a, true)
+            }
+            None => {
+                let (r, a) = balance_residual(stock, &net_eff, dt);
+                (r, a, false)
+            }
+        };
         let scale = stock.last().map(|x| x.abs()).unwrap_or(0.0);
         let rel = if scale > 0.0 { max_resid / scale } else { 0.0 };
         let ok = max_resid <= law.tol;
@@ -272,6 +336,7 @@ pub fn check_balance_laws(laws: &[BalanceLaw], out: &SimOutput, dt: f64) -> Vec<
             residual: Some(BalanceResidual { max_resid, argstep, rel }),
             skip_reason: None,
             ok,
+            structural: used_structural,
         });
     }
     results

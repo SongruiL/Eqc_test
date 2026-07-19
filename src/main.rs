@@ -185,9 +185,14 @@ enum Commands {
         #[arg(short, long, default_value = "sim_output.csv")]
         output: PathBuf,
 
-        /// 跑完按 meta.balance 声明逐步核守恒律（|Δstock−dt·(Σ源−Σ汇)/cap|≤tol，cap 缺省≡1）；超容差非零退出。标定全程安全带（F5c）
+        /// 跑完核守恒律（§8 瞬时结构残差 |rate−(Σ源−Σ汇)/cap|≤tol·solver-无关·显式/隐式皆机器零）；超容差非零退出。标定全程安全带（F5c）
         #[arg(long)]
         check_balance: bool,
+
+        /// 用隐式 BDF 求解（生产路径·亚日刚性 ODE）；需 `cargo build --features implicit`。缺省显式 Euler。
+        /// 配 --check-balance 时守恒徽章走 §8 瞬时结构残差（solver-无关·隐式也机器零）。
+        #[arg(long)]
+        implicit: bool,
     },
 
     /// 耦合仿真（C1：多速率、单向）：快模型（温室，小 dt）↔ 慢模型（作物，大 dt）一次集成运行。
@@ -506,8 +511,8 @@ fn main() {
         Commands::Couple { fast, slow, weather, links, feedback, fast_params, slow_params, fast_init, slow_init, steps, output, fed_out, fast_out } => {
             run_couple(&fast, &slow, &weather, &links, &feedback, fast_params.as_ref(), slow_params.as_ref(), fast_init.as_ref(), slow_init.as_ref(), steps, &output, fed_out.as_ref(), fast_out.as_ref())
         }
-        Commands::Simulate { input, drivers, params, steps, output, dt, init, check_balance } => {
-            run_simulate(&input, &drivers, params.as_ref(), steps, &output, dt, init.as_deref(), check_balance)
+        Commands::Simulate { input, drivers, params, steps, output, dt, init, check_balance, implicit } => {
+            run_simulate(&input, &drivers, params.as_ref(), steps, &output, dt, init.as_deref(), check_balance, implicit)
         }
         Commands::Sweep { input, drivers, param, range, sensitivity, percent, var, reduce, params, steps, output } => {
             run_sweep(&input, &drivers, param.as_deref(), range.as_deref(), sensitivity, percent, &var, &reduce, params.as_ref(), steps, &output)
@@ -617,6 +622,27 @@ fn run_report(
     Ok(())
 }
 
+/// 隐式 BDF 求解（`simulate --implicit`·生产路径）。feature-gated：未开 `implicit` 时报错。
+/// smooth_eps=0.05 平滑状态依赖非光滑算子（min/clamp），与 arc 生产口径一致。
+#[cfg(all(feature = "cli", feature = "implicit"))]
+fn run_simulate_implicit(
+    file: &equation_compiler::EquationFile,
+    sim_in: &equation_compiler::SimInput,
+) -> Result<equation_compiler::SimOutput, Box<dyn std::error::Error>> {
+    use equation_compiler::sim::implicit::{simulate_implicit, ImplicitOpts};
+    println!("   （隐式 BDF 生产路径·smooth_eps=0.05；--check-balance 走 §8 结构残差 solver-无关）");
+    simulate_implicit(file, sim_in, ImplicitOpts { smooth_eps: Some(0.05), ..Default::default() })
+        .map_err(|e| format!("隐式仿真失败: {e}").into())
+}
+
+#[cfg(all(feature = "cli", not(feature = "implicit")))]
+fn run_simulate_implicit(
+    _file: &equation_compiler::EquationFile,
+    _sim_in: &equation_compiler::SimInput,
+) -> Result<equation_compiler::SimOutput, Box<dyn std::error::Error>> {
+    Err("--implicit 需用 `cargo build --features implicit` 构建（默认构建不含隐式 BDF）".into())
+}
+
 #[cfg(feature = "cli")]
 fn run_simulate(
     input: &PathBuf,
@@ -627,6 +653,7 @@ fn run_simulate(
     dt: Option<f64>,
     init: Option<&str>,
     check_balance: bool,
+    implicit: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use equation_compiler::scenario::{load_drivers_csv, load_params_json};
     use equation_compiler::{parse_file, simulate, SimInput};
@@ -652,7 +679,11 @@ fn run_simulate(
         sim_in.init_overrides = parse_init_overrides(s)?;
     }
 
-    let out = simulate(&file, &sim_in).map_err(|e| format!("仿真失败: {e}"))?;
+    let out = if implicit {
+        run_simulate_implicit(&file, &sim_in)?
+    } else {
+        simulate(&file, &sim_in).map_err(|e| format!("仿真失败: {e}"))?
+    };
 
     // 写轨迹 CSV（首列 DAT）
     let mut csv = String::from("DAT");
@@ -686,27 +717,29 @@ fn run_simulate(
     // F5c：--check-balance 跑完按 meta.balance 逐步核守恒律
     if check_balance {
         let dt_actual = dt.unwrap_or(file.meta.dt);
-        run_balance_check(&file.meta.balance, &out, dt_actual)?;
+        run_balance_check(&file, &out, dt_actual)?;
     }
     Ok(())
 }
 
-/// 按 `meta.balance` 声明逐步核守恒律（F5c 标定安全带）：`|Δstock − dt·(Σsources−Σsinks)/cap| ≤ tol`。
+/// 按 `meta.balance` 声明逐步核守恒律（F5c 标定安全带）。**§8：守恒徽章=瞬时结构残差**
+/// `|rate_recorded − (Σsources−Σsinks)/cap| ≤ tol`（验「速率方程≡守恒律声明」·**solver-无关**·
+/// 显式/隐式 BDF 皆机器零）；速率变量缺失时回退有限差分 `|Δstock − dt·net|`（仅显式机器零）。
 /// `cap`（可选「有效容量」变量）缺省≡1（碳/水/氮直接源-汇守恒）；温室能量/湿度型平衡声明 cap。
 /// 超容差返回 Err（→ 进程非零退出，标定脚本可捕捉）；空声明=跳过。
 #[cfg(feature = "cli")]
 fn run_balance_check(
-    laws: &[equation_compiler::BalanceLaw],
+    file: &equation_compiler::EquationFile,
     out: &equation_compiler::SimOutput,
     dt: f64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if laws.is_empty() {
+    if file.meta.balance.is_empty() {
         println!("   （--check-balance：模型未声明 meta.balance，跳过守恒诊断）");
         return Ok(());
     }
-    println!("⚖️  守恒诊断（--check-balance，dt={dt}）：");
+    println!("⚖️  守恒诊断（--check-balance，dt={dt}·§8 瞬时结构残差 rate≡净流量/cap·solver-无关）：");
     // 核算逻辑抽到 sim::check_balance_laws（GP 硬过滤复用同一真相源），此处只负责诊断打印。
-    let checks = equation_compiler::sim::check_balance_laws(laws, out, dt);
+    let checks = equation_compiler::sim::check_balance_laws(&file.meta.balance, out, dt, file);
     let mut any_fail = false;
     for c in &checks {
         match &c.residual {
@@ -720,11 +753,17 @@ fn run_balance_check(
                 any_fail = true;
             }
             Some(r) => {
+                let cap_suffix = c.cap.as_deref().map(|cap| format!("÷{cap}")).unwrap_or_default();
+                // §8：诚实标注实走口径——结构残差(solver-无关) vs 有限差分回退(仅显式·隐式会假报)。
+                let method = if c.structural {
+                    format!("[{} rate≡净流量{}]", c.stock, cap_suffix)
+                } else {
+                    format!("[Δ{}{}·⚠FD回退(stock 无 rate: 声明·隐式恐假报)]", c.stock, cap_suffix)
+                };
                 println!(
-                    "   守恒律「{}」[Δ{}{}]：max残差={:.3e} @step{}（相对{:.2e}，tol={:.0e}）{}",
+                    "   守恒律「{}」{}：max残差={:.3e} @step{}（相对{:.2e}，tol={:.0e}）{}",
                     c.name,
-                    c.stock,
-                    c.cap.as_deref().map(|cap| format!("÷{cap}")).unwrap_or_default(),
+                    method,
                     r.max_resid,
                     r.argstep,
                     r.rel,

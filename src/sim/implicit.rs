@@ -626,6 +626,73 @@ equations:
         assert!((y2 - a2).abs() < 1e-6, "y2={y2} vs analytic {a2}");
     }
 
+    /// §8：守恒徽章 = 瞬时结构残差（solver-无关）。在**隐式 BDF 轨迹**上：
+    ///   - 结构残差 `|rate − (Σ源−Σ汇)/cap|` 机器零（速率方程 ≡ 守恒律声明）；
+    ///   - 旧有限差分口径 `|Δstock − dt·net|` 因 BDF 段内自适应多步、求积与「dt·端点rate」错配而
+    ///     远超容差 —— 正是 §8 修的漏洞（隐式误判「不守恒」，实为求积伪影非泄漏）。
+    #[test]
+    fn test_s8_structural_residual_solver_independent() {
+        use crate::sim::{balance_residual, check_balance_laws, structural_residual};
+        // 刚性一阶弛豫 x' = (S − k·x)/cap，k=100 → dt=0.1 下 k·dt=10 极刚，BDF 段内积分 ≠ dt·端点rate。
+        let yaml = r#"
+meta:
+  id: S8
+  model: S8
+  name_cn: 结构残差测试
+  dt: 0.1
+  dt_seconds: 1
+  balance:
+    - { name: X守恒, stock: x, sources: [inflow], sinks: [outflow], cap: capx, tol: 1.0e-9 }
+parameters:
+  kk: { name_cn: 速率常数, default: 100.0 }
+  ss: { name_cn: 源, default: 5.0 }
+variables:
+  x: { type: output, class: state, init: 10.0, rate: xdot }   # ★非常规 rate 命名(非 rate_x)·验 resolve_stock_rate 走 variable.rate 权威解析
+  xdot: { type: intermediate, class: rate }
+  inflow: { type: intermediate, class: auxiliary }
+  outflow: { type: intermediate, class: auxiliary }
+  capx: { type: intermediate, class: auxiliary }
+equations:
+  - { id: IN, name: 源, output: inflow, expression: { ref: ss } }
+  - { id: OUT, name: 汇, output: outflow, expression: { op: mul, args: [ { ref: kk }, { ref: x } ] } }
+  - { id: CAP, name: 容量, output: capx, expression: { const: 1.0 } }
+  - { id: RATE, name: 速率, output: xdot, expression: { op: div, args: [ { op: sub, args: [ { ref: inflow }, { ref: outflow } ] }, { ref: capx } ] } }
+"#;
+        let file = parse_str(yaml).unwrap();
+        let input = SimInput::new(30); // 30 步 × 0.1 = t 3.0
+        let opts = ImplicitOpts { rtol: 1e-10, atol: 1e-12, smooth_eps: None };
+        let out = simulate_implicit(&file, &input, opts).unwrap();
+
+        // §8 结构残差（check_balance_laws 现走此口径）：隐式轨迹上机器零。
+        let checks = check_balance_laws(&file.meta.balance, &out, 0.1, &file);
+        let c = &checks[0];
+        assert!(c.ok, "§8 结构残差应机器零守恒，got {:?}", c.residual);
+        assert!(c.structural, "应走结构残差口径（rate 变量经 variable.rate 解析命中）");
+        assert!(
+            c.residual.as_ref().unwrap().max_resid < 1e-9,
+            "结构残差应 <1e-9（隐式上按定义机器零）"
+        );
+
+        // 旧有限差分口径在同一隐式轨迹上应远超容差（求积错配·§8 必要性硬证据）。
+        let stock = out.series("x").unwrap();
+        let inflow = out.series("inflow").unwrap();
+        let outflow = out.series("outflow").unwrap();
+        let capx = out.series("capx").unwrap();
+        let net_eff: Vec<f64> =
+            (0..out.steps).map(|t| (inflow[t] - outflow[t]) / capx[t]).collect();
+        let (fd_resid, _) = balance_residual(stock, &net_eff, 0.1);
+        // FD 残差远超守恒律 tol(1e-9)——实测 ~4.5e-4，即误判 ~45 万×；结构残差同轨迹上机器零。
+        assert!(
+            fd_resid > 1e-5,
+            "旧有限差分口径在隐式 BDF 上应误判(远超 tol=1e-9)，got {fd_resid:.3e}（证 §8 必要）"
+        );
+
+        // 交叉印证：结构残差直算 = rate 与 net_eff 逐位一致（rate 变量名非常规 `xdot`）。
+        let rate = out.series("xdot").unwrap();
+        let (struct_resid, _) = structural_residual(rate, &net_eff);
+        assert!(struct_resid < 1e-12, "结构残差直算应机器零，got {struct_resid:.3e}");
+    }
+
     /// E5a 折叠：验证 `_prev` 变量被删、方程引用被折回真态。
     #[test]
     fn test_fold_prev_removes_delay_and_rewrites() {

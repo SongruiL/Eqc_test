@@ -211,8 +211,9 @@ pub fn graph_evidence(
         let base_out = simulate(baseline, sim_input).ok();
         let patched_out = simulate(&patched, sim_input).ok();
         if let (Some(bo), Some(po)) = (&base_out, &patched_out) {
-            let bchecks = check_balance_laws(&baseline.meta.balance, bo, dt);
-            let pchecks = check_balance_laws(&baseline.meta.balance, po, dt);
+            // §8：rate 变量经 variable.rate 权威解析（baseline/patched 状态-速率结构相同，用 baseline）。
+            let bchecks = check_balance_laws(&baseline.meta.balance, bo, dt, baseline);
+            let pchecks = check_balance_laws(&baseline.meta.balance, po, dt, baseline);
             for (bc, pc) in bchecks.iter().zip(pchecks.iter()) {
                 // 破守恒 = baseline 守、patched 真核算出超容差（跳过/仿真失败不归咎候选）。
                 let broke = bc.ok && !pc.ok && pc.residual.is_some();
