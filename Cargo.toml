@@ -19,6 +19,11 @@ name = "eqc"
 path = "src/main.rs"
 required-features = ["cli"]
 
+# V1 主验收：真实三态温室模型上的显式↔隐式一致性（Phase 0）
+[[example]]
+name = "v1_greenhouse"
+required-features = ["implicit"]
+
 [features]
 default = []
 cli = ["clap", "walkdir", "ureq"]
@@ -26,6 +31,10 @@ advanced_math = ["statrs", "puruspe", "num-complex"]
 gsl_math = ["GSL"]
 calculus = ["peroxide"]
 matrix = ["nalgebra"]
+# 隐式刚性求解器（Phase 0）：接 diffsol 的 BDF。default-features=false + 只开 nalgebra 后端
+# = 纯 Rust、无 C 依赖（不碰 SUNDIALS/SuiteSparse/LLVM/CUDA），扛离线/中国镜像。默认构建不含。
+# 依赖 cli：隐式求解器住在 `sim` 模块里，而 `sim`/`parser` 目前门控在 cli feature 下。
+implicit = ["cli", "dep:diffsol"]
 full = ["cli", "advanced_math", "gsl_math", "calculus", "matrix"]
 
 [dependencies]
@@ -68,6 +77,10 @@ peroxide = { version = "0.37", optional = true, default-features = false }
 
 # 矩阵运算（可选）
 nalgebra = { version = "0.33", optional = true }
+
+# 隐式刚性 ODE/DAE 求解器（可选，Phase 0 引擎地基）。MIT，纯 Rust 核心（nalgebra/faer），
+# 闭包 RHS + 数值 FD Jacobian（J·v）+ BDF/SDIRK。锁定精确版本防 0.x breaking，藏在 implicit feature 后。
+diffsol = { version = "=0.16.1", default-features = false, features = ["nalgebra"], optional = true }
 
 [dev-dependencies]
 tempfile = "3.0"

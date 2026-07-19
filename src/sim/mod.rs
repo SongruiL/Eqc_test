@@ -55,6 +55,8 @@ pub enum SimError {
     Eval { var: String, err: EvalError },
     /// 耦合仿真错误（缺 dt_seconds、R 非整数、接口非标量、慢驱动无链接等）。
     Coupling(String),
+    /// 隐式求解器错误（diffsol 构建/求解失败、状态非标量等）。仅 `implicit` feature 用。
+    Solver(String),
 }
 
 impl std::fmt::Display for SimError {
@@ -74,9 +76,15 @@ impl std::fmt::Display for SimError {
             SimError::UndeclaredOutput(n) => write!(f, "方程输出变量 {n} 未在 variables: 中声明"),
             SimError::Eval { var, err } => write!(f, "求值变量 {var} 出错: {err}"),
             SimError::Coupling(m) => write!(f, "耦合仿真: {m}"),
+            SimError::Solver(m) => write!(f, "隐式求解器: {m}"),
         }
     }
 }
+
+/// 隐式刚性求解器（Phase 0 引擎地基）：接 diffsol 的 BDF，把手写 `_prev` 折叠回真态、
+/// 解真联立系统。见 `docs/spec-implicit-solver-phase0.md`。仅 `implicit` feature 编入。
+#[cfg(feature = "implicit")]
+pub mod implicit;
 
 impl std::error::Error for SimError {}
 
@@ -876,7 +884,7 @@ pub fn simulate_coupled(input: &CoupledInput) -> Result<CoupledOutput, SimError>
 }
 
 /// 把一个变量本步的 Value 展平记入轨迹：标量→`name`；向量→`name[1]`、`name[2]`…；矩阵→`name[r,c]`。
-fn flatten_into(traj: &mut IndexMap<String, Vec<f64>>, name: &str, v: &Value) {
+pub(crate) fn flatten_into(traj: &mut IndexMap<String, Vec<f64>>, name: &str, v: &Value) {
     match v {
         Value::Scalar(x) => traj.entry(name.to_string()).or_default().push(*x),
         Value::Vector(d) => {
