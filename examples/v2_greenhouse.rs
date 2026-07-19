@@ -32,10 +32,10 @@ fn main() {
     let file = parse_file(Path::new(path)).expect("解析 d2 温室模型");
     println!("模型: {} v{} ({})  dt={}s", file.meta.id, file.meta.version, file.meta.name_cn, file.meta.dt);
 
-    // 常数驱动：白昼·lai=2·vpOut=1650（激活冠层短波/蒸腾/结露）。
-    let drv_names = ["iGlob", "tOut", "tSky", "tSoOut", "wind", "lai", "vpOut"];
-    let drv_vals = [800.0, 20.0, -10.0, 15.0, 2.0, 2.0, 1650.0];
-    let states = ["tCan", "tAir", "tCov", "tFlr", "vpAir"];
+    // 常数驱动：白昼·lai=2·vpOut=1650·co2Out=700（激活冠层短波/蒸腾/结露/CO₂交换）。
+    let drv_names = ["iGlob", "tOut", "tSky", "tSoOut", "wind", "lai", "vpOut", "co2Out"];
+    let drv_vals = [800.0, 20.0, -10.0, 15.0, 2.0, 2.0, 1650.0, 700.0];
+    let states = ["tCan", "tAir", "tCov", "tFlr", "vpAir", "co2Air"];
 
     let horizon = 1800.0_f64; // 30 分钟
 
@@ -70,15 +70,15 @@ fn main() {
 
     // —— 显式 Euler 逐步细化，应收敛到隐式参照 ——
     println!("\n显式 Euler 收敛(各态 |显式−隐式None| 末值误差):");
-    println!("  {:>8} | {:>10} | {:>10} | {:>10} | {:>10} | {:>10}", "dt(s)", states[0], states[1], states[2], states[3], states[4]);
+    println!("  {:>8} | {:>9} | {:>9} | {:>9} | {:>9} | {:>9} | {:>9}", "dt(s)", states[0], states[1], states[2], states[3], states[4], states[5]);
     let mut last_err = vec![f64::INFINITY; states.len()];
     for &dt in &[10.0f64, 5.0, 2.0, 1.0, 0.5] {
         let steps = (horizon / dt).round() as usize;
         let ex = simulate(&file, &mk(steps, dt)).expect("显式求解");
         let errs: Vec<f64> = states.iter().enumerate()
             .map(|(i, s)| (ex.final_value(s).unwrap() - ref_final[i]).abs()).collect();
-        println!("  {:>8.3} | {:>10.3e} | {:>10.3e} | {:>10.3e} | {:>10.3e} | {:>10.3e}",
-            dt, errs[0], errs[1], errs[2], errs[3], errs[4]);
+        println!("  {:>8.3} | {:>9.2e} | {:>9.2e} | {:>9.2e} | {:>9.2e} | {:>9.2e} | {:>9.2e}",
+            dt, errs[0], errs[1], errs[2], errs[3], errs[4], errs[5]);
         last_err = errs;
     }
 
