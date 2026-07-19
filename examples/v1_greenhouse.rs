@@ -43,7 +43,7 @@ fn main() {
         drivers: const_drivers(&drv_names, &drv_vals, steps_ref),
         ..Default::default()
     };
-    let impl_out = simulate_implicit(&file, &inp, ImplicitOpts { rtol: 1e-8, atol: 1e-8 })
+    let impl_out = simulate_implicit(&file, &inp, ImplicitOpts { rtol: 1e-8, atol: 1e-8, smooth_eps: None })
         .expect("隐式求解");
     let ref_final: Vec<f64> = states.iter().map(|s| impl_out.final_value(s).unwrap()).collect();
 

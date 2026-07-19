@@ -31,7 +31,7 @@ use crate::schema::EquationFile;
 
 use super::{flatten_into, SimError, SimInput, SimOutput};
 
-use diffsol::{NalgebraLU, NalgebraMat, OdeBuilder, OdeSolverMethod};
+use diffsol::{NalgebraLU, NalgebraMat, OdeBuilder, OdeSolverMethod, OdeSolverStopReason};
 
 /// diffsol 稠密矩阵后端（纯 Rust nalgebra，稠密 LU 够 BDF 用）。
 type M = NalgebraMat<f64>;
@@ -43,12 +43,17 @@ pub struct ImplicitOpts {
     pub rtol: f64,
     /// 绝对容差。GreenLight 默认 1e-3；V1 校核可收紧（如 1e-9）逼近「精确」。
     pub atol: f64,
+    /// E2 平滑化拐角圆化宽度（无量纲）。`None` = 不跑平滑 pass（全光滑模型/V1 逐位不变）；
+    /// `Some(ε)` = 对**状态依赖**的非光滑算子（clamp/max/min…）施平滑代理（拐角 ~ε 宽度圆化）。
+    /// 因控制律自变量常被 Pband 归一化成无量纲量，单个 ε（~0.05）即可，无需逐物理量 pBand。
+    /// 只平滑「自变量子树引用状态量」的开关——驱动/时间开关段内恒常、不进状态 Jacobian、留硬。
+    pub smooth_eps: Option<f64>,
 }
 
 impl Default for ImplicitOpts {
     fn default() -> Self {
-        // 抄 GreenLight `solve_ivp(BDF)` 默认。
-        Self { rtol: 1e-6, atol: 1e-3 }
+        // 抄 GreenLight `solve_ivp(BDF)` 默认。平滑默认关（全光滑模型无需）。
+        Self { rtol: 1e-6, atol: 1e-3, smooth_eps: None }
     }
 }
 
@@ -124,6 +129,104 @@ pub fn fold_prev_for_implicit(file: &EquationFile) -> Result<EquationFile, SimEr
         folded.variables.shift_remove(prev_name.as_str());
     }
     Ok(folded)
+}
+
+fn bx(e: Expr) -> Box<Expr> {
+    Box::new(e)
+}
+
+/// 平滑 `max(a,b)` → `0.5(a+b+√((a−b)²+ε²))`（GreenLight Eq 9.27 平滑 max0 原型）。
+fn smooth_max(a: Expr, b: Expr, eps: f64) -> Expr {
+    let diff = Expr::Sub(bx(a.clone()), bx(b.clone()));
+    let sq = Expr::Mul(bx(diff.clone()), bx(diff)); // (a−b)²
+    let root = Expr::Sqrt(bx(Expr::Add(bx(sq), bx(Expr::Const(eps * eps)))));
+    let sum = Expr::Add(bx(Expr::Add(bx(a), bx(b))), bx(root)); // a+b+√…
+    Expr::Mul(bx(Expr::Const(0.5)), bx(sum))
+}
+
+/// 平滑 `min(a,b)` → `0.5(a+b−√((a−b)²+ε²))`。
+fn smooth_min(a: Expr, b: Expr, eps: f64) -> Expr {
+    let diff = Expr::Sub(bx(a.clone()), bx(b.clone()));
+    let sq = Expr::Mul(bx(diff.clone()), bx(diff));
+    let root = Expr::Sqrt(bx(Expr::Add(bx(sq), bx(Expr::Const(eps * eps)))));
+    let sum = Expr::Sub(bx(Expr::Add(bx(a), bx(b))), bx(root)); // a+b−√…
+    Expr::Mul(bx(Expr::Const(0.5)), bx(sum))
+}
+
+fn smooth_max_vec(args: Vec<Expr>, eps: f64) -> Expr {
+    let mut it = args.into_iter();
+    let mut acc = match it.next() {
+        Some(a) => a,
+        None => return Expr::Const(0.0),
+    };
+    for x in it {
+        acc = smooth_max(acc, x, eps);
+    }
+    acc
+}
+
+fn smooth_min_vec(args: Vec<Expr>, eps: f64) -> Expr {
+    let mut it = args.into_iter();
+    let mut acc = match it.next() {
+        Some(a) => a,
+        None => return Expr::Const(0.0),
+    };
+    for x in it {
+        acc = smooth_min(acc, x, eps);
+    }
+    acc
+}
+
+/// **E2 平滑化（隐式向）**：把**状态依赖**的非光滑算子替换成 C¹ 光滑代理，让隐式 Newton 的
+/// Jacobian 良定义。**外科式**：`if !子树引用状态量 → 原样`——驱动/时间开关（如 `if(I_glob≥…)`、
+/// `if(DAT<…)`）段-ZOH 下段内恒常、对 `∂f/∂state` 零贡献、留硬（其跳变落段边界，由分段重启处理）。
+/// 只平滑真正进状态 Jacobian 的开关（如控制律 `clamp((T_air−setpt)/Pband,0,1)`）。因自变量常被
+/// Pband 归一化成无量纲量，单个 ε 即可。**0b 覆盖**：算术容器（+−×÷^neg）递归 + Max/Min/Clamp/Abs
+/// 代理；关系/if（Phase 1 结露门 `if vp>vp_sat`）留待扩展（届时状态依赖的它们暂原样、隐式或需更小步）。
+fn smooth_expr(e: &Expr, states: &HashSet<String>, eps: f64) -> Expr {
+    // 子树无状态依赖 → 原样（驱动/时间开关留硬；也短路掉纯常数子树）
+    if !e.get_variable_refs().iter().any(|r| states.contains(r)) {
+        return e.clone();
+    }
+    let s = |x: &Expr| smooth_expr(x, states, eps);
+    match e {
+        // 递归算术容器（到达内部的非光滑算子）
+        Expr::Add(a, b) => Expr::Add(bx(s(a)), bx(s(b))),
+        Expr::Sub(a, b) => Expr::Sub(bx(s(a)), bx(s(b))),
+        Expr::Mul(a, b) => Expr::Mul(bx(s(a)), bx(s(b))),
+        Expr::Div(a, b) => Expr::Div(bx(s(a)), bx(s(b))),
+        Expr::Pow(a, b) => Expr::Pow(bx(s(a)), bx(s(b))),
+        Expr::Neg(a) => Expr::Neg(bx(s(a))),
+        // 非光滑算子 → 平滑代理（此处 dep 已为真 = 状态依赖）
+        Expr::Max(args) => smooth_max_vec(args.iter().map(|a| s(a)).collect(), eps),
+        Expr::Min(args) => smooth_min_vec(args.iter().map(|a| s(a)).collect(), eps),
+        Expr::Clamp(x, lo, hi) => smooth_max(s(lo), smooth_min(s(hi), s(x), eps), eps),
+        Expr::Abs(x) => {
+            let xs = s(x);
+            Expr::Sqrt(bx(Expr::Add(
+                bx(Expr::Mul(bx(xs.clone()), bx(xs))),
+                bx(Expr::Const(eps * eps)),
+            )))
+        }
+        // 叶子（Var/Const/Param）及未下探的光滑容器：原样。温室控制律的开关都在算术层，
+        // 故不下探 exp/ln/sum 等找埋藏开关；Phase 1 按需扩展。
+        other => other.clone(),
+    }
+}
+
+/// 对（已折叠的）模型的每条方程施 [`smooth_expr`]（拐角圆化宽度 ε）。返回改过的克隆。
+pub fn smooth_for_implicit(file: &EquationFile, eps: f64) -> EquationFile {
+    let states: HashSet<String> = file
+        .variables
+        .iter()
+        .filter(|(_, v)| v.is_integrator())
+        .map(|(n, _)| n.clone())
+        .collect();
+    let mut out = file.clone();
+    for eq in &mut out.equations {
+        eq.expression = smooth_expr(&eq.expression, &states, eps);
+    }
+    out
 }
 
 /// 把（已折叠 `_prev` 的）模型编译成速率计划：分类状态量/驱动/方程 + 对方程做拓扑排序。
@@ -341,14 +444,23 @@ fn advance_segment(
         .bdf::<NalgebraLU<f64>>()
         .map_err(|e| SimError::Solver(format!("构建 BDF 失败: {e}")))?;
 
+    // step-loop 到 dt：高层 `solve()` 的 max_steps_between_checkpoints 机制会在段内步数超限时
+    // 提前返回（刚性/尖拐角段需大量内步 → interpolate(dt) 越界失败）。手动步进到 TstopReached
+    // 保证精确抵达 dt，再取 `state().y` 末态，绕开 checkpoint 早返 + interpolate 边界。
     solver
-        .solve(dt)
-        .map_err(|e| SimError::Solver(format!("求解失败: {e}")))?;
-    let yf = solver
-        .interpolate(dt)
-        .map_err(|e| SimError::Solver(format!("内插失败: {e}")))?;
-
-    Ok((0..n).map(|i| yf[i]).collect())
+        .set_stop_time(dt)
+        .map_err(|e| SimError::Solver(format!("set_stop_time: {e}")))?;
+    loop {
+        match solver
+            .step()
+            .map_err(|e| SimError::Solver(format!("求解失败: {e}")))?
+        {
+            OdeSolverStopReason::TstopReached => break,
+            _ => continue, // InternalTimestep（继续步进）；本问题无 root
+        }
+    }
+    let st = solver.state();
+    Ok((0..n).map(|i| st.y[i]).collect())
 }
 
 /// 段末在状态 `x` 处再评一趟计划，把状态量 + 方程量 + 驱动量记入轨迹（对齐 [`super::simulate`] 输出）。
@@ -394,6 +506,11 @@ pub fn simulate_implicit(
     opts: ImplicitOpts,
 ) -> Result<SimOutput, SimError> {
     let folded = fold_prev_for_implicit(file)?;
+    // E2 平滑化（隐式向）：仅在 smooth_eps 设置时跑；只平滑状态依赖的非光滑算子。
+    let folded = match opts.smooth_eps {
+        Some(eps) => smooth_for_implicit(&folded, eps),
+        None => folded,
+    };
     let plan = build_rate_plan(&folded, &input.init_overrides)?;
     let dt = input.dt.unwrap_or(folded.meta.dt);
 
@@ -498,7 +615,7 @@ equations:
         let file = parse_str(yaml).unwrap();
         // 20 步 × dt 0.05 = t 1.0；无驱动
         let input = SimInput::new(20);
-        let opts = ImplicitOpts { rtol: 1e-9, atol: 1e-11 };
+        let opts = ImplicitOpts { rtol: 1e-9, atol: 1e-11, smooth_eps: None };
         let out = simulate_implicit(&file, &input, opts).unwrap();
 
         let y1 = out.final_value("y1").unwrap();
@@ -597,7 +714,7 @@ equations:
         let out = simulate_implicit(
             &file,
             &SimInput { steps: 40, dt: Some(1.0), ..Default::default() },
-            ImplicitOpts { rtol: 1e-8, atol: 1e-10 },
+            ImplicitOpts { rtol: 1e-8, atol: 1e-10, smooth_eps: None },
         )
         .unwrap();
         let y1 = out.final_value("y1").unwrap();
@@ -650,7 +767,7 @@ equations:
         let impl_out = simulate_implicit(
             &file,
             &SimInput::new(steps_impl),
-            ImplicitOpts { rtol: 1e-10, atol: 1e-12 },
+            ImplicitOpts { rtol: 1e-10, atol: 1e-12, smooth_eps: None },
         )
         .unwrap();
         let t_impl = impl_out.final_value("T").unwrap();
@@ -665,7 +782,7 @@ equations:
         let impl2 = simulate_implicit(
             &file,
             &SimInput { steps: steps_impl, dt: Some(0.01), ..Default::default() },
-            ImplicitOpts { rtol: 1e-10, atol: 1e-12 },
+            ImplicitOpts { rtol: 1e-10, atol: 1e-12, smooth_eps: None },
         )
         .unwrap();
         let t_impl_h = impl2.final_value("T").unwrap();
@@ -700,5 +817,90 @@ equations:
             errs[errs.len() - 1]
         );
         assert!(errs[errs.len() - 1] < 0.02, "最细 dt 显式-隐式差 {} 仍偏大", errs[errs.len() - 1]);
+    }
+
+    /// **0b E2 平滑 pass 外科式验证**：状态依赖的 clamp 被平滑掉 Max/Min；驱动依赖的开关留硬。
+    #[test]
+    fn test_smooth_pass_surgical() {
+        let yaml = r#"
+meta: { id: SMOOTHT, model: SmoothT, name_cn: 平滑pass测试, dt: 1.0, dt_seconds: 1 }
+parameters:
+  Pband: { name_cn: 带, default: 3.0 }
+  sp:    { name_cn: 设定点, default: 20.0 }
+  thr:   { name_cn: 阈值, default: 5.0 }
+variables:
+  T:      { type: output, class: state, init: 10.0, rate: rate_T }
+  Igl:    { type: input, class: driving }
+  u:      { type: output, class: auxiliary }
+  g:      { type: output, class: auxiliary }
+  rate_T: { type: intermediate, class: rate }
+equations:
+  - { id: U, name: 状态clamp, output: u, expression: { op: max, args: [ {const: 0}, { op: min, args: [ {const: 1}, { op: div, args: [ { op: sub, args: [ {ref: sp}, {ref: T} ] }, {ref: Pband} ] } ] } ] } }
+  - { id: G, name: 驱动max, output: g, expression: { op: max, args: [ {const: 0}, { op: sub, args: [ {ref: Igl}, {ref: thr} ] } ] } }
+  - { id: RT, name: 速率, output: rate_T, expression: { op: sub, args: [ {ref: u}, { op: mul, args: [ {const: 0.1}, {ref: T} ] } ] } }
+"#;
+        let file = parse_str(yaml).unwrap();
+        let sm = smooth_for_implicit(&fold_prev_for_implicit(&file).unwrap(), 0.05);
+        let dbg = |id: &str| format!("{:?}", sm.equations.iter().find(|e| e.id == id).unwrap().expression);
+        // U 依赖状态 T → clamp 应被平滑：不再含 Max/Min，且出现 Sqrt
+        let u = dbg("U");
+        assert!(!u.contains("Max(") && !u.contains("Min("), "状态依赖 clamp 应平滑掉 Max/Min: {u}");
+        assert!(u.contains("Sqrt("), "平滑 clamp 应引入 Sqrt: {u}");
+        // G 只依赖驱动 Igl → 段内常数 → 留硬（仍含 Max）
+        let g = dbg("G");
+        assert!(g.contains("Max("), "驱动依赖 max 应留硬: {g}");
+    }
+
+    /// **0b 端到端：带状态依赖控制律的模型可被隐式求解**。`Q_heat=Q_max·clamp((T_sp−T)/Pband,0,1)`
+    /// 加热反馈（结构同 ctrl 变体 GH-QHEAT）。平滑-隐式应收敛，且贴合硬-显式-细dt（bottom-line：
+    /// 平滑+隐式 ≈ 硬+显式）。硬 clamp 直接喂隐式会让 Newton 在拐角挣扎——平滑是让控制律走隐式的前提。
+    #[test]
+    fn test_ctrl_control_law_implicit() {
+        let yaml = r#"
+meta: { id: CTRLHEAT, model: CtrlHeat, name_cn: 控制律热模型, dt: 0.5, dt_seconds: 1 }
+parameters:
+  U:     { name_cn: 传热, default: 2.0 }
+  cap:   { name_cn: 热容, default: 5.0 }
+  T_out: { name_cn: 室外, default: 5.0 }
+  T_sp:  { name_cn: 加热设定点, default: 20.0 }
+  Pband: { name_cn: 比例带, default: 3.0 }
+  Q_max: { name_cn: 最大加热, default: 50.0 }
+variables:
+  T:      { type: output, class: state, init: 5.0, rate: rate_T }
+  T_prev: { class: semi_state, init: 5.0, prev: T }
+  Q_heat: { type: output, class: auxiliary }
+  Q_loss: { class: rate }
+  rate_T: { class: rate }
+equations:
+  - { id: QH, name: 加热控制, output: Q_heat, expression: { op: mul, args: [ {ref: Q_max}, { op: max, args: [ {const: 0}, { op: min, args: [ {const: 1}, { op: div, args: [ { op: sub, args: [ {ref: T_sp}, {ref: T_prev} ] }, {ref: Pband} ] } ] } ] } ] } }
+  - { id: QL, name: 传热损失, output: Q_loss, expression: { op: mul, args: [ {ref: U}, { op: sub, args: [ {ref: T_prev}, {ref: T_out} ] } ] } }
+  - { id: RT, name: 速率, output: rate_T, expression: { op: div, args: [ { op: sub, args: [ {ref: Q_heat}, {ref: Q_loss} ] }, {ref: cap} ] } }
+"#;
+        let file = parse_str(yaml).unwrap();
+        let horizon = 20.0_f64;
+
+        // 硬-显式-细 dt = truth
+        let expl = simulate(
+            &file,
+            &SimInput { steps: (horizon / 0.02) as usize, dt: Some(0.02), ..Default::default() },
+        )
+        .unwrap();
+        let t_hard = expl.final_value("T").unwrap();
+
+        // 平滑-隐式：应收敛且贴 truth
+        let smooth = simulate_implicit(
+            &file,
+            &SimInput { steps: 40, dt: Some(0.5), ..Default::default() },
+            ImplicitOpts { rtol: 1e-8, atol: 1e-9, smooth_eps: Some(0.02) },
+        )
+        .expect("平滑-隐式应收敛（控制律模型走隐式）");
+        let t_smooth = smooth.final_value("T").unwrap();
+
+        // 受控平衡在 clamp 内部线性区（T*≈18.4），平滑几乎不影响 → 贴硬-显式
+        assert!(
+            (t_smooth - t_hard).abs() < 0.1,
+            "平滑-隐式 {t_smooth} 应贴硬-显式-细dt {t_hard}（bottom-line 决策差异小）"
+        );
+        assert!(t_smooth > 15.0 && t_smooth < 20.0, "受控平衡应在 T_out..T_sp 间: {t_smooth}");
     }
 }

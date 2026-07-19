@@ -24,6 +24,11 @@ required-features = ["cli"]
 name = "v1_greenhouse"
 required-features = ["implicit"]
 
+# V4：真实 ctrl 变体上 E2 平滑化的决策差异 ε-扫描（Phase 0b）
+[[example]]
+name = "v4_ctrl"
+required-features = ["implicit"]
+
 [features]
 default = []
 cli = ["clap", "walkdir", "ureq"]
