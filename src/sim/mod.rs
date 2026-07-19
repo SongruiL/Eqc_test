@@ -32,7 +32,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use indexmap::IndexMap;
 
 use crate::eval::{value_binop, Env, EvalError, Value};
-use crate::schema::{BalanceLaw, EquationFile};
+use crate::schema::{BalanceLaw, DataType, EquationFile, VarClass, Variable, VariableType};
 
 /// 仿真错误。
 #[derive(Debug, Clone, PartialEq)]
@@ -373,6 +373,171 @@ pub fn build_plan(file: &EquationFile) -> Result<SimPlan<'_>, SimError> {
     Ok(SimPlan { steps, delays, drivers })
 }
 
+/// **E5b（显式向 `_prev` 自动插入）**：对 `_prev`-free 源自动检测 rate→state 步内环、
+/// 插入延迟寄存器（`<state>_prev`），并把「喂速率」的方程里对状态量的直读改写为读上一步值。
+///
+/// 这是 [`fold_prev_for_implicit`](crate::sim::implicit::fold_prev_for_implicit) 的**镜像**：
+/// 隐式路径把手写 `_prev` **折回**真态（解真联立系统）；显式路径反过来，对作者写的真联立
+/// 方程自动**补** `_prev` 破环（前向 Euler 用上一步状态算速率）。让作者按 P5「写真联立方程、
+/// 不手维护 `_prev`」，两种求解模式各自变换。
+///
+/// # 语义（前向 Euler）
+/// - **喂速率的方程**（反向可达任一 `rate` 变量的方程）里对状态量 `X` 的直读 → `X_prev`。
+/// - **纯诊断**（不喂任何速率、在状态更新后算）保留本步值——与手写约定一致（温室三态的
+///   `es`/`chi_sat`/`RH` 用本步 `T_air`/`H_air`，无环）。
+///
+/// # no-op 保证（双约定兼容）
+/// 若模型已能拓扑排序（含手写 `_prev` 者、或天然无环者）→ **原样克隆返回**（不插不改）。
+/// 只有 `build_plan` 报 [`SimError::Cycle`] 时才介入；介入后仍有环（如两辅助量互引的**真环**，
+/// 非 `_prev` 可破）→ 传播 `Cycle`。
+///
+/// # 只建「状态量」延迟寄存器
+/// 只为破 rate→state 环建 `prev: <state>` 寄存器；**绝不**创建「源是 auxiliary」的差分寄存器
+/// （那是建模选择、须作者手写，如 `DRLG = RLG − RLG_prev`）——与 E5a 的拒绝逻辑对称。
+///
+/// # 命名守卫（loud fail）
+/// 生成名 `<X>_prev` 若已被占用且非「prev: X」的匹配寄存器（另一态的 `_prev`、方程输出、参数、
+/// 甚至同名状态）→ 返回 [`SimError::Solver`]，拒绝静默复用/覆盖/双声明。这同时挡住「状态恰好叫
+/// `<Y>_prev`」时顺序 `substitute` 的变量捕获（目标名=源状态时落守卫）。
+///
+/// # E5a↔E5b 往返范围（诚实边界）
+/// 「E5a 折叠 → E5b 重建 = 逐位一致」仅对**诊断不含状态后向差分**的模型成立。若原模型有
+/// `dX = X − X_prev`（`X_prev` 源是状态、作者要上一步值做差分），E5a `fold_prev_for_implicit`
+/// 会把它折成 `X − X = 0`（信息在 E5a 阶段丢失、非本函数可恢复）。全物理基座的诊断读**本步**
+/// 状态（无后向差分），在范围内。
+pub fn insert_prev_for_explicit(file: &EquationFile) -> Result<EquationFile, SimError> {
+    // 已能拓扑排序 → no-op（手写 `_prev` / 天然无环）。只有真·rate→state 步内环才介入。
+    match build_plan(file) {
+        Ok(_) => return Ok(file.clone()),
+        Err(SimError::Cycle(_)) => {}
+        // MissingInit/UndefinedSource/UndeclaredOutput 等真错误非 E5b 职责，直接上抛。
+        Err(e) => return Err(e),
+    }
+
+    let mut out = file.clone();
+
+    // 状态量（声明 rate 的 integrator）与方程输出集合。
+    let states: HashSet<String> = out
+        .variables
+        .iter()
+        .filter(|(_, v)| v.is_integrator())
+        .map(|(n, _)| n.clone())
+        .collect();
+    let eq_outputs: HashSet<String> = out.equations.iter().map(|e| e.output.clone()).collect();
+    // 各方程的变量引用（改写前的原始结构）。
+    let refs_of: HashMap<String, Vec<String>> = out
+        .equations
+        .iter()
+        .map(|e| (e.output.clone(), e.expression.get_variable_refs()))
+        .collect();
+
+    // R = 「喂速率」的方程输出集：从每个 `rate` 变量出发沿方程依赖反向可达，止于非方程输出
+    // （=状态量/驱动/参数=源）。前向 Euler 里 R 中每条方程都在某速率的计算锥内。
+    let mut feeds_rate: HashSet<String> = HashSet::new();
+    let mut work: Vec<String> = out
+        .variables
+        .values()
+        .filter_map(|v| v.rate.clone())
+        .filter(|r| eq_outputs.contains(r))
+        .collect();
+    while let Some(o) = work.pop() {
+        if !feeds_rate.insert(o.clone()) {
+            continue;
+        }
+        if let Some(rs) = refs_of.get(&o) {
+            for r in rs {
+                if eq_outputs.contains(r) && !feeds_rate.contains(r) {
+                    work.push(r.clone());
+                }
+            }
+        }
+    }
+
+    // 扫描「喂速率」方程里被直读的状态量 = 需建 `_prev` 寄存器（先只收集、不改）。
+    let mut regs_needed: Vec<String> = Vec::new();
+    for eq in &out.equations {
+        if !feeds_rate.contains(&eq.output) {
+            continue;
+        }
+        if let Some(rs) = refs_of.get(&eq.output) {
+            for x in rs {
+                if states.contains(x) && !regs_needed.iter().any(|s| s == x) {
+                    regs_needed.push(x.clone());
+                }
+            }
+        }
+    }
+
+    // **命名新鲜性/冲突守卫（改写前先查，loud fail）**：`<X>_prev` 已存在时——仅当它正是
+    // 「prev: X」的延迟寄存器才复用（兼容部分手写）；被别的变量占用（另一态的 `_prev`、方程
+    // 输出、甚至同名状态）或被参数占用 → 拒绝静默复用/覆盖/双声明，报错要求改名。这一守卫也
+    // 挡住「状态恰好叫 `<Y>_prev`」引发的顺序 substitute 变量捕获（目标名=某源状态 → 落守卫）。
+    for x in &regs_needed {
+        let pname = format!("{x}_prev");
+        if let Some(existing) = out.variables.get(pname.as_str()) {
+            if existing.prev.as_deref() != Some(x.as_str()) {
+                return Err(SimError::Solver(format!(
+                    "E5b 破环需为状态量 '{x}' 建延迟寄存器 '{pname}'，但该名已被占用且非 \
+                     'prev: {x}' 的延迟寄存器——拒绝静默复用/覆盖（会致错值）。请重命名冲突变量。"
+                )));
+            }
+        } else if out.parameters.contains_key(pname.as_str()) {
+            return Err(SimError::Solver(format!(
+                "E5b 破环需为状态量 '{x}' 建延迟寄存器 '{pname}'，但该名已是参数——拒绝造成 \
+                 参数/变量 同名双声明。请重命名冲突参数。"
+            )));
+        }
+    }
+
+    // 改写「喂速率」方程里对状态量的直读 → `<state>_prev`（守卫已过 → 目标名新鲜/匹配、无捕获）。
+    for eq in &mut out.equations {
+        if !feeds_rate.contains(&eq.output) {
+            continue;
+        }
+        if let Some(rs) = refs_of.get(&eq.output) {
+            for x in rs {
+                if states.contains(x) {
+                    eq.expression =
+                        eq.expression.substitute(x, &crate::ast::Expr::Var(format!("{x}_prev")));
+                }
+            }
+        }
+    }
+
+    // 新建状态量延迟寄存器（守卫确认过的匹配寄存器已存在则跳过：兼容部分手写 `_prev`）。
+    for x in &regs_needed {
+        let pname = format!("{x}_prev");
+        if out.variables.contains_key(pname.as_str()) {
+            continue;
+        }
+        let (unit, init) = {
+            let sv = out.variables.get(x.as_str()).expect("state var must exist");
+            (sv.unit.clone(), sv.init)
+        };
+        let reg = Variable {
+            var_type: VariableType::Intermediate,
+            dtype: DataType::Float,
+            unit,
+            description: None,
+            label: None,
+            measurable: false,
+            stress_factor: None,
+            stress_reduce: None,
+            source: None,
+            class: Some(VarClass::SemiState),
+            init,
+            rate: None,
+            prev: Some(x.clone()),
+            instance: None,
+        };
+        out.variables.insert(pname, reg);
+    }
+
+    // 校验：介入后若仍有环（非 rate→state 的真环，如两辅助量互引）→ 传播 `Cycle`。
+    build_plan(&out)?;
+    Ok(out)
+}
+
 /// **单模型步进器**：持有一个模型的步进计划 + 跨步状态（env / prev / 参数），可被外部
 /// **按步驱动**（每步提供驱动量值），步后读任意变量当前值。`simulate`（单模型）与
 /// `simulate_coupled`（多速率耦合）共用它 → 耦合每步与单模型逐步**一致**（单一真相源）。
@@ -523,7 +688,10 @@ impl<'a> Stepper<'a> {
 pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimError> {
     // 时间步长：SimInput.dt 覆盖 > 模型 meta.dt（缺省 1.0=日步长）。状态量积分用 X+=rate·dt。
     let dt = input.dt.unwrap_or(file.meta.dt);
-    let mut stepper = Stepper::new(file, dt, &input.param_overrides, &input.init_overrides)?;
+    // E5b（显式向 `_prev` 自动插入）：对 `_prev`-free 源自动补延迟寄存器破 rate→state 步内环；
+    // 已可拓扑排序者（含手写 `_prev`、天然无环）原样返回 → 现有模型逐位不变、零回归。
+    let sim_file = insert_prev_for_explicit(file)?;
+    let mut stepper = Stepper::new(&sim_file, dt, &input.param_overrides, &input.init_overrides)?;
 
     // 校验驱动量：每个驱动量须有长度=steps 的时间序列（保持原错误语义）。
     for &dn in stepper.drivers() {
@@ -543,7 +711,7 @@ pub fn simulate(file: &EquationFile, input: &SimInput) -> Result<SimOutput, SimE
     let mut traj: IndexMap<String, Vec<f64>> = IndexMap::new();
     for n in 0..input.steps {
         stepper.step(|d| input.drivers.get(d).map(|s| s[n]))?;
-        for name in file.variables.keys() {
+        for name in sim_file.variables.keys() {
             let v = stepper.get(name).ok_or_else(|| SimError::Unresolved(name.clone()))?;
             flatten_into(&mut traj, name, &v);
         }
@@ -1544,9 +1712,11 @@ equations: [ { id: E, name: y, output: y, expression: { op: add, args: [ { ref: 
         assert!(matches!(simulate_coupled(&inp3), Err(SimError::Coupling(_))));
     }
 
-    /// 速率方程引用自身状态量当前值 → 步内环。
+    /// 速率方程引用自身状态量当前值 = rate→state 步内环。底层 `build_plan`/`topo_order` 仍报环；
+    /// 但 `simulate` 经 **E5b** 自动插 `X_prev` 破环 → 正常跑（前向 Euler：R[n]=0.1·X[n−1]，
+    /// X[n]=X[n−1]+R·dt，dt=1 → X=[1.1, 1.21]）。
     #[test]
-    fn test_self_referential_rate_is_cycle() {
+    fn test_e5b_auto_inserts_prev_for_self_ref_rate() {
         let yaml = r#"
 meta: { id: C, model: C, name_cn: x }
 variables:
@@ -1559,7 +1729,117 @@ equations:
     expression: { op: mul, args: [ { ref: X }, { const: 0.1 } ] }
 "#;
         let (_d, file) = write_model(yaml);
+        // 底层机制：原始 `_prev`-free 模型仍被 `build_plan` 判为步内环。
+        assert!(matches!(build_plan(&file), Err(SimError::Cycle(_))));
+        // E5b：`insert_prev_for_explicit` 补 `X_prev` 延迟寄存器破环。
+        let fixed = insert_prev_for_explicit(&file).unwrap();
+        assert!(fixed.variables.get("X_prev").map_or(false, |v| v.is_delay()));
+        assert!(build_plan(&fixed).is_ok());
+        // `simulate` 经 E5b 自动破环 → 正常跑，前向 Euler 轨迹 X=[1.1, 1.21]。
         let input = SimInput::new(2);
-        assert!(matches!(simulate(&file, &input), Err(SimError::Cycle(_))));
+        let out = simulate(&file, &input).unwrap();
+        let x = out.trajectories.get("X").expect("X 轨迹");
+        assert!((x[0] - 1.1).abs() < 1e-12, "X[0]={}", x[0]);
+        assert!((x[1] - 1.21).abs() < 1e-12, "X[1]={}", x[1]);
+    }
+
+    /// **E5b 金标准（E5a↔E5b 互逆 + 逐位复现）**：带手写 `_prev` 的模型经 E5a 折成 `_prev`-free、
+    /// 再经 E5b（`simulate` 内自动）重插 → 显式仿真轨迹与原版**逐位一致**。覆盖三种状态读：
+    /// 自态 flux 读（rX 读 X）、跨态 flux 读（rY 读 X）、诊断读本步（diag 读 X/Y 当前值）。
+    /// （用 E5a `fold_prev_for_implicit` 做逆变换，故仅 `implicit` 构建编译。）
+    #[cfg(feature = "implicit")]
+    #[test]
+    fn test_e5b_roundtrip_bit_identical() {
+        let yaml = r#"
+meta: { id: RT, model: RT, name_cn: x, dt: 1 }
+variables:
+  X:      { type: output, class: state, init: 10.0, rate: rX }
+  X_prev: { class: semi_state, init: 10.0, prev: X }
+  Y:      { type: output, class: state, init: 3.0, rate: rY }
+  Y_prev: { class: semi_state, init: 3.0, prev: Y }
+  rX:   { class: rate }
+  rY:   { class: rate }
+  diag: { type: output, class: auxiliary }
+equations:
+  - { id: RX, name: rX, output: rX, expression: { op: mul, args: [ { const: 0.2 }, { op: sub, args: [ { const: 5.0 }, { ref: X_prev } ] } ] } }
+  - { id: RY, name: rY, output: rY, expression: { op: mul, args: [ { const: 0.1 }, { ref: X_prev } ] } }
+  - { id: D,  name: diag, output: diag, expression: { op: add, args: [ { ref: X }, { ref: Y } ] } }
+"#;
+        let (_d, original) = write_model(yaml);
+        // E5a：折成 `_prev`-free（删寄存器、X_prev→X）。
+        let stripped = crate::sim::implicit::fold_prev_for_implicit(&original).unwrap();
+        assert!(stripped.variables.get("X_prev").is_none(), "E5a 应删 X_prev 寄存器");
+        assert!(stripped.variables.get("Y_prev").is_none(), "E5a 应删 Y_prev 寄存器");
+        assert!(build_plan(&stripped).is_err(), "折叠后 `_prev`-free 应成步内环");
+        // 两路同一驱动跑显式仿真：original（E5b no-op）vs stripped（E5b 重插 `_prev`）。
+        let input = SimInput::new(6);
+        let out_orig = simulate(&original, &input).unwrap();
+        let out_strip = simulate(&stripped, &input).unwrap();
+        for var in ["X", "Y", "diag"] {
+            assert_eq!(
+                out_orig.trajectories.get(var).unwrap(),
+                out_strip.trajectories.get(var).unwrap(),
+                "{var} 轨迹应逐位一致（E5b 忠实重建手写破环约定）"
+            );
+        }
+    }
+
+    /// 命名守卫（BUG1/BUG2a）：生成名 `X_prev` 已被别的变量占用（此处 X_prev 本身是个状态）
+    /// → E5b loud 报错，绝不静默复用/捕获致错值。
+    #[test]
+    fn test_e5b_rejects_prev_name_taken_by_other_var() {
+        let yaml = r#"
+meta: { id: NC, model: NC, name_cn: x }
+variables:
+  X:      { type: output, class: state, init: 10.0, rate: rX }
+  X_prev: { type: output, class: state, init: 5.0, rate: rXp }
+  rX:  { class: rate }
+  rXp: { class: rate }
+equations:
+  - { id: RX,  name: rX,  output: rX,  expression: { op: mul, args: [ { const: -0.1 }, { ref: X } ] } }
+  - { id: RXP, name: rXp, output: rXp, expression: { const: 0.0 } }
+"#;
+        let (_d, file) = write_model(yaml);
+        assert!(
+            matches!(insert_prev_for_explicit(&file), Err(SimError::Solver(_))),
+            "X_prev 名被状态占用 → 应 loud 报错"
+        );
+    }
+
+    /// 命名守卫（BUG2c）：生成名 `X_prev` 已是参数 → E5b loud 报错，绝不造 参数/变量 双声明。
+    #[test]
+    fn test_e5b_rejects_prev_name_taken_by_param() {
+        let yaml = r#"
+meta: { id: NP, model: NP, name_cn: x }
+parameters:
+  X_prev: { name_cn: 冲突参数, default: 5.0 }
+variables:
+  X:  { type: output, class: state, init: 1.0, rate: rX }
+  rX: { class: rate }
+equations:
+  - { id: RX, name: rX, output: rX, expression: { op: mul, args: [ { const: -0.1 }, { ref: X } ] } }
+"#;
+        let (_d, file) = write_model(yaml);
+        assert!(matches!(insert_prev_for_explicit(&file), Err(SimError::Solver(_))));
+    }
+
+    /// 复用分支：已有匹配的手写 `X_prev`（prev: X）但 rX 漏用、直读了 X → 成环。
+    /// E5b 复用现成寄存器破环（不报错、不重建）。
+    #[test]
+    fn test_e5b_reuses_matching_prev_register() {
+        let yaml = r#"
+meta: { id: RU, model: RU, name_cn: x, dt: 1 }
+variables:
+  X:      { type: output, class: state, init: 10.0, rate: rX }
+  X_prev: { class: semi_state, init: 10.0, prev: X }
+  rX: { class: rate }
+equations:
+  - { id: RX, name: rX, output: rX, expression: { op: mul, args: [ { const: -0.1 }, { ref: X } ] } }
+"#;
+        let (_d, file) = write_model(yaml);
+        assert!(matches!(build_plan(&file), Err(SimError::Cycle(_))), "直读 X 应成环");
+        let fixed = insert_prev_for_explicit(&file).unwrap();
+        assert!(build_plan(&fixed).is_ok(), "E5b 复用 X_prev 破环");
+        assert_eq!(fixed.variables.get("X_prev").unwrap().prev.as_deref(), Some("X"));
     }
 }
