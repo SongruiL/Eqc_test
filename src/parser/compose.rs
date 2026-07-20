@@ -16,9 +16,14 @@
 //! - **③ meta.balance 重生成**：= ①（模块新态律）+ ②（追加进已有律）后的 `meta.balance`，V3 `--check-balance`
 //!   读它、与重生成 rate 逐态机器零（被注入态重言式·模块新态手写 rate+独立 balance 仍真核验）。
 //! - **④ 悬挂校验（G6）**：inject 引用的通量须合成后已声明，否则 `ComposeError::DanglingRef`。
+//! - **⑤ 死码剪枝（prune）**：override/balance-override 把 base 通量重路由掉后，那些 base 方程变死码
+//!   （无人引用）但仍被逐个求值（引擎无可达性过滤）——是所有 balance-override 模块的通病。overlay 显式
+//!   声明 `prune: [<eq_id>]`，compose 删这些方程 + orphan 变量声明。**死码守卫**核验目标确实无人引用
+//!   （`PruneStillReferenced` 拒绝误删）→ 作者声明意图、引擎核验确实死、误删风险清零。
 //!
-//! **override-by-id（拓扑覆盖/遮挡）= Phase 2 后续（施工 spec §9 / 档 1c）**，本档不实现：append_equations
-//! 现只做追加+去重；1c 扩展为「带 `override: <id>` 标记则就地替换」。
+//! **override-by-id（拓扑覆盖/遮挡）+ balance override + 死码剪枝**已落地（施工 spec §9 / 档 1c / thermal_screen）：
+//! `append_equations` 带 `override: <id>` 就地替换 base 同 id；`append_balance` 带 `override: true` 替换
+//! 已有存量律 + 重生成 rate；`prune_dead_code` 清理重路由后的死方程。
 
 use serde_yaml::{Mapping, Value};
 use std::collections::HashSet;
@@ -42,6 +47,11 @@ pub enum ComposeError {
     InvalidOverlay { module: String, detail: String },
     /// override-by-id（档1c）：`override: <id>` 指向的 base 方程 id 不存在。
     OverrideMissingTarget { module: String, id: String },
+    /// 死码剪枝（override/balance-override 重路由后清理）：`prune: [<id>]` 指向的方程 id 不存在于合成后模型。
+    PruneMissingTarget { module: String, id: String },
+    /// 死码剪枝守卫：`prune` 目标方程的 output 在合成后**仍被存活方程/balance/rate 引用**——不是死码，
+    /// 拒绝误删（把「自动可达性检测」当守卫：作者声明 prune 意图，引擎核验「确实死」，误删风险清零）。
+    PruneStillReferenced { module: String, output: String },
 }
 
 impl std::fmt::Display for ComposeError {
@@ -64,6 +74,12 @@ impl std::fmt::Display for ComposeError {
             }
             ComposeError::OverrideMissingTarget { module, id } => {
                 write!(f, "模块 {module} 的 override 目标方程 id `{id}` 不存在于 base")
+            }
+            ComposeError::PruneMissingTarget { module, id } => {
+                write!(f, "模块 {module} 的 prune 目标方程 id `{id}` 不存在于合成后模型")
+            }
+            ComposeError::PruneStillReferenced { module, output } => {
+                write!(f, "模块 {module} 试图 prune 的方程输出 `{output}` 仍被存活方程/balance 引用（不是死码·拒绝误删）")
             }
         }
     }
@@ -97,12 +113,21 @@ pub fn compose(base: Value, overlays: &[ModuleOverlay]) -> Result<Value, Compose
     let mut merged = base;
     // 被注入（守恒律改动）的态，保序去重——逐 overlay 处理完再统一重生成其 rate。
     let mut dirty: Vec<String> = Vec::new();
+    // 死码剪枝目标 (module, eq_id)：override/balance-override 重路由后作者显式声明的死方程。
+    // 处理**留到末尾**——需最终合成态（含 rate 重生成后）来核验「确实死」（死码守卫）。保序去重。
+    let mut prune_targets: Vec<(String, String)> = Vec::new();
     for ov in overlays {
         apply_overlay(&mut merged, &ov.value, &mut dirty)?;
+        collect_prune_targets(&ov.value, &mut prune_targets);
     }
     // ② rate 重生成：被注入态的 rate 方程从合并后的 balance 律重建。
     for stock in &dirty {
         regenerate_rate(&mut merged, stock)?;
+    }
+    // ⑤ 死码剪枝：删 override/balance-override 重路由后不再被引用的方程 + 其 orphan 变量声明。
+    //    在 rate 重生成**之后**（重生成的 rate 表达式引用是最新的）→ 守卫扫的是最终合成态。
+    if !prune_targets.is_empty() {
+        prune_dead_code(&mut merged, &prune_targets)?;
     }
     // ④ 悬挂校验（G6）：inject 引用的通量须合成后已声明。
     dangling_check(&merged, overlays)?;
@@ -433,6 +458,148 @@ fn build_rate_expr_value(sources: &[String], sinks: &[String], cap: Option<&str>
     match cap {
         Some(c) => vop("div", vec![num, vref(c)]),
         None => num,
+    }
+}
+
+/// 从一个 overlay 收集 `prune: [<eq_id>]` 声明进 targets（保序去重·同 id 多次声明取首个 module 归属）。
+fn collect_prune_targets(ov: &Value, targets: &mut Vec<(String, String)>) {
+    if let Some(ids) = get_section(ov, "prune").and_then(Value::as_sequence) {
+        let module = module_name(ov);
+        for id in ids {
+            if let Some(s) = id.as_str() {
+                if !targets.iter().any(|(_, existing)| existing == s) {
+                    targets.push((module.clone(), s.to_string()));
+                }
+            }
+        }
+    }
+}
+
+/// **★死码剪枝 pass**（override/balance-override 重路由后清理·所有 balance-override 模块通病的治本）。
+///
+/// 删 `prune` 列出的方程 + 其 orphan 变量声明。**死码守卫**保证零误删：删完全部目标后，每个目标的
+/// output 须**无任何存活方程表达式 / balance 律 / 变量 rate·prev 引用**（否则 `PruneStillReferenced`）——
+/// 作者声明 prune 意图，引擎核验「确实死」。目标 id 不存在 → `PruneMissingTarget`。
+///
+/// 连带删 orphan 变量声明（守卫已保证无人引用、且方程输出唯一故无其它方程定义它）：过 validator 的
+/// `MissingOutputEquation` 硬门（type:output 须恰一条方程）+ 免 sim 运行期把它当缺值驱动量 `Unresolved`。
+///
+/// **零 live 行为**：死码喂空（无人引用），删它不动任何 live 变量的值；仅从输出 CSV/契约去掉死诊断列。
+/// 无 `prune:` 声明的模型/base-only 永不进此函数（`compose` 里 `prune_targets` 空则跳过）。
+fn prune_dead_code(merged: &mut Value, targets: &[(String, String)]) -> Result<(), ComposeError> {
+    // 1) 定位并删每个目标方程；记其 output 变量名（连带删 orphan 变量声明用）。
+    let mut removed_outputs: Vec<(String, String)> = Vec::new(); // (module, output_var)
+    for (module, id) in targets {
+        let eqs = merged
+            .as_mapping_mut()
+            .expect("base 顶层须为 mapping")
+            .get_mut("equations")
+            .and_then(|v| v.as_sequence_mut())
+            .ok_or_else(|| ComposeError::PruneMissingTarget { module: module.clone(), id: id.clone() })?;
+        let pos = eqs.iter().position(|e| {
+            e.as_mapping().and_then(|m| m.get("id")).and_then(Value::as_str) == Some(id.as_str())
+        });
+        match pos {
+            Some(p) => {
+                let removed = eqs.remove(p);
+                if let Some(out) = removed.as_mapping().and_then(|m| m.get("output")).and_then(Value::as_str) {
+                    removed_outputs.push((module.clone(), out.to_string()));
+                }
+            }
+            None => return Err(ComposeError::PruneMissingTarget { module: module.clone(), id: id.clone() }),
+        }
+    }
+    // 2) ★死码守卫：删完**全部**目标后收集所有存活引用（这样链式死码——A 只被 B 引用、B 也被删——正确判死）。
+    let live_refs = collect_all_refs(merged);
+    for (module, out) in &removed_outputs {
+        if live_refs.contains(out) {
+            return Err(ComposeError::PruneStillReferenced { module: module.clone(), output: out.clone() });
+        }
+    }
+    // 3) 删 orphan 变量声明（守卫已保证 out 无人引用；不在 variables 里则 remove 返 None·无害）。
+    if let Some(vars) = merged.as_mapping_mut().unwrap().get_mut("variables").and_then(Value::as_mapping_mut) {
+        for (_, out) in &removed_outputs {
+            vars.remove(out.as_str());
+        }
+    }
+    Ok(())
+}
+
+/// 合成后模型里所有「对某符号的引用」：方程表达式的 `{ref}` ∪ balance 律 sources/sinks/cap ∪
+/// 变量的 `rate`/`prev` 跨步字段。死码守卫用——目标 output 落在此集合即「仍被引用」（非死码）。
+///
+/// **★守卫完备性不变量（新增引用渠道必须同步此函数·否则守卫会漏扫→误删 live）**：本函数的正确性
+/// 依赖「对本地变量的引用**只**以 `{ref: name}` 出现在某方程 `expression` 子树内、或 balance 的
+/// sources/sinks/cap、或变量的 rate/prev 字段」。这在当前 schema 成立（`init` 是 `Option<f64>` 装不下
+/// 引用；structure/cohort 模板方程都住在顶层 `equations:` 故其 `{ref}` 照样被扫；agg 的 `over:` 命名的
+/// 是实体族、被聚合量在 `body:` 里以 `{ref}` 出现）。**若将来引擎新增「用变量名的其它字段」**（如让
+/// init/参数默认支持表达式、或加 `when:`/`guard:` 条件字段、或 agg 加直接命名变量的字段），**必须在此
+/// 补扫**，否则死码守卫失效。compose 在 structure/cohort 展开**之前**跑是这条不变量的关键前提。
+fn collect_all_refs(merged: &Value) -> HashSet<String> {
+    let mut set = HashSet::new();
+    // 方程表达式里的 {ref: name}
+    if let Some(eqs) = get_section(merged, "equations").and_then(Value::as_sequence) {
+        for eq in eqs {
+            if let Some(expr) = eq.as_mapping().and_then(|m| m.get("expression")) {
+                collect_expr_refs(expr, &mut set);
+            }
+        }
+    }
+    // balance 律 sources/sinks/cap（重路由后死码从这里被踢出·守卫的主战场）
+    if let Some(laws) = get_section(merged, "meta")
+        .and_then(|m| m.as_mapping())
+        .and_then(|m| m.get("balance"))
+        .and_then(Value::as_sequence)
+    {
+        for law in laws {
+            if let Some(m) = law.as_mapping() {
+                for key in ["sources", "sinks"] {
+                    if let Some(seq) = m.get(key).and_then(Value::as_sequence) {
+                        for x in seq {
+                            if let Some(s) = x.as_str() {
+                                set.insert(s.to_string());
+                            }
+                        }
+                    }
+                }
+                if let Some(cap) = m.get("cap").and_then(Value::as_str) {
+                    set.insert(cap.to_string());
+                }
+            }
+        }
+    }
+    // 变量的 rate/prev 跨步字段（防误删某状态的 rate/prev 方程·目标本是通量故通常不命中·防御性完备）
+    if let Some(vars) = get_section(merged, "variables").and_then(Value::as_mapping) {
+        for (_, v) in vars {
+            if let Some(vm) = v.as_mapping() {
+                for key in ["rate", "prev"] {
+                    if let Some(s) = vm.get(key).and_then(Value::as_str) {
+                        set.insert(s.to_string());
+                    }
+                }
+            }
+        }
+    }
+    set
+}
+
+/// 递归收集一个表达式 Value 里所有 `{ref: name}` 的 name（只认 `ref` 键·`op`/`const` 等不算引用）。
+fn collect_expr_refs(v: &Value, out: &mut HashSet<String>) {
+    match v {
+        Value::Mapping(m) => {
+            if let Some(name) = m.get("ref").and_then(Value::as_str) {
+                out.insert(name.to_string());
+            }
+            for (_, val) in m {
+                collect_expr_refs(val, out);
+            }
+        }
+        Value::Sequence(seq) => {
+            for val in seq {
+                collect_expr_refs(val, out);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -885,6 +1052,84 @@ inject:
         // override 不存在的存量 → InvalidOverlay
         let ov = overlay("meta: { module: bad2 }\nbalance:\n  - { name: x, stock: NoStock, sources: [q_in], sinks: [], cap: capT, tol: 1.0e-6, override: true }\n");
         assert!(matches!(compose(toy_base(), &[ov]).unwrap_err(), ComposeError::InvalidOverlay { .. }));
+    }
+
+    /// ★死码剪枝：balance-override 去掉 q_out 汇 → E-QOUT 变死码 → prune 删方程 + orphan 变量·存活项不动。
+    #[test]
+    fn compose_prune_removes_dead_equation_and_var() {
+        // override T 律去掉 q_out 汇（RATE-T 重生成为 q_in/capT）→ E-QOUT/q_out 变死码 → prune。
+        let ov = overlay(
+            "meta: { module: pruner }\nbalance:\n  - { name: E, stock: T, sources: [q_in], sinks: [], cap: capT, tol: 1.0e-6, override: true }\nprune: [E-QOUT]\n",
+        );
+        let merged = compose(toy_base(), &[ov]).expect("prune 应成功");
+        let eqs = merged["equations"].as_sequence().unwrap();
+        // 死码方程 E-QOUT 已删 + orphan 变量 q_out 已删
+        assert!(!eqs.iter().any(|e| e["id"].as_str() == Some("E-QOUT")), "死码方程 E-QOUT 应被删");
+        assert!(!merged["variables"].as_mapping().unwrap().contains_key("q_out"), "orphan 变量 q_out 应被删");
+        // RATE-T 从 override 律重生成为 q_in/capT（不再引用 q_out）
+        let rate = eqs.iter().find(|e| e["output"].as_str() == Some("rate_T")).unwrap();
+        let want: Value = serde_yaml::from_str("{ op: div, args: [ { ref: q_in }, { ref: capT } ] }").unwrap();
+        assert_eq!(rate["expression"], want, "RATE-T 重生成为 q_in/capT");
+        // 存活方程/变量不动
+        assert!(eqs.iter().any(|e| e["id"].as_str() == Some("E-QIN")), "存活方程 E-QIN 保留");
+        assert!(merged["variables"].as_mapping().unwrap().contains_key("q_in"), "存活变量 q_in 保留");
+    }
+
+    /// ★死码守卫：prune 一个仍被存活 balance/方程引用的方程 → PruneStillReferenced（拒绝误删）。
+    #[test]
+    fn compose_prune_guard_rejects_still_referenced() {
+        // q_in 仍是 T 律的源 + RATE-T 仍引用 → 守卫拒绝 prune E-QIN。
+        let ov = overlay("meta: { module: bad }\nprune: [E-QIN]\n");
+        assert_eq!(
+            compose(toy_base(), &[ov]).unwrap_err(),
+            ComposeError::PruneStillReferenced { module: "bad".into(), output: "q_in".into() }
+        );
+    }
+
+    /// ★死码剪枝：prune 不存在的方程 id → PruneMissingTarget。
+    #[test]
+    fn compose_prune_missing_target() {
+        let ov = overlay("meta: { module: m }\nprune: [NO-SUCH-EQ]\n");
+        assert_eq!(
+            compose(toy_base(), &[ov]).unwrap_err(),
+            ComposeError::PruneMissingTarget { module: "m".into(), id: "NO-SUCH-EQ".into() }
+        );
+    }
+
+    /// ★链式死码：q_b 只被 q_a 引用、q_a 无人引用；prune 两条 → 删完 q_a 后 q_b 也判死（守卫过·非 type:output 变量也删）。
+    #[test]
+    fn compose_prune_chained_dead_code() {
+        let ov = overlay(
+            "meta: { module: chain }\nvariables:\n  q_a: { type: output, class: auxiliary }\n  q_b: { class: auxiliary }\nequations:\n  - { id: E-QA, output: q_a, expression: { ref: q_b } }\n  - { id: E-QB, output: q_b, expression: { ref: k } }\nprune: [E-QA, E-QB]\n",
+        );
+        let merged = compose(toy_base(), &[ov]).expect("链式死码 prune 应成功");
+        let eqs = merged["equations"].as_sequence().unwrap();
+        assert!(
+            !eqs.iter().any(|e| matches!(e["id"].as_str(), Some("E-QA") | Some("E-QB"))),
+            "链式死码两条都删"
+        );
+        let vars = merged["variables"].as_mapping().unwrap();
+        assert!(!vars.contains_key("q_a") && !vars.contains_key("q_b"), "两个 orphan 变量都删（含非 type:output 的 q_b）");
+        // ★只 prune 下游 E-QB（q_a 仍引用 q_b）→ 守卫拒绝（不可留悬空引用）
+        let ov2 = overlay(
+            "meta: { module: chain2 }\nvariables:\n  q_a: { type: output, class: auxiliary }\n  q_b: { class: auxiliary }\nequations:\n  - { id: E-QA, output: q_a, expression: { ref: q_b } }\n  - { id: E-QB, output: q_b, expression: { ref: k } }\nprune: [E-QB]\n",
+        );
+        assert_eq!(
+            compose(toy_base(), &[ov2]).unwrap_err(),
+            ComposeError::PruneStillReferenced { module: "chain2".into(), output: "q_b".into() }
+        );
+    }
+
+    /// 无 `prune:` 声明的 overlay → 剪枝零效果（base 方程全保留·纯 append）。
+    #[test]
+    fn compose_no_prune_directive_is_noop() {
+        let ov = overlay("meta: { module: nop }\nvariables:\n  q_dev: { class: auxiliary }\nequations:\n  - { id: DEV-X, output: q_dev, expression: { ref: k } }\n");
+        let merged = compose(toy_base(), &[ov]).expect("无 prune 应成功");
+        let eqs = merged["equations"].as_sequence().unwrap();
+        // base 四条方程全在（E-QOUT 等未被剪）
+        for id in ["E-QIN", "E-QOUT", "E-CAPT", "RATE-T"] {
+            assert!(eqs.iter().any(|e| e["id"].as_str() == Some(id)), "{id} 应保留（无 prune）");
+        }
     }
 
     /// ★§6.6.5 candidate A：overlay 自带 cohort → compose 合并进 base，再 expand_cohorts 正确展开。
