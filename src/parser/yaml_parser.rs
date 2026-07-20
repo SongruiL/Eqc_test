@@ -1,7 +1,7 @@
 //! YAML 文件解析器
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::{CompileError, CompileResult};
 use crate::schema::EquationFile;
@@ -16,28 +16,25 @@ use crate::schema::EquationFile;
 /// - YAML 格式错误
 pub fn parse_file(path: &Path) -> CompileResult<EquationFile> {
     let content = fs::read_to_string(path).map_err(|e| CompileError::io(path, e))?;
-
-    // 先把 YAML 读成 Value，做 cohort（同期群）展开——把按下标的模板宏展开成纯标量，
-    // 之后再反序列化成 EquationFile。无 `cohorts:` 段的模型原样通过，行为不变。
     let raw: serde_yaml::Value =
         serde_yaml::from_str(&content).map_err(|e| CompileError::yaml_parse(path, e.to_string()))?;
-    // E3 步①：compose（base + 模块 overlay）——Phase 1 = identity 直通（base-only 恒等·逐位不变）。
-    // 必须先于 structure/cohort 展开（模块 overlay 可带自己的 cohort，须合并后统一展开·arc §4.1）。
-    let raw = super::compose(raw, &[])
-        .map_err(|e| CompileError::yaml_parse(path, format!("compose 失败: {e}")))?;
-    // FSPM `structure:` 段实例化 + cohort 展开（都是加载期、互不干扰；无对应段时各自原样通过）。
-    let expanded = super::expand_structure(raw)
-        .map_err(|e| CompileError::yaml_parse(path, format!("structure 实例化失败: {e}")))?;
-    let expanded = super::expand_cohorts(expanded)
-        .map_err(|e| CompileError::yaml_parse(path, format!("cohort 展开失败: {e}")))?;
+    parse_value_pipeline(raw, &[], path)
+}
 
-    let mut file: EquationFile =
-        serde_yaml::from_value(expanded).map_err(|e| CompileError::yaml_parse(path, e.to_string()))?;
-
-    // 加载后把引用到参数名的 Var 重分类为 Param（让参数可用任意有意义的名字）。
-    file.reclassify_parameters();
-
-    Ok(file)
+/// 解析 base + 选中的 overlay 模块（Phase 2 E3 组合·施工 spec §6.5）：读 base 与各 overlay YAML，
+/// compose 合成后走同一管线。`module_paths` 空 = 等价 [`parse_file`]（identity compose·零行为变化）。
+pub fn parse_file_with_modules(path: &Path, module_paths: &[PathBuf]) -> CompileResult<EquationFile> {
+    let content = fs::read_to_string(path).map_err(|e| CompileError::io(path, e))?;
+    let raw: serde_yaml::Value =
+        serde_yaml::from_str(&content).map_err(|e| CompileError::yaml_parse(path, e.to_string()))?;
+    let mut overlays = Vec::with_capacity(module_paths.len());
+    for mp in module_paths {
+        let mc = fs::read_to_string(mp).map_err(|e| CompileError::io(mp, e))?;
+        let mv: serde_yaml::Value =
+            serde_yaml::from_str(&mc).map_err(|e| CompileError::yaml_parse(mp, e.to_string()))?;
+        overlays.push(super::ModuleOverlay { value: mv });
+    }
+    parse_value_pipeline(raw, &overlays, path)
 }
 
 /// 从字符串解析方程文件（与 [`parse_file`] 同一管线，但输入是文本——浏览器内编辑器的
@@ -46,15 +43,29 @@ pub fn parse_str(content: &str) -> CompileResult<EquationFile> {
     let p = Path::new("<编辑>");
     let raw: serde_yaml::Value =
         serde_yaml::from_str(content).map_err(|e| CompileError::yaml_parse(p, e.to_string()))?;
-    // E3 步①：compose（Phase 1 = identity 直通·同 parse_file·必须先于展开·arc §4.1）。
-    let raw = super::compose(raw, &[])
-        .map_err(|e| CompileError::yaml_parse(p, format!("compose 失败: {e}")))?;
+    parse_value_pipeline(raw, &[], p)
+}
+
+/// base + overlay 合成后的公共管线：compose → structure/cohort 展开 → 反序列化 → 参数重分类。
+/// （原 parse_file/parse_str 各自内联的步骤抽为单一真相源·[[refactor-zero-runtime-behavior-rule]]：
+/// 逐步、逐序完全一致，仅去重复。）
+fn parse_value_pipeline(
+    raw: serde_yaml::Value,
+    overlays: &[super::ModuleOverlay],
+    path: &Path,
+) -> CompileResult<EquationFile> {
+    // E3 步①：compose（base + 模块 overlay）——base-only（overlays 空）= identity 直通（逐位不变）。
+    // 必须先于 structure/cohort 展开（模块 overlay 可带自己的 cohort，须合并后统一展开·arc §4.1）。
+    let raw = super::compose(raw, overlays)
+        .map_err(|e| CompileError::yaml_parse(path, format!("compose 失败: {e}")))?;
+    // FSPM `structure:` 段实例化 + cohort 展开（都是加载期、互不干扰；无对应段时各自原样通过）。
     let expanded = super::expand_structure(raw)
-        .map_err(|e| CompileError::yaml_parse(p, format!("structure 实例化失败: {e}")))?;
+        .map_err(|e| CompileError::yaml_parse(path, format!("structure 实例化失败: {e}")))?;
     let expanded = super::expand_cohorts(expanded)
-        .map_err(|e| CompileError::yaml_parse(p, format!("cohort 展开失败: {e}")))?;
+        .map_err(|e| CompileError::yaml_parse(path, format!("cohort 展开失败: {e}")))?;
     let mut file: EquationFile =
-        serde_yaml::from_value(expanded).map_err(|e| CompileError::yaml_parse(p, e.to_string()))?;
+        serde_yaml::from_value(expanded).map_err(|e| CompileError::yaml_parse(path, e.to_string()))?;
+    // 加载后把引用到参数名的 Var 重分类为 Param（让参数可用任意有意义的名字）。
     file.reclassify_parameters();
     Ok(file)
 }

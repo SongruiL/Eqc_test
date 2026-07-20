@@ -193,6 +193,11 @@ enum Commands {
         /// 配 --check-balance 时守恒徽章走 §8 瞬时结构残差（solver-无关·隐式也机器零）。
         #[arg(long)]
         implicit: bool,
+
+        /// 加载 overlay 模块（Phase 2 E3 组合：base + 模块 → 合成模型·施工 spec §6.5）；可多次。
+        /// 例：--with-module modules/heating_pipe.overlay.yaml
+        #[arg(long = "with-module")]
+        with_module: Vec<PathBuf>,
     },
 
     /// 耦合仿真（C1：多速率、单向）：快模型（温室，小 dt）↔ 慢模型（作物，大 dt）一次集成运行。
@@ -511,8 +516,8 @@ fn main() {
         Commands::Couple { fast, slow, weather, links, feedback, fast_params, slow_params, fast_init, slow_init, steps, output, fed_out, fast_out } => {
             run_couple(&fast, &slow, &weather, &links, &feedback, fast_params.as_ref(), slow_params.as_ref(), fast_init.as_ref(), slow_init.as_ref(), steps, &output, fed_out.as_ref(), fast_out.as_ref())
         }
-        Commands::Simulate { input, drivers, params, steps, output, dt, init, check_balance, implicit } => {
-            run_simulate(&input, &drivers, params.as_ref(), steps, &output, dt, init.as_deref(), check_balance, implicit)
+        Commands::Simulate { input, drivers, params, steps, output, dt, init, check_balance, implicit, with_module } => {
+            run_simulate(&input, &drivers, params.as_ref(), steps, &output, dt, init.as_deref(), check_balance, implicit, &with_module)
         }
         Commands::Sweep { input, drivers, param, range, sensitivity, percent, var, reduce, params, steps, output } => {
             run_sweep(&input, &drivers, param.as_deref(), range.as_deref(), sensitivity, percent, &var, &reduce, params.as_ref(), steps, &output)
@@ -654,12 +659,20 @@ fn run_simulate(
     init: Option<&str>,
     check_balance: bool,
     implicit: bool,
+    with_module: &[PathBuf],
 ) -> Result<(), Box<dyn std::error::Error>> {
     use equation_compiler::scenario::{load_drivers_csv, load_params_json};
-    use equation_compiler::{parse_file, simulate, SimInput};
+    use equation_compiler::{parse_file, parse_file_with_modules, simulate, SimInput};
 
     println!("🌱 仿真模型: {}", input.display());
-    let file = parse_file(input)?;
+    let file = if with_module.is_empty() {
+        parse_file(input)?
+    } else {
+        for m in with_module {
+            println!("   ＋overlay 模块: {}", m.display());
+        }
+        parse_file_with_modules(input, with_module)?
+    };
 
     // 读驱动量 CSV
     let (rows, driver_map) = load_drivers_csv(drivers)?;
