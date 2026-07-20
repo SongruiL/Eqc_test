@@ -25,6 +25,17 @@
 //!   [{id, factor}]` 把目标方程当前表达式 **× factor**（不替换·可叠加·顺序无关），各模块声明自己的因子→
 //!   自动叠乘（`mul(mul(base, occPipe), tauThScrFirU)`）。目标缺失 → `ScaleMissingTarget`。镜像 GreenLight
 //!   「视角因子 = 各衰减因子连乘」·全 Venlo 多设备（热幕/遮光幕/管/灯遮挡）唯一干净扩展路。
+//! - **⑦ 双趟顺序（inject 通量不再被 override 丢弃·守恒配对不破）**：`compose` 分两趟——趟 1 所有 overlay
+//!   的 append + balance override + scale，趟 2 所有 overlay 的 inject。因 `apply_inject` 改「当前」律、
+//!   `append_balance`(override) 整条替换，单趟逐 overlay 处理时「先 inject 到某态、后 override 该态律」会被
+//!   替换**丢弃** = 静默能量泄漏（该态少一源/汇·§8 逐律仍过[rate≡balance 都不含它]但跨律配对破：管以
+//!   rPipeCovIn 失热而盖不得）。分两趟令 override 先全落定、inject 再统一加在最终律上 → **inject 通量永不
+//!   被 override 丢弃**（守恒配对不破·消除泄漏）。**★精确边界（对抗复审 MINOR）**：这**不等于**「加载顺序
+//!   逐位无关」——多个 overlay 注入**同一态**时，注入项在 sources/sinks 的**排列**仍随加载序（`apply_inject`
+//!   尾插）→ rate 折叠树非规范·输出 CSV 列序随序变；但对**同量级物理通量**（O(1)–O(100) W/m²）数值惰性
+//!   （f64 结合律重排需操作数 ~2^53 量级差才真发散·故实测两序共享列 max|Δ|=0）。真正逐位无关须对注入律
+//!   sources/sinks 稳定排序·会破现役 rate 规范折叠形的逐位保真铁律 → 不做（诊断对比按列名对齐即可）。
+//!   override-vs-override（两模块 override 同态·不同拓扑重构）仍后者胜 = 真冲突·由跨模块 coupling 调和。
 //!
 //! **override-by-id（拓扑覆盖/遮挡）+ balance override + 死码剪枝**已落地（施工 spec §9 / 档 1c / thermal_screen）：
 //! `append_equations` 带 `override: <id>` 就地替换 base 同 id；`append_balance` 带 `override: true` 替换
@@ -126,9 +137,22 @@ pub fn compose(base: Value, overlays: &[ModuleOverlay]) -> Result<Value, Compose
     // 死码剪枝目标 (module, eq_id)：override/balance-override 重路由后作者显式声明的死方程。
     // 处理**留到末尾**——需最终合成态（含 rate 重生成后）来核验「确实死」（死码守卫）。保序去重。
     let mut prune_targets: Vec<(String, String)> = Vec::new();
+    // ── 双趟 compose（消除 inject/override 加载顺序泄漏）──
+    // 趟 1（结构）：所有 overlay 的 append(params/vars/eqs) + balance override + scale。
+    // 趟 2（注入）：所有 overlay 的 inject 统一回注进最终（含 override 后）的守恒律。
+    // 理由：inject 改「当前」律、balance override 整条替换。单趟逐 overlay 处理时，若「先 inject 到某态、
+    // 后 override 该态律」则 inject 被替换丢弃 = **静默能量泄漏**（该态少一源/汇·§8 逐律仍过[rate≡balance
+    // 都不含它]但跨律配对破：如管以 rPipeCovIn 失热而盖不得）。分两趟令所有 override 先落定、inject 再统一
+    // 加在最终律上 → **inject 通量永不被 override 丢弃**（守恒配对不破）。注意（对抗复审 MINOR）：这不等于
+    // 「逐位无关」——多路注入同一态时注入项排列仍随加载序（尾插）·rate 折叠树非规范·输出列序随序变·但对
+    // 同量级物理通量数值惰性（不做稳定排序·会破 rate 逐位保真铁律）。override-vs-override（两模块 override
+    // 同态）仍后者胜——那是不同拓扑重构的真冲突·由跨模块 coupling overlay 调和（非本修范围）。
     for ov in overlays {
-        apply_overlay(&mut merged, &ov.value, &mut dirty)?;
+        apply_overlay_structural(&mut merged, &ov.value, &mut dirty)?;
         collect_prune_targets(&ov.value, &mut prune_targets);
+    }
+    for ov in overlays {
+        apply_overlay_injects(&mut merged, &ov.value, &mut dirty)?;
     }
     // ② rate 重生成：被注入态的 rate 方程从合并后的 balance 律重建。
     for stock in &dirty {
@@ -144,8 +168,9 @@ pub fn compose(base: Value, overlays: &[ModuleOverlay]) -> Result<Value, Compose
     Ok(merged)
 }
 
-/// 把一个 overlay 并进 merged：append 各段 + 处理 inject（标记 dirty）。
-fn apply_overlay(merged: &mut Value, ov: &Value, dirty: &mut Vec<String>) -> Result<(), ComposeError> {
+/// 趟 1（结构）：把一个 overlay 的 append(params/vars/cohorts/eqs) + balance(override) + scale 并进 merged。
+/// **不含 inject**——inject 留到趟 2 统一处理（见 `compose` 双趟说明·消除 inject/override 加载顺序泄漏）。
+fn apply_overlay_structural(merged: &mut Value, ov: &Value, dirty: &mut Vec<String>) -> Result<(), ComposeError> {
     let module = module_name(ov);
 
     // ① append mapping 段：parameters / variables / cohorts（candidate A：cohort 合并在展开前）。
@@ -162,14 +187,9 @@ fn apply_overlay(merged: &mut Value, ov: &Value, dirty: &mut Vec<String>) -> Res
     if let Some(laws) = get_section(ov, "balance").and_then(Value::as_sequence) {
         append_balance(merged, laws, &module, dirty)?;
     }
-    // ② inject：回注进已有基座守恒律 + 标记 dirty。
-    if let Some(injs) = get_section(ov, "inject").and_then(Value::as_sequence) {
-        for inj in injs {
-            apply_inject(merged, inj, &module, dirty)?;
-        }
-    }
     // ⑥ scale：把目标方程当前表达式 × factor（乘性衰减·可叠加·多模块自动叠乘）。
     //    逐 overlay 就地叠乘 → heating_pipe 先 ×occPipe、thermal_screen 再 ×tauThScrFirU（顺序无关·值均正确）。
+    //    作用于 equations（非 balance）·与 inject 正交·故留在结构趟。
     if let Some(scales) = get_section(ov, "scale").and_then(Value::as_sequence) {
         let mut seen_scale: HashSet<String> = HashSet::new();
         for sc in scales {
@@ -184,6 +204,19 @@ fn apply_overlay(merged: &mut Value, ov: &Value, dirty: &mut Vec<String>) -> Res
                 }
             }
             apply_scale(merged, sc, &module)?;
+        }
+    }
+    Ok(())
+}
+
+/// 趟 2（注入）：把一个 overlay 的 inject 回注进**最终**（含趟 1 所有 override 后）的守恒律 + 标记 dirty。
+/// 与 override 分两趟：inject 永远加在整条替换后的律上 → 「inject 到某态」与「override 该态律」先后无关。
+fn apply_overlay_injects(merged: &mut Value, ov: &Value, dirty: &mut Vec<String>) -> Result<(), ComposeError> {
+    let module = module_name(ov);
+    // ② inject：回注进已有基座守恒律（趟 1 已落定 override）+ 标记 dirty。
+    if let Some(injs) = get_section(ov, "inject").and_then(Value::as_sequence) {
+        for inj in injs {
+            apply_inject(merged, inj, &module, dirty)?;
         }
     }
     Ok(())
@@ -1003,6 +1036,48 @@ inject:
             "{ op: div, args: [ { op: sub, args: [ { op: add, args: [ { ref: q_in }, { ref: q_dev } ] }, { ref: q_out } ] }, { ref: capT } ] }",
         ).unwrap();
         assert_eq!(rate_eq["expression"], want, "RATE-T 须从合并律重生成");
+    }
+
+    /// ★双趟 compose：inject 通量存活于 balance-override（消除 override 整条替换丢 inject 的能量泄漏）。
+    /// 两 overlay：`inj` 注 q_dev→T·`ovr` override T 律(restate·不含 q_dev·改 sinks)。无论加载先后，
+    /// 合成后 T 律都须含 q_dev（inject 永远加在 override 后的最终律上）。**单路注入**故两序 T 律逐位一致；
+    /// **注意**（对抗复审 MINOR）：≥2 路注入同一态时排列随加载序变（尾插·rate 折叠树非规范·对同量级通量
+    /// 数值惰性·见 doc ⑦）——本测单路注入不暴露此角·守护的是「inject 不被 override 丢」这一守恒正确性。
+    /// 修复前单趟：inject 先则 override 整条替换丢 q_dev（T 少一源·§8 逐律仍过但跨律配对破=泄漏）。
+    #[test]
+    fn compose_inject_survives_override() {
+        let inj_yaml = r#"
+meta: { module: dev_inject }
+variables:
+  q_dev: { class: auxiliary }
+equations:
+  - { id: DEV-QDEV, output: q_dev, expression: { ref: k } }
+inject:
+  - { stock: T, source: q_dev }
+"#;
+        let ovr_yaml = r#"
+meta: { module: dev_override }
+variables:
+  q_ovr: { class: auxiliary }
+equations:
+  - { id: DEV-QOVR, output: q_ovr, expression: { const: 2.0 } }
+balance:
+  - { name: E, stock: T, sources: [q_in], sinks: [q_out, q_ovr], cap: capT, tol: 1.0e-6, override: true }
+"#;
+        // inject 先、override 后（修复前单趟会丢 q_dev）
+        let a = compose(toy_base(), &[overlay(inj_yaml), overlay(ovr_yaml)]).expect("inject→override 应成功");
+        // override 先、inject 后
+        let b = compose(toy_base(), &[overlay(ovr_yaml), overlay(inj_yaml)]).expect("override→inject 应成功");
+        // 两序的 T 律逐位一致（加载顺序无关）
+        assert_eq!(a["meta"]["balance"], b["meta"]["balance"], "inject/override 加载顺序须无关（双趟）");
+        // T 律 sources 须含 q_dev（inject 未被 override 整条替换丢弃）·= base q_in + 注入 q_dev
+        let srcs: Vec<&str> = a["meta"]["balance"][0]["sources"].as_sequence().unwrap()
+            .iter().map(|v| v.as_str().unwrap()).collect();
+        assert_eq!(srcs, vec!["q_in", "q_dev"], "override 后 inject 的 q_dev 须保留在 sources（非泄漏）·实得 {srcs:?}");
+        // override 的 sinks 改动生效（q_ovr 在）
+        let sinks: Vec<&str> = a["meta"]["balance"][0]["sinks"].as_sequence().unwrap()
+            .iter().map(|v| v.as_str().unwrap()).collect();
+        assert_eq!(sinks, vec!["q_out", "q_ovr"], "override 的 sinks restate 生效");
     }
 
     /// ★§6.6.4 悬挂负例：inject 未定义通量 / 不存在的 stock / 重复 id 各自报对错。
