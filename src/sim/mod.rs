@@ -853,6 +853,10 @@ pub struct CoupledInput<'a> {
     /// 0c：快模型（刚性温室）在耦合回路里走隐式 BDF（否则显式 Euler 在亚日 dt 发散）。
     /// 缺省 false = 显式（现有行为·bit-identical）；true 需 `implicit` feature。
     pub fast_implicit: bool,
+    /// 快模型在耦合回路的步长覆盖(秒)。Some→替 meta.dt_seconds 算 R + 快步进（如温室隐式走
+    /// 300s→R=1 紧耦合·避免 dt_seconds=10 强制 R=30 的巨量隐式步）；要求快模型时间单位=秒
+    /// (meta.dt==meta.dt_seconds)使覆盖无歧义。缺省 None = 用模型自带 dt（现有行为·bit-identical）。
+    pub fast_dt: Option<f64>,
 }
 
 impl<'a> CoupledInput<'a> {
@@ -876,6 +880,7 @@ impl<'a> CoupledInput<'a> {
             fast_init: HashMap::new(),
             slow_init: HashMap::new(),
             fast_implicit: false,
+            fast_dt: None,
         }
     }
 }
@@ -927,6 +932,7 @@ impl<'a> FastEngine<'a> {
 /// 按 `implicit` 标志建快模型引擎：false→显式 Stepper（现有·bit-identical）；true→隐式（需 feature）。
 fn build_fast_engine<'a>(
     fast: &'a EquationFile,
+    dt: f64,
     params: &HashMap<String, f64>,
     init: &HashMap<String, f64>,
     implicit: bool,
@@ -941,7 +947,7 @@ fn build_fast_engine<'a>(
             };
             return Ok(FastEngine::implicit(crate::sim::implicit::ImplicitStepper::new(
                 fast,
-                fast.meta.dt,
+                dt,
                 params,
                 init,
                 opts,
@@ -954,7 +960,7 @@ fn build_fast_engine<'a>(
             ));
         }
     }
-    Ok(FastEngine::explicit(Stepper::new(fast, fast.meta.dt, params, init)?))
+    Ok(FastEngine::explicit(Stepper::new(fast, dt, params, init)?))
 }
 
 /// 耦合仿真输出。
@@ -981,9 +987,26 @@ pub fn simulate_coupled(input: &CoupledInput) -> Result<CoupledOutput, SimError>
     let slow = input.slow;
 
     // —— 时间尺度：各模型自描述 dt_seconds；R = dt_slow_秒 / dt_fast_秒（须为正整数）——
-    let dtf_s = fast.meta.dt_seconds.ok_or_else(|| {
+    // --fast-dt 覆盖：让快模型在耦合回路以给定步长(秒)推进（温室隐式走 300s→R=1 紧耦合·
+    // 避免 dt_seconds=10 强制 R=30 的巨量隐式步）；要求快模型时间单位=秒(dt==dt_seconds)使覆盖无歧义。
+    let native_dtf_s = fast.meta.dt_seconds.ok_or_else(|| {
         SimError::Coupling(format!("快模型 {} 缺 meta.dt_seconds（耦合需统一到秒）", fast.meta.id))
     })?;
+    let (fast_dt, dtf_s) = match input.fast_dt {
+        Some(d) => {
+            if d <= 0.0 {
+                return Err(SimError::Coupling("--fast-dt 必须为正".into()));
+            }
+            if (fast.meta.dt - native_dtf_s).abs() > 1e-9 {
+                return Err(SimError::Coupling(format!(
+                    "--fast-dt 仅支持时间单位=秒的快模型(meta.dt==meta.dt_seconds)，{} 的 dt={} dt_seconds={}",
+                    fast.meta.id, fast.meta.dt, native_dtf_s
+                )));
+            }
+            (d, d)
+        }
+        None => (fast.meta.dt, native_dtf_s),
+    };
     let dts_s = slow.meta.dt_seconds.ok_or_else(|| {
         SimError::Coupling(format!("慢模型 {} 缺 meta.dt_seconds", slow.meta.id))
     })?;
@@ -1046,7 +1069,7 @@ pub fn simulate_coupled(input: &CoupledInput) -> Result<CoupledOutput, SimError>
     // —— 反馈（慢→快，C2 双向，滞后一慢步）：初值 hold + 快模型输入校验 ——
     // 0c：按 fast_implicit 选显式 Stepper（bit-identical）或隐式 ImplicitStepper（刚性温室在回路走 BDF）。
     let mut fast_engine =
-        build_fast_engine(fast, &input.fast_params, &input.fast_init, input.fast_implicit)?;
+        build_fast_engine(fast, fast_dt, &input.fast_params, &input.fast_init, input.fast_implicit)?;
     let fb_targets: HashSet<&str> = input.feedback.iter().map(|f| f.to.as_str()).collect();
     let mut fb: HashMap<String, f64> = input.feedback.iter().map(|f| (f.to.clone(), f.init)).collect();
     // 反馈 to 必须是快模型的输入（驱动量），否则反馈值无处可喂
@@ -1723,6 +1746,55 @@ equations:
     }
 
     /// 0c：刚性快模型走隐式耦合。快 dy/dt=1000·(e−y)（手写 y_prev 破环供显式）→ k·dt=10000：
+    /// --fast-dt 覆盖快步长(秒)：R 从默认 30/10=3 变 30/30=1（紧耦合·避免巨量步）；守卫拒绝 dt≠dt_seconds。
+    #[test]
+    fn test_coupled_fast_dt_override() {
+        let fast_yaml = r#"
+meta: { id: FAST, model: F, name_cn: 快, dt: 10, dt_seconds: 10 }
+variables:
+  u: { type: input, class: driving }
+  y: { type: output }
+equations:
+  - { id: E, name: y, output: y, expression: { op: mul, args: [ { ref: u }, { const: 1 } ] } }
+"#;
+        let slow_yaml = r#"
+meta: { id: SLOW, model: S, name_cn: 慢, dt: 1, dt_seconds: 30 }
+variables:
+  ybar: { type: input, class: driving }
+  chk:  { type: output }
+equations:
+  - { id: E, name: chk, output: chk, expression: { op: mul, args: [ { ref: ybar }, { const: 1 } ] } }
+"#;
+        let (_df, fast) = write_model(fast_yaml);
+        let (_ds, slow) = write_model(slow_yaml);
+        let links = vec![CoupledLink { to: "ybar".into(), from: "y".into(), agg: Agg::Mean, scale: 1.0 }];
+        // 默认 R=30/10=3；--fast-dt 30 → R=30/30=1（每慢步 1 快步）
+        let mut drv = HashMap::new();
+        drv.insert("u".to_string(), vec![1.0, 2.0]); // 2 慢步 × R=1
+        let mut inp = CoupledInput::new(&fast, &slow, links, drv, 2);
+        inp.fast_dt = Some(30.0);
+        let out = simulate_coupled(&inp).unwrap();
+        assert_eq!(out.r, 1); // 30/30（非默认 3）
+        assert_eq!(out.slow.series("chk").unwrap(), &[1.0, 2.0]); // ybar=mean(y)=u
+
+        // 守卫：fast_dt 用在 dt≠dt_seconds（时间单位非秒）的快模型 → 报错
+        let fast2_yaml = r#"
+meta: { id: FAST2, model: F2, name_cn: 快2, dt: 1, dt_seconds: 30 }
+variables:
+  u: { type: input, class: driving }
+  y: { type: output }
+equations:
+  - { id: E, name: y, output: y, expression: { op: mul, args: [ { ref: u }, { const: 1 } ] } }
+"#;
+        let (_df2, fast2) = write_model(fast2_yaml);
+        let links2 = vec![CoupledLink { to: "ybar".into(), from: "y".into(), agg: Agg::Mean, scale: 1.0 }];
+        let mut drv2 = HashMap::new();
+        drv2.insert("u".to_string(), vec![1.0, 2.0]);
+        let mut inp2 = CoupledInput::new(&fast2, &slow, links2, drv2, 2);
+        inp2.fast_dt = Some(30.0);
+        assert!(simulate_coupled(&inp2).is_err()); // dt(1)≠dt_seconds(30) → 拒绝
+    }
+
     /// 显式 Euler 发散、隐式 BDF 稳定弛豫到 e；且耦合隐式 fast 轨迹 == 单模型 `simulate_implicit`（单一真相源）。
     #[cfg(feature = "implicit")]
     #[test]

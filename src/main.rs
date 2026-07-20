@@ -261,6 +261,11 @@ enum Commands {
         /// 需 `cargo build --features implicit`。缺省显式（现有行为）。
         #[arg(long = "implicit")]
         fast_implicit: bool,
+
+        /// 快模型在耦合回路的步长覆盖(秒)：让刚性温室隐式走大步(如 300s)→R=1 紧耦合，避免
+        /// meta.dt_seconds=10 强制 R=30 的巨量步。要求快模型时间单位=秒(dt==dt_seconds)。缺省用模型 meta.dt。
+        #[arg(long = "fast-dt")]
+        fast_dt: Option<f64>,
     },
 
     /// 参数敏感性扫描：把一个标量参数在区间内取 N 点各跑一次仿真，输出对某变量的响应 CSV
@@ -518,8 +523,8 @@ fn main() {
         Commands::SexprSpec => run_sexpr_spec(),
         Commands::CheckDims { input, strict } => run_check_dims(&input, strict),
         Commands::Report { input, output, layout } => run_report(&input, &output, &layout),
-        Commands::Couple { fast, slow, weather, links, feedback, fast_params, slow_params, fast_init, slow_init, steps, output, fed_out, fast_out, fast_implicit } => {
-            run_couple(&fast, &slow, &weather, &links, &feedback, fast_params.as_ref(), slow_params.as_ref(), fast_init.as_ref(), slow_init.as_ref(), steps, &output, fed_out.as_ref(), fast_out.as_ref(), fast_implicit)
+        Commands::Couple { fast, slow, weather, links, feedback, fast_params, slow_params, fast_init, slow_init, steps, output, fed_out, fast_out, fast_implicit, fast_dt } => {
+            run_couple(&fast, &slow, &weather, &links, &feedback, fast_params.as_ref(), slow_params.as_ref(), fast_init.as_ref(), slow_init.as_ref(), steps, &output, fed_out.as_ref(), fast_out.as_ref(), fast_implicit, fast_dt)
         }
         Commands::Simulate { input, drivers, params, steps, output, dt, init, check_balance, implicit, with_module } => {
             run_simulate(&input, &drivers, params.as_ref(), steps, &output, dt, init.as_deref(), check_balance, implicit, &with_module)
@@ -886,6 +891,7 @@ fn run_couple(
     fed_out: Option<&PathBuf>,
     fast_out: Option<&PathBuf>,
     fast_implicit: bool,
+    fast_dt: Option<f64>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use equation_compiler::scenario::{load_drivers_csv, load_params_json};
     use equation_compiler::{
@@ -938,10 +944,13 @@ fn run_couple(
     }
 
     // R = dt_slow秒 / dt_fast秒（定每慢步的快步数、默认慢步数）
-    let dtf = fast_file
-        .meta
-        .dt_seconds
-        .ok_or_else(|| format!("快模型 {} 缺 meta.dt_seconds", fast_file.meta.id))?;
+    // --fast-dt 覆盖快步长(秒)：须与 simulate_coupled 的覆盖一致（否则 R 镜像对不上→驱动长度不符）
+    let dtf = fast_dt.unwrap_or(
+        fast_file
+            .meta
+            .dt_seconds
+            .ok_or_else(|| format!("快模型 {} 缺 meta.dt_seconds", fast_file.meta.id))?,
+    );
     let dts = slow_file
         .meta
         .dt_seconds
@@ -966,6 +975,7 @@ fn run_couple(
     let mut inp = CoupledInput::new(&fast_file, &slow_file, parsed, weather_trunc, slow_steps);
     inp.feedback = fb;
     inp.fast_implicit = fast_implicit; // 0c：--implicit → 快模型走隐式 BDF
+    inp.fast_dt = fast_dt; // --fast-dt：耦合回路快步长覆盖（温室 300s→R=1·避免 R=30 巨量步）
     if let Some(fp) = fast_params {
         inp.fast_params = load_params_json(fp)?;
     }
