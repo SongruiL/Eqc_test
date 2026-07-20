@@ -579,6 +579,112 @@ pub fn simulate_implicit(
     Ok(SimOutput { steps: input.steps, trajectories: traj })
 }
 
+/// **隐式步进器**（0c：`simulate_coupled` 的 fast 回路走隐式 BDF 用）。与显式 [`super::Stepper`]
+/// 同接口（`drivers`/`step`/`get`），per-step **复用 [`advance_segment`] 求解核**（不改求解逻辑，
+/// 只把 `simulate_implicit` 的整段循环拆成可被耦合回路逐步驱动的形式）。刚性快模型（温室气候）
+/// 在耦合回路里必须走隐式，否则显式 Euler 在其亚日 dt 下数值发散。
+///
+/// 与 `simulate_implicit` 同源（fold_prev → 平滑 → build_rate_plan → 逐步 advance_segment），
+/// 故耦合隐式每步与单模型 `simulate_implicit` 逐步一致（单一真相源）。
+pub struct ImplicitStepper {
+    plan: RatePlan,
+    /// 参数基座 env（每步 clone 出段 env_cell）。
+    base_env: Env,
+    /// 当前状态向量（顺序 = plan.states）。
+    x: Vec<f64>,
+    dt: f64,
+    opts: ImplicitOpts,
+    /// 已完成步数（DAT = n+1）。
+    n: usize,
+    /// 步后在 x 处评一趟计划得到的 env（供 [`ImplicitStepper::get`] 读接口变量·对齐 record_step）。
+    last_env: Env,
+    err_slot: RefCell<Option<EvalError>>,
+}
+
+impl ImplicitStepper {
+    /// 新建隐式步进器。与 `simulate_implicit` 前半段同构：fold_prev（+可选平滑）→ build_rate_plan
+    /// → 参数基座 env → 初始状态向量。
+    pub fn new(
+        file: &EquationFile,
+        dt: f64,
+        param_overrides: &HashMap<String, f64>,
+        init_overrides: &HashMap<String, f64>,
+        opts: ImplicitOpts,
+    ) -> Result<Self, SimError> {
+        let folded = fold_prev_for_implicit(file)?;
+        let folded = match opts.smooth_eps {
+            Some(eps) => smooth_for_implicit(&folded, eps),
+            None => folded,
+        };
+        let plan = build_rate_plan(&folded, init_overrides)?;
+        let mut base_env = Env::new();
+        for (pname, p) in &folded.parameters {
+            match &p.values {
+                Some(vals) => base_env.put(pname, Value::Vector(vals.clone())),
+                None => base_env.put(
+                    pname,
+                    Value::Scalar(param_overrides.get(pname).copied().unwrap_or(p.default)),
+                ),
+            }
+        }
+        let x: Vec<f64> = plan.states.iter().map(|s| s.init).collect();
+        let last_env = base_env.clone();
+        Ok(Self { plan, base_env, x, dt, opts, n: 0, last_env, err_slot: RefCell::new(None) })
+    }
+
+    /// 该快模型需外部每步供值的驱动量名（含被反馈供值的）。
+    pub fn drivers(&self) -> &[String] {
+        self.plan.drivers()
+    }
+
+    /// 推进一隐式步（复用 `advance_segment`，与 `simulate_implicit` 循环体逐位一致）。
+    /// `get_driver(name)` 供本步每个驱动量的标量值（缺 → `MissingDriver`）。
+    pub fn step(&mut self, get_driver: impl Fn(&str) -> Option<f64>) -> Result<(), SimError> {
+        let env_cell = RefCell::new(self.base_env.clone());
+        {
+            let mut e = env_cell.borrow_mut();
+            e.put("DAT", Value::Scalar((self.n + 1) as f64));
+            for d in self.plan.drivers() {
+                let val = get_driver(d).ok_or_else(|| SimError::MissingDriver(d.clone()))?;
+                e.put(d.as_str(), Value::Scalar(val));
+            }
+        }
+        let x_next = advance_segment(&self.plan, &env_cell, &self.x, self.dt, self.opts, &self.err_slot)?;
+        if let Some(er) = self.err_slot.borrow_mut().take() {
+            return Err(SimError::Eval { var: "<rhs>".into(), err: er });
+        }
+        if let Some(bad) = x_next.iter().position(|v| !v.is_finite()) {
+            return Err(SimError::Solver(format!(
+                "耦合快模型第 {} 步隐式解出现非有限值（状态 '{}' = {}）——模型病态或求解器发散",
+                self.n + 1,
+                self.plan.states[bad].name,
+                x_next[bad]
+            )));
+        }
+        self.x = x_next;
+        // 段末在 x 处评一趟计划填 last_env（供 get 读接口变量/日均聚合·对齐 record_step 的 env 侧）
+        {
+            let mut e = env_cell.borrow_mut();
+            for (i, s) in self.plan.states.iter().enumerate() {
+                e.put(s.name.as_str(), Value::Scalar(self.x[i]));
+            }
+            for (name, expr) in &self.plan.ordered_eqs {
+                if let Ok(v) = expr.eval_in_with(&mut e, EvalMode { strict: false }) {
+                    e.put(name.as_str(), v);
+                }
+            }
+        }
+        self.last_env = env_cell.into_inner();
+        self.n += 1;
+        Ok(())
+    }
+
+    /// 读当前步某声明变量的 Value（步后调用·对齐 [`super::Stepper::get`]）。
+    pub fn get(&self, name: &str) -> Option<Value> {
+        self.last_env.get(name)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

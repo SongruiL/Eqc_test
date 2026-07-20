@@ -256,6 +256,11 @@ enum Commands {
         /// 另存快模型（温室）日均轨迹 CSV（看反馈对温室气候如 CO₂ 的影响）
         #[arg(long)]
         fast_out: Option<PathBuf>,
+
+        /// 0c：快模型（刚性温室）在耦合回路走隐式 BDF——耦合亚日刚性气候必需（显式 Euler 发散）。
+        /// 需 `cargo build --features implicit`。缺省显式（现有行为）。
+        #[arg(long = "implicit")]
+        fast_implicit: bool,
     },
 
     /// 参数敏感性扫描：把一个标量参数在区间内取 N 点各跑一次仿真，输出对某变量的响应 CSV
@@ -513,8 +518,8 @@ fn main() {
         Commands::SexprSpec => run_sexpr_spec(),
         Commands::CheckDims { input, strict } => run_check_dims(&input, strict),
         Commands::Report { input, output, layout } => run_report(&input, &output, &layout),
-        Commands::Couple { fast, slow, weather, links, feedback, fast_params, slow_params, fast_init, slow_init, steps, output, fed_out, fast_out } => {
-            run_couple(&fast, &slow, &weather, &links, &feedback, fast_params.as_ref(), slow_params.as_ref(), fast_init.as_ref(), slow_init.as_ref(), steps, &output, fed_out.as_ref(), fast_out.as_ref())
+        Commands::Couple { fast, slow, weather, links, feedback, fast_params, slow_params, fast_init, slow_init, steps, output, fed_out, fast_out, fast_implicit } => {
+            run_couple(&fast, &slow, &weather, &links, &feedback, fast_params.as_ref(), slow_params.as_ref(), fast_init.as_ref(), slow_init.as_ref(), steps, &output, fed_out.as_ref(), fast_out.as_ref(), fast_implicit)
         }
         Commands::Simulate { input, drivers, params, steps, output, dt, init, check_balance, implicit, with_module } => {
             run_simulate(&input, &drivers, params.as_ref(), steps, &output, dt, init.as_deref(), check_balance, implicit, &with_module)
@@ -880,6 +885,7 @@ fn run_couple(
     output: &PathBuf,
     fed_out: Option<&PathBuf>,
     fast_out: Option<&PathBuf>,
+    fast_implicit: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use equation_compiler::scenario::{load_drivers_csv, load_params_json};
     use equation_compiler::{
@@ -959,6 +965,7 @@ fn run_couple(
 
     let mut inp = CoupledInput::new(&fast_file, &slow_file, parsed, weather_trunc, slow_steps);
     inp.feedback = fb;
+    inp.fast_implicit = fast_implicit; // 0c：--implicit → 快模型走隐式 BDF
     if let Some(fp) = fast_params {
         inp.fast_params = load_params_json(fp)?;
     }

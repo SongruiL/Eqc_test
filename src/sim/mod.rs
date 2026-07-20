@@ -850,6 +850,9 @@ pub struct CoupledInput<'a> {
     pub slow_params: HashMap<String, f64>,
     pub fast_init: HashMap<String, f64>,
     pub slow_init: HashMap<String, f64>,
+    /// 0c：快模型（刚性温室）在耦合回路里走隐式 BDF（否则显式 Euler 在亚日 dt 发散）。
+    /// 缺省 false = 显式（现有行为·bit-identical）；true 需 `implicit` feature。
+    pub fast_implicit: bool,
 }
 
 impl<'a> CoupledInput<'a> {
@@ -872,8 +875,86 @@ impl<'a> CoupledInput<'a> {
             slow_params: HashMap::new(),
             fast_init: HashMap::new(),
             slow_init: HashMap::new(),
+            fast_implicit: false,
         }
     }
+}
+
+/// **快模型引擎**（0c）：耦合 fast 回路的步进抽象——显式 [`Stepper`]（现有·bit-identical）或
+/// 隐式 [`implicit::ImplicitStepper`]（刚性温室在回路里走 BDF）。couple 回路只用 `drivers`/`step`/`get`
+/// 三能力；显式变体转发到**同一** `Stepper`（零行为·非另一份实现）。
+enum FastEngineKind<'a> {
+    Explicit(Stepper<'a>),
+    #[cfg(feature = "implicit")]
+    Implicit(crate::sim::implicit::ImplicitStepper),
+}
+
+struct FastEngine<'a> {
+    kind: FastEngineKind<'a>,
+    /// 驱动量名（构造时从引擎拷出·供 couple 校验·不进数值路径）。
+    driver_names: Vec<String>,
+}
+
+impl<'a> FastEngine<'a> {
+    fn explicit(s: Stepper<'a>) -> Self {
+        let driver_names = s.drivers().iter().map(|d| d.to_string()).collect();
+        Self { kind: FastEngineKind::Explicit(s), driver_names }
+    }
+    #[cfg(feature = "implicit")]
+    fn implicit(s: crate::sim::implicit::ImplicitStepper) -> Self {
+        let driver_names = s.drivers().to_vec();
+        Self { kind: FastEngineKind::Implicit(s), driver_names }
+    }
+    fn drivers(&self) -> &[String] {
+        &self.driver_names
+    }
+    fn step(&mut self, get_driver: impl Fn(&str) -> Option<f64>) -> Result<(), SimError> {
+        match &mut self.kind {
+            FastEngineKind::Explicit(s) => s.step(get_driver),
+            #[cfg(feature = "implicit")]
+            FastEngineKind::Implicit(s) => s.step(get_driver),
+        }
+    }
+    fn get(&self, name: &str) -> Option<Value> {
+        match &self.kind {
+            FastEngineKind::Explicit(s) => s.get(name),
+            #[cfg(feature = "implicit")]
+            FastEngineKind::Implicit(s) => s.get(name),
+        }
+    }
+}
+
+/// 按 `implicit` 标志建快模型引擎：false→显式 Stepper（现有·bit-identical）；true→隐式（需 feature）。
+fn build_fast_engine<'a>(
+    fast: &'a EquationFile,
+    params: &HashMap<String, f64>,
+    init: &HashMap<String, f64>,
+    implicit: bool,
+) -> Result<FastEngine<'a>, SimError> {
+    if implicit {
+        #[cfg(feature = "implicit")]
+        {
+            // 平滑 eps=0.05 与单模型 `simulate --implicit` 生产路径一致（run_simulate_implicit）。
+            let opts = crate::sim::implicit::ImplicitOpts {
+                smooth_eps: Some(0.05),
+                ..Default::default()
+            };
+            return Ok(FastEngine::implicit(crate::sim::implicit::ImplicitStepper::new(
+                fast,
+                fast.meta.dt,
+                params,
+                init,
+                opts,
+            )?));
+        }
+        #[cfg(not(feature = "implicit"))]
+        {
+            return Err(SimError::Coupling(
+                "耦合快模型走隐式需 `cargo build --features implicit` 构建（默认不含隐式 BDF）".into(),
+            ));
+        }
+    }
+    Ok(FastEngine::explicit(Stepper::new(fast, fast.meta.dt, params, init)?))
 }
 
 /// 耦合仿真输出。
@@ -963,12 +1044,15 @@ pub fn simulate_coupled(input: &CoupledInput) -> Result<CoupledOutput, SimError>
         }
     }
     // —— 反馈（慢→快，C2 双向，滞后一慢步）：初值 hold + 快模型输入校验 ——
-    let mut fast_stepper = Stepper::new(fast, fast.meta.dt, &input.fast_params, &input.fast_init)?;
+    // 0c：按 fast_implicit 选显式 Stepper（bit-identical）或隐式 ImplicitStepper（刚性温室在回路走 BDF）。
+    let mut fast_engine =
+        build_fast_engine(fast, &input.fast_params, &input.fast_init, input.fast_implicit)?;
     let fb_targets: HashSet<&str> = input.feedback.iter().map(|f| f.to.as_str()).collect();
     let mut fb: HashMap<String, f64> = input.feedback.iter().map(|f| (f.to.clone(), f.init)).collect();
     // 反馈 to 必须是快模型的输入（驱动量），否则反馈值无处可喂
     {
-        let fast_driver_set: HashSet<&str> = fast_stepper.drivers().iter().copied().collect();
+        let fast_driver_set: HashSet<&str> =
+            fast_engine.drivers().iter().map(|s| s.as_str()).collect();
         for f in &input.feedback {
             if !fast_driver_set.contains(f.to.as_str()) {
                 return Err(SimError::Coupling(format!(
@@ -987,7 +1071,8 @@ pub fn simulate_coupled(input: &CoupledInput) -> Result<CoupledOutput, SimError>
         }
     }
     // —— 校验：快模型每个驱动量要么有室外序列（长度 total_fast），要么由反馈供值 ——
-    for &d in fast_stepper.drivers() {
+    for d in fast_engine.drivers() {
+        let d = d.as_str();
         if fb_targets.contains(d) {
             continue; // 由反馈供值
         }
@@ -1021,11 +1106,11 @@ pub fn simulate_coupled(input: &CoupledInput) -> Result<CoupledOutput, SimError>
         for f in 0..r {
             let gi = s * r + f;
             // 快模型输入：室外驱动 取本快步序列值；反馈目标 取 hold 值（本慢步内常数）
-            fast_stepper.step(|d| {
+            fast_engine.step(|d| {
                 input.fast_drivers.get(d).map(|v| v[gi]).or_else(|| fb.get(d).copied())
             })?;
             for (li, link) in input.links.iter().enumerate() {
-                let v = fast_stepper
+                let v = fast_engine
                     .get(&link.from)
                     .ok_or_else(|| SimError::Coupling(format!("快模型无接口输出 '{}'", link.from)))?;
                 let x = match v {
@@ -1045,7 +1130,7 @@ pub fn simulate_coupled(input: &CoupledInput) -> Result<CoupledOutput, SimError>
             // 累加快模型各标量变量（供日均）
             for (i, name) in fast_vars.iter().enumerate() {
                 if fast_is_scalar[i] {
-                    match fast_stepper.get(name) {
+                    match fast_engine.get(name) {
                         Some(Value::Scalar(x)) => fast_sum[i] += x,
                         _ => fast_is_scalar[i] = false,
                     }
@@ -1635,6 +1720,66 @@ equations:
         assert_eq!(out.slow.series("chk").unwrap(), &[62.0, 155.0]);
         // 喂入值也进慢模型轨迹（驱动量被记录）
         assert_eq!(out.slow.series("ybar").unwrap(), &[2.0, 5.0]);
+    }
+
+    /// 0c：刚性快模型走隐式耦合。快 dy/dt=1000·(e−y)（手写 y_prev 破环供显式）→ k·dt=10000：
+    /// 显式 Euler 发散、隐式 BDF 稳定弛豫到 e；且耦合隐式 fast 轨迹 == 单模型 `simulate_implicit`（单一真相源）。
+    #[cfg(feature = "implicit")]
+    #[test]
+    fn test_coupled_fast_implicit_stiff() {
+        let fast_yaml = r#"
+meta: { id: FAST, model: F, name_cn: 刚性快, dt: 10, dt_seconds: 10 }
+variables:
+  etgt:   { type: input, class: driving }
+  y:      { type: output, class: state, init: 0.0, rate: ry }
+  y_prev: { type: output, prev: y, init: 0.0 }
+  ry:     { type: output }
+equations:
+  - { id: R, name: ry, output: ry, expression: { op: mul, args: [ { const: 1000 }, { op: sub, args: [ { ref: etgt }, { ref: y_prev } ] } ] } }
+"#;
+        let slow_yaml = r#"
+meta: { id: SLOW, model: S, name_cn: 慢, dt: 1, dt_seconds: 10 }
+variables:
+  ybar: { type: input, class: driving }
+  chk:  { type: output }
+equations:
+  - { id: E, name: chk, output: chk, expression: { ref: ybar } }
+"#;
+        let (_df, fast) = write_model(fast_yaml);
+        let (_ds, slow) = write_model(slow_yaml);
+        let mklink =
+            || vec![CoupledLink { to: "ybar".into(), from: "y".into(), agg: Agg::Mean, scale: 1.0 }];
+        let mkdrv = || {
+            let mut d = HashMap::new();
+            d.insert("etgt".to_string(), vec![1.0, 1.0, 1.0]);
+            d
+        };
+        // 隐式：y 在一步内弛豫到 e=1（刚性）→ chk≈1
+        let mut inp = CoupledInput::new(&fast, &slow, mklink(), mkdrv(), 3);
+        inp.fast_implicit = true;
+        let out = simulate_coupled(&inp).unwrap();
+        for &v in out.slow.series("chk").unwrap() {
+            assert!((v - 1.0).abs() < 1e-3, "隐式耦合 chk={v} 应≈1（弛豫到 etgt）");
+        }
+        // 一致性：耦合隐式 fast 轨迹 == 单模型 simulate_implicit（同驱动·单一真相源）
+        let si = crate::sim::implicit::simulate_implicit(
+            &fast,
+            &SimInput::new(3).driver("etgt", vec![1.0, 1.0, 1.0]),
+            crate::sim::implicit::ImplicitOpts { smooth_eps: Some(0.05), ..Default::default() },
+        )
+        .unwrap();
+        let (cy, sy) = (out.fast.series("y").unwrap(), si.series("y").unwrap());
+        for (a, b) in cy.iter().zip(sy.iter()) {
+            assert!((a - b).abs() < 1e-9, "耦合隐式 fast y={a} vs simulate_implicit y={b} 不一致");
+        }
+        // 对照：显式路径在此刚性下发散（|y|>100）→ 证隐式必要
+        let mut inp_e = CoupledInput::new(&fast, &slow, mklink(), mkdrv(), 3);
+        inp_e.fast_implicit = false;
+        let oe = simulate_coupled(&inp_e).unwrap();
+        assert!(
+            oe.fast.series("y").unwrap().iter().any(|&v| v.abs() > 100.0),
+            "显式 Euler 在 k·dt=10000 应发散（|y|>100）"
+        );
     }
 
     /// 耦合：慢模型有未被链接覆盖的驱动 → 报错；缺 dt_seconds → 报错。
