@@ -123,9 +123,9 @@ fn apply_overlay(merged: &mut Value, ov: &Value, dirty: &mut Vec<String>) -> Res
     if let Some(eqs) = get_section(ov, "equations").and_then(Value::as_sequence) {
         append_equations(merged, eqs, &module)?;
     }
-    // ① append balance（模块新态的守恒律并入 meta.balance）。
+    // ① append balance（模块新态的守恒律并入 meta.balance；带 override:true 则替换已有存量的律·档A 双隔间重构）。
     if let Some(laws) = get_section(ov, "balance").and_then(Value::as_sequence) {
-        append_balance(merged, laws, &module)?;
+        append_balance(merged, laws, &module, dirty)?;
     }
     // ② inject：回注进已有基座守恒律 + 标记 dirty。
     if let Some(injs) = get_section(ov, "inject").and_then(Value::as_sequence) {
@@ -212,11 +212,18 @@ fn append_equations(merged: &mut Value, eqs: &[Value], module: &str) -> Result<(
     Ok(())
 }
 
-/// append 模块新态的守恒律进 meta.balance。
+/// append 模块新态的守恒律进 meta.balance；带 `override: true` 则**替换**已有存量的守恒律
+/// （拓扑覆盖·arc §2.2「override 空气平衡为双隔间」）。
 ///
-/// #4 硬化：模块只能为**自己的新态**声明守恒律；为**已有存量**重声明 = 应改用 inject 回注
-/// （否则 §8 会查到两条同 stock 律、其一为死重复）。
-fn append_balance(merged: &mut Value, laws: &[Value], module: &str) -> Result<(), ComposeError> {
+/// - 新存量的律：追加（#4 硬化：无 override 时不得为已有存量重声明·防死重复）。
+/// - 已有存量 + `override: true`：就地替换该律（去标记）+ 标记 dirty → rate 从新律重生成
+///   （复用 `build_rate_expr_value`·与 equation override-by-id 同构·保平衡律 SSOT）。
+fn append_balance(
+    merged: &mut Value,
+    laws: &[Value],
+    module: &str,
+    dirty: &mut Vec<String>,
+) -> Result<(), ComposeError> {
     let mut stocks = collect_balance_stocks(merged);
     let mm = merged.as_mapping_mut().expect("base 顶层须为 mapping");
     if !mm.contains_key("meta") {
@@ -228,15 +235,47 @@ fn append_balance(merged: &mut Value, laws: &[Value], module: &str) -> Result<()
     }
     let seq = meta.get_mut("balance").unwrap().as_sequence_mut().unwrap();
     for law in laws {
-        if let Some(stock) = law.as_mapping().and_then(|m| m.get("stock")).and_then(Value::as_str) {
-            if !stocks.insert(stock.to_string()) {
-                return Err(ComposeError::InvalidOverlay {
-                    module: module.to_string(),
-                    detail: format!("为已有存量 `{stock}` 重复声明守恒律（应改用 inject 回注）"),
-                });
+        let stock = law.as_mapping().and_then(|m| m.get("stock")).and_then(Value::as_str).map(String::from);
+        let is_override = law.as_mapping().and_then(|m| m.get("override")).and_then(Value::as_bool).unwrap_or(false);
+        match stock {
+            Some(stock) if stocks.contains(&stock) => {
+                if !is_override {
+                    return Err(ComposeError::InvalidOverlay {
+                        module: module.to_string(),
+                        detail: format!("为已有存量 `{stock}` 重复声明守恒律（应改用 inject 回注·或加 override: true 显式替换）"),
+                    });
+                }
+                // 平衡律 override：就地替换该 stock 的律（去 override 标记）+ dirty 触发 rate 重生成。
+                // position 必命中（stocks.contains ⟺ seq 有该律·不变量）；None=内部不变量违反 → 硬报错，
+                // 而非静默跳过替换（防未来 refactor 破不变量时从陈旧律重生成·对抗复审建议）。
+                let p = seq
+                    .iter()
+                    .position(|l| l.as_mapping().and_then(|m| m.get("stock")).and_then(Value::as_str) == Some(stock.as_str()))
+                    .ok_or_else(|| ComposeError::InvalidOverlay {
+                        module: module.to_string(),
+                        detail: format!("内部不变量违反：存量 `{stock}` 在集合但无守恒律可替换"),
+                    })?;
+                let mut replacement = law.clone();
+                if let Some(m) = replacement.as_mapping_mut() {
+                    m.remove("override");
+                }
+                seq[p] = replacement;
+                if !dirty.iter().any(|d| d == &stock) {
+                    dirty.push(stock);
+                }
             }
+            Some(stock) => {
+                if is_override {
+                    return Err(ComposeError::InvalidOverlay {
+                        module: module.to_string(),
+                        detail: format!("balance override 的存量 `{stock}` 无已有守恒律可替换"),
+                    });
+                }
+                stocks.insert(stock);
+                seq.push(law.clone());
+            }
+            None => seq.push(law.clone()),
         }
-        seq.push(law.clone());
     }
     Ok(())
 }
@@ -817,6 +856,35 @@ inject:
             compose(toy_base(), &[ov]).unwrap_err(),
             ComposeError::OverrideMissingTarget { module: "ovrbad".into(), id: "NO-SUCH-ID".into() }
         );
+    }
+
+    /// ★平衡律 override（thermal_screen 双隔间重构）：`override: true` 替换已有存量的律 + rate 从新律重生成。
+    #[test]
+    fn compose_balance_override() {
+        // 替换 base T 律（sources [q_in]→[q_in,q_new]·sinks [q_out]→[q_out2]）+ 重生成 RATE-T
+        let ov = overlay(
+            "meta: { module: bov }\nvariables:\n  q_new: { class: auxiliary }\n  q_out2: { class: auxiliary }\nequations:\n  - { id: E-QNEW, output: q_new, expression: { ref: k } }\n  - { id: E-QOUT2, output: q_out2, expression: { const: 2.0 } }\nbalance:\n  - { name: E2, stock: T, sources: [q_in, q_new], sinks: [q_out2], cap: capT, tol: 1.0e-6, override: true }\n",
+        );
+        let merged = compose(toy_base(), &[ov]).expect("balance override 应成功");
+        let law = &merged["meta"]["balance"][0];
+        let names = |k: &str| law[k].as_sequence().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect::<Vec<_>>();
+        assert_eq!(names("sources"), vec!["q_in", "q_new"], "T 律 sources 被替换");
+        assert_eq!(names("sinks"), vec!["q_out2"], "T 律 sinks 被替换");
+        assert!(law.as_mapping().unwrap().get("override").is_none(), "生成物去 override 标记");
+        // RATE-T 从新律重生成 = ((q_in+q_new)−q_out2)/capT
+        let rate = merged["equations"].as_sequence().unwrap().iter().find(|e| e["output"].as_str() == Some("rate_T")).unwrap();
+        let want: Value = serde_yaml::from_str(
+            "{ op: div, args: [ { op: sub, args: [ { op: add, args: [ { ref: q_in }, { ref: q_new } ] }, { ref: q_out2 } ] }, { ref: capT } ] }",
+        ).unwrap();
+        assert_eq!(rate["expression"], want, "RATE-T 须从 override 律重生成");
+
+        // 无 override 重声明已有存量 → InvalidOverlay（#4 保留）
+        let ov = overlay("meta: { module: bad }\nbalance:\n  - { name: dup, stock: T, sources: [q_in], sinks: [], cap: capT, tol: 1.0e-6 }\n");
+        assert!(matches!(compose(toy_base(), &[ov]).unwrap_err(), ComposeError::InvalidOverlay { .. }));
+
+        // override 不存在的存量 → InvalidOverlay
+        let ov = overlay("meta: { module: bad2 }\nbalance:\n  - { name: x, stock: NoStock, sources: [q_in], sinks: [], cap: capT, tol: 1.0e-6, override: true }\n");
+        assert!(matches!(compose(toy_base(), &[ov]).unwrap_err(), ComposeError::InvalidOverlay { .. }));
     }
 
     /// ★§6.6.5 candidate A：overlay 自带 cohort → compose 合并进 base，再 expand_cohorts 正确展开。
