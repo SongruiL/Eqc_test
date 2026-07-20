@@ -20,6 +20,11 @@
 //!   （无人引用）但仍被逐个求值（引擎无可达性过滤）——是所有 balance-override 模块的通病。overlay 显式
 //!   声明 `prune: [<eq_id>]`，compose 删这些方程 + orphan 变量声明。**死码守卫**核验目标确实无人引用
 //!   （`PruneStillReferenced` 拒绝误删）→ 作者声明意图、引擎核验确实死、误删风险清零。
+//! - **⑥ 乘性缩放（scale）**：多个设备模块对同一 base 通量做**乘性衰减**（如加热管遮挡 occPipe × 保温幕
+//!   衰减 tauThScrFirU 都乘 base 的 FIR-FLRCOV 视角因子）。override-by-id 是「替换」会丢因子；`scale:
+//!   [{id, factor}]` 把目标方程当前表达式 **× factor**（不替换·可叠加·顺序无关），各模块声明自己的因子→
+//!   自动叠乘（`mul(mul(base, occPipe), tauThScrFirU)`）。目标缺失 → `ScaleMissingTarget`。镜像 GreenLight
+//!   「视角因子 = 各衰减因子连乘」·全 Venlo 多设备（热幕/遮光幕/管/灯遮挡）唯一干净扩展路。
 //!
 //! **override-by-id（拓扑覆盖/遮挡）+ balance override + 死码剪枝**已落地（施工 spec §9 / 档 1c / thermal_screen）：
 //! `append_equations` 带 `override: <id>` 就地替换 base 同 id；`append_balance` 带 `override: true` 替换
@@ -52,6 +57,8 @@ pub enum ComposeError {
     /// 死码剪枝守卫：`prune` 目标方程的 output 在合成后**仍被存活方程/balance/rate 引用**——不是死码，
     /// 拒绝误删（把「自动可达性检测」当守卫：作者声明 prune 意图，引擎核验「确实死」，误删风险清零）。
     PruneStillReferenced { module: String, output: String },
+    /// 乘性缩放（`scale: [{id, factor}]`）：目标方程 id 不存在于合成后模型。
+    ScaleMissingTarget { module: String, id: String },
 }
 
 impl std::fmt::Display for ComposeError {
@@ -80,6 +87,9 @@ impl std::fmt::Display for ComposeError {
             }
             ComposeError::PruneStillReferenced { module, output } => {
                 write!(f, "模块 {module} 试图 prune 的方程输出 `{output}` 仍被存活方程/balance 引用（不是死码·拒绝误删）")
+            }
+            ComposeError::ScaleMissingTarget { module, id } => {
+                write!(f, "模块 {module} 的 scale 目标方程 id `{id}` 不存在于合成后模型")
             }
         }
     }
@@ -158,7 +168,72 @@ fn apply_overlay(merged: &mut Value, ov: &Value, dirty: &mut Vec<String>) -> Res
             apply_inject(merged, inj, &module, dirty)?;
         }
     }
+    // ⑥ scale：把目标方程当前表达式 × factor（乘性衰减·可叠加·多模块自动叠乘）。
+    //    逐 overlay 就地叠乘 → heating_pipe 先 ×occPipe、thermal_screen 再 ×tauThScrFirU（顺序无关·值均正确）。
+    if let Some(scales) = get_section(ov, "scale").and_then(Value::as_sequence) {
+        let mut seen_scale: HashSet<String> = HashSet::new();
+        for sc in scales {
+            // 硬化（对抗复审 MINOR）：同一 overlay 的 scale 段内 id 去重——防笔误双乘 base×factor²。
+            // **跨 overlay 叠乘同一 id 是期望行为**（各设备各乘各的因子），不拦；只拦单个 overlay 内重复。
+            if let Some(id) = get_section(sc, "id").and_then(Value::as_str) {
+                if !seen_scale.insert(id.to_string()) {
+                    return Err(ComposeError::InvalidOverlay {
+                        module: module.to_string(),
+                        detail: format!("同一 overlay 的 scale 段重复缩放 id `{id}`（会双乘 base×factor²·跨 overlay 叠乘才是期望·同 overlay 内几乎是笔误）"),
+                    });
+                }
+            }
+            apply_scale(merged, sc, &module)?;
+        }
+    }
     Ok(())
+}
+
+/// 乘性缩放一项：把目标方程 `id` 的**当前** expression 换成 `mul(当前, {ref: factor})`。
+///
+/// 与 override-by-id（替换）互补：多个模块对同一 base 通量做乘性衰减时，scale **叠乘**而非互相覆盖
+/// （`mul(mul(base, f1), f2)`）。不改 id/序·目标缺失 → `ScaleMissingTarget`。factor 是变量引用（缩放
+/// 因子·如 occPipe/tauThScrFirU），须在合成后已声明（否则下游 DAG/求值报未定义·同其它 ref）。
+fn apply_scale(merged: &mut Value, sc: &Value, module: &str) -> Result<(), ComposeError> {
+    let id = get_section(sc, "id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ComposeError::InvalidOverlay {
+            module: module.to_string(),
+            detail: "scale 项缺 id".to_string(),
+        })?
+        .to_string();
+    let factor = get_section(sc, "factor")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ComposeError::InvalidOverlay {
+            module: module.to_string(),
+            detail: format!("scale(id={id}) 缺 factor（缩放因子变量名）"),
+        })?
+        .to_string();
+    let eqs = merged
+        .as_mapping_mut()
+        .expect("base 顶层须为 mapping")
+        .get_mut("equations")
+        .and_then(|v| v.as_sequence_mut())
+        .ok_or_else(|| ComposeError::ScaleMissingTarget { module: module.to_string(), id: id.clone() })?;
+    let pos = eqs.iter().position(|e| {
+        e.as_mapping().and_then(|m| m.get("id")).and_then(Value::as_str) == Some(id.as_str())
+    });
+    match pos {
+        Some(p) => {
+            let cur = eqs[p]
+                .as_mapping()
+                .and_then(|m| m.get("expression"))
+                .cloned()
+                .ok_or_else(|| ComposeError::InvalidOverlay {
+                    module: module.to_string(),
+                    detail: format!("scale 目标方程 `{id}` 无 expression"),
+                })?;
+            let scaled = vop("mul", vec![cur, vref(&factor)]);
+            eqs[p].as_mapping_mut().unwrap().insert(vstr("expression"), scaled);
+            Ok(())
+        }
+        None => Err(ComposeError::ScaleMissingTarget { module: module.to_string(), id }),
+    }
 }
 
 /// append 一个 mapping 段（parameters/variables/cohorts）：键冲突 = G1 报 DuplicateId。
@@ -1130,6 +1205,53 @@ inject:
         for id in ["E-QIN", "E-QOUT", "E-CAPT", "RATE-T"] {
             assert!(eqs.iter().any(|e| e["id"].as_str() == Some(id)), "{id} 应保留（无 prune）");
         }
+    }
+
+    /// ★scale：把目标方程当前表达式 × factor（乘性缩放·不替换）。
+    #[test]
+    fn compose_scale_multiplies_expression() {
+        // scale E-QIN × k → mul(base={ref:k}, {ref:k})
+        let ov = overlay("meta: { module: sc }\nscale:\n  - { id: E-QIN, factor: k }\n");
+        let merged = compose(toy_base(), &[ov]).expect("scale 应成功");
+        let e = merged["equations"].as_sequence().unwrap().iter().find(|e| e["id"].as_str() == Some("E-QIN")).unwrap();
+        let want: Value = serde_yaml::from_str("{ op: mul, args: [ { ref: k }, { ref: k } ] }").unwrap();
+        assert_eq!(e["expression"], want, "E-QIN 表达式应 × k（mul 末乘）");
+        // 方程数不变（scale 是改表达式非增删）
+        assert_eq!(merged["equations"].as_sequence().unwrap().len(), toy_base()["equations"].as_sequence().unwrap().len());
+    }
+
+    /// ★★scale 叠乘：两 overlay 各 scale 同一 id → mul(mul(base, f1), f2)（heating_pipe×occPipe·thermal_screen×tauThScrFirU 场景）。
+    #[test]
+    fn compose_scale_stacks_multiplicatively() {
+        let ov1 = overlay("meta: { module: a }\nvariables:\n  fa: { class: auxiliary }\nequations:\n  - { id: E-FA, output: fa, expression: { const: 0.5 } }\nscale:\n  - { id: E-QOUT, factor: fa }\n");
+        let ov2 = overlay("meta: { module: b }\nvariables:\n  fb: { class: auxiliary }\nequations:\n  - { id: E-FB, output: fb, expression: { const: 0.3 } }\nscale:\n  - { id: E-QOUT, factor: fb }\n");
+        let merged = compose(toy_base(), &[ov1, ov2]).expect("双 scale 应成功");
+        let e = merged["equations"].as_sequence().unwrap().iter().find(|e| e["id"].as_str() == Some("E-QOUT")).unwrap();
+        // base E-QOUT={const:1.0} → mul(mul({const:1.0}, {ref:fa}), {ref:fb})（ov1 先叠 fa·ov2 再叠 fb·两因子都在）
+        let want: Value = serde_yaml::from_str("{ op: mul, args: [ { op: mul, args: [ { const: 1.0 }, { ref: fa } ] }, { ref: fb } ] }").unwrap();
+        assert_eq!(e["expression"], want, "E-QOUT 应叠乘 fa 再 fb（两模块乘性因子不互相覆盖）");
+    }
+
+    /// ★scale 目标缺失 → ScaleMissingTarget。
+    #[test]
+    fn compose_scale_missing_target() {
+        let ov = overlay("meta: { module: m }\nscale:\n  - { id: NO-SUCH, factor: k }\n");
+        assert_eq!(
+            compose(toy_base(), &[ov]).unwrap_err(),
+            ComposeError::ScaleMissingTarget { module: "m".into(), id: "NO-SUCH".into() }
+        );
+    }
+
+    /// ★硬化：同一 overlay 内重复 scale 同 id → InvalidOverlay（防笔误双乘·跨 overlay 叠乘不拦）。
+    #[test]
+    fn compose_scale_same_overlay_duplicate_guard() {
+        // 同一 overlay 两条 scale FIR·同 id → 报错（防 base×k²）
+        let ov = overlay("meta: { module: dup }\nscale:\n  - { id: E-QIN, factor: k }\n  - { id: E-QIN, factor: k }\n");
+        assert!(
+            matches!(compose(toy_base(), &[ov]).unwrap_err(), ComposeError::InvalidOverlay { .. }),
+            "同一 overlay 重复 scale 同 id 须报 InvalidOverlay"
+        );
+        // 但跨 overlay 叠乘同一 id 是期望行为（不拦）——compose_scale_stacks_multiplicatively 已覆盖。
     }
 
     /// ★§6.6.5 candidate A：overlay 自带 cohort → compose 合并进 base，再 expand_cohorts 正确展开。
