@@ -21,6 +21,10 @@ pub fn parse_file(path: &Path) -> CompileResult<EquationFile> {
     // 之后再反序列化成 EquationFile。无 `cohorts:` 段的模型原样通过，行为不变。
     let raw: serde_yaml::Value =
         serde_yaml::from_str(&content).map_err(|e| CompileError::yaml_parse(path, e.to_string()))?;
+    // E3 步①：compose（base + 模块 overlay）——Phase 1 = identity 直通（base-only 恒等·逐位不变）。
+    // 必须先于 structure/cohort 展开（模块 overlay 可带自己的 cohort，须合并后统一展开·arc §4.1）。
+    let raw = super::compose(raw, &[])
+        .map_err(|e| CompileError::yaml_parse(path, format!("compose 失败: {e}")))?;
     // FSPM `structure:` 段实例化 + cohort 展开（都是加载期、互不干扰；无对应段时各自原样通过）。
     let expanded = super::expand_structure(raw)
         .map_err(|e| CompileError::yaml_parse(path, format!("structure 实例化失败: {e}")))?;
@@ -42,6 +46,9 @@ pub fn parse_str(content: &str) -> CompileResult<EquationFile> {
     let p = Path::new("<编辑>");
     let raw: serde_yaml::Value =
         serde_yaml::from_str(content).map_err(|e| CompileError::yaml_parse(p, e.to_string()))?;
+    // E3 步①：compose（Phase 1 = identity 直通·同 parse_file·必须先于展开·arc §4.1）。
+    let raw = super::compose(raw, &[])
+        .map_err(|e| CompileError::yaml_parse(p, format!("compose 失败: {e}")))?;
     let expanded = super::expand_structure(raw)
         .map_err(|e| CompileError::yaml_parse(p, format!("structure 实例化失败: {e}")))?;
     let expanded = super::expand_cohorts(expanded)
