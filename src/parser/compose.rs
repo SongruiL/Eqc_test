@@ -40,6 +40,8 @@ pub enum ComposeError {
     /// overlay 结构/语义非法（对抗复审 R1 硬化·走 clean 错误而非 panic/静默）：守恒律字段非列表、
     /// 同一通量重复注入同一存量（防双计）、为已有存量重复声明守恒律（应改用 inject）等。
     InvalidOverlay { module: String, detail: String },
+    /// override-by-id（档1c）：`override: <id>` 指向的 base 方程 id 不存在。
+    OverrideMissingTarget { module: String, id: String },
 }
 
 impl std::fmt::Display for ComposeError {
@@ -59,6 +61,9 @@ impl std::fmt::Display for ComposeError {
             }
             ComposeError::InvalidOverlay { module, detail } => {
                 write!(f, "模块 {module} overlay 非法：{detail}")
+            }
+            ComposeError::OverrideMissingTarget { module, id } => {
+                write!(f, "模块 {module} 的 override 目标方程 id `{id}` 不存在于 base")
             }
         }
     }
@@ -157,7 +162,11 @@ fn append_mapping(
     Ok(())
 }
 
-/// append equations（尾插·id 全局唯一 G1，含同一 overlay 内自查重）。
+/// append equations（尾插·id 全局唯一 G1，含同一 overlay 内自查重）+ override-by-id（档1c）。
+///
+/// 带 `override: <id>` 标记的方程 = **就地替换** base 同 id 方程（不改序·G1 放行·去 override 标记后
+/// 落生成物）；目标 id 不存在 → `OverrideMissingTarget`（G1 修正·arc §9）。用于拓扑覆盖/遮挡
+/// （如加热管遮挡改 base FIR view factor·保温幕改空气平衡为双隔间）。
 fn append_equations(merged: &mut Value, eqs: &[Value], module: &str) -> Result<(), ComposeError> {
     let mut seen = collect_ids(merged);
     let mm = merged.as_mapping_mut().expect("base 顶层须为 mapping");
@@ -166,8 +175,32 @@ fn append_equations(merged: &mut Value, eqs: &[Value], module: &str) -> Result<(
     }
     let dst = mm.get_mut("equations").unwrap().as_sequence_mut().unwrap();
     for eq in eqs {
-        // override-by-id（档 1c）：带 `override:` 标记的方程就地替换 base 同 id——本档不实现，
-        // 此处只做追加+去重（append/inject/regen/dangling 是 §6 范围）。
+        // override-by-id：带 `override: <id>` 标记 → 就地替换 base 同 id 方程（G1 放行）。
+        if let Some(target) = get_section(eq, "override").and_then(Value::as_str) {
+            let pos = dst.iter().position(|e| {
+                e.as_mapping().and_then(|m| m.get("id")).and_then(Value::as_str) == Some(target)
+            });
+            match pos {
+                Some(p) => {
+                    let mut replacement = eq.clone();
+                    // 去 override 标记；强制 id=目标（对抗复审 R 挖出 MINOR footgun：override:X 但 id:Y
+                    // 会让 base id X 静默消失·override 语义=替换目标故结果 id 恒为目标）。
+                    if let Some(m) = replacement.as_mapping_mut() {
+                        m.remove("override");
+                        m.insert(vstr("id"), vstr(target));
+                    }
+                    dst[p] = replacement;
+                }
+                None => {
+                    return Err(ComposeError::OverrideMissingTarget {
+                        module: module.to_string(),
+                        id: target.to_string(),
+                    })
+                }
+            }
+            continue; // 替换不改 id 集（target 仍在），不落 seen/dup 检查。
+        }
+        // 普通 append（id 全局唯一 G1·含同一 overlay 内自查重）。
         if let Some(id) = get_section(eq, "id").and_then(Value::as_str) {
             if seen.contains(id) {
                 return Err(ComposeError::DuplicateId { module: module.to_string(), id: id.to_string() });
@@ -750,6 +783,39 @@ inject:
         assert!(
             matches!(compose(toy_base(), &[ov]).unwrap_err(), ComposeError::InvalidOverlay { .. }),
             "守恒律字段非列表须报 InvalidOverlay 而非 panic"
+        );
+    }
+
+    /// ★override-by-id（档1c）：带 `override: <id>` 就地替换 base 同 id 方程·不改序·去标记·目标缺失报错。
+    #[test]
+    fn compose_override_by_id() {
+        let n_base = toy_base()["equations"].as_sequence().unwrap().len();
+        // 就地替换 base RATE-T 的表达式（override 目标 = RATE-T）
+        let ov = overlay(
+            "meta: { module: ovr }\nequations:\n  - { id: RATE-T, override: RATE-T, output: rate_T, expression: { const: 0.0 } }\n",
+        );
+        let merged = compose(toy_base(), &[ov]).expect("override 应成功");
+        let eqs = merged["equations"].as_sequence().unwrap();
+        assert_eq!(eqs.len(), n_base, "override 是替换非追加·方程数不变");
+        let rate_t = eqs.iter().find(|e| e["id"].as_str() == Some("RATE-T")).unwrap();
+        assert_eq!(rate_t["expression"], serde_yaml::from_str::<Value>("{ const: 0.0 }").unwrap(), "RATE-T 表达式已就地替换");
+        assert!(rate_t.as_mapping().unwrap().get("override").is_none(), "生成物须去 override 标记");
+
+        // ★强制 id=目标：override:RATE-T 但 id:DECOY → 结果保留 RATE-T（防 base id 静默消失·对抗复审硬化）
+        let ov = overlay(
+            "meta: { module: ovrid }\nequations:\n  - { id: DECOY, override: RATE-T, output: rate_T, expression: { const: 1.0 } }\n",
+        );
+        let merged = compose(toy_base(), &[ov]).unwrap();
+        let ids: Vec<&str> = merged["equations"].as_sequence().unwrap().iter().filter_map(|e| e["id"].as_str()).collect();
+        assert!(ids.contains(&"RATE-T") && !ids.contains(&"DECOY"), "override 结果 id 须强制为目标 RATE-T（非 DECOY）");
+
+        // 目标 id 不存在 → OverrideMissingTarget
+        let ov = overlay(
+            "meta: { module: ovrbad }\nequations:\n  - { override: NO-SUCH-ID, output: zzz, expression: { const: 0.0 } }\n",
+        );
+        assert_eq!(
+            compose(toy_base(), &[ov]).unwrap_err(),
+            ComposeError::OverrideMissingTarget { module: "ovrbad".into(), id: "NO-SUCH-ID".into() }
         );
     }
 
